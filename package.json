@@ -1,0 +1,43 @@
+{
+  "name": "balancedeck",
+  "version": "0.1.0",
+  "description": "BalanceDeck 余额板 — coding plan 与 API 余额悬浮仪表盘",
+  "main": "./out/main/index.js",
+  "author": "zhouri",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "smoke": "npm run build && electron . --smoke",
+    "uitest": "npm run build && electron . --uitest",
+    "shots": "npm run build && electron . --shots",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "icons": "node scripts/gen-icons.js && mkdir -p src/renderer/src/assets && cp build/icon.png src/renderer/src/assets/icon.png",
+    "test:ssr": "node scripts/test-ssr-parser.mjs",
+    "test:percent": "node scripts/test-percent.mjs",
+    "test:quality": "node scripts/test-quality.mjs",
+    "test:tray": "node scripts/test-tray.mjs",
+    "test": "npm run test:percent && npm run test:ssr && npm run test:quality && npm run test:tray",
+    "details:test": "electron . --details-test",
+    "keystore:debug": "electron scripts/keystore-debug.js",
+    "instances:debug": "node scripts/instances-debug.mjs",
+    "verify:opencode": "node scripts/verify-opencode.mjs",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^37.10.3",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

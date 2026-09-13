@@ -1,0 +1,26 @@
+appId: dev.zhouri.balancedeck
+productName: BalanceDeck
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: build
+    to: build
+asar: true
+mac:
+  category: public.app-category.utilities
+  identity: null
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+    - zip
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
