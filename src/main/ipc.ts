@@ -200,6 +200,45 @@ export function registerIpc(): void {
   // 系统里是否有本开关管不到的旧登录项（提示用户手动清理）
   ipcMain.handle('autostart:foreign', () => hasSystemLoginItem())
 
+  // ─── 宠物数据迁移（本地文件读写，仅在用户显式点击时触发）────────────────────
+
+  ipcMain.handle('pet:export', async (_e, payload: string) => {
+    const { dialog } = await import('electron')
+    const { writeFileSync } = await import('fs')
+    const opts: Electron.SaveDialogOptions = {
+      title: '导出宠物数据',
+      defaultPath: 'balancedeck-pet.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    }
+    const win = getOverlay()
+    const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true }
+    try {
+      writeFileSync(r.filePath, String(payload ?? ''), 'utf-8')
+      return { ok: true, path: r.filePath }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  ipcMain.handle('pet:import', async () => {
+    const { dialog } = await import('electron')
+    const { readFileSync } = await import('fs')
+    const opts: Electron.OpenDialogOptions = {
+      title: '导入宠物数据',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    }
+    const win = getOverlay()
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true }
+    try {
+      return { ok: true, text: readFileSync(r.filePaths[0], 'utf-8') }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
   // ─── 测试观测点（仅 --uitest 注册；生产运行时不暴露任何注入能力）──────────
 
   if (process.argv.includes('--uitest') || process.argv.includes('--shots')) {

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
+import { petMood, type PetState } from '../../shared/pet'
 import { fmtAmount, fmtPercent, windowPercent, levelOfPercent, dataTime, isStale, type Level } from './format'
 import { Icon } from './components'
+import { PetStage, type PetAction } from './PetSprites'
+import type { PetActionResult } from './PetCard'
 
 // 收起态圆点（56×56）：环形仪表 + 中心数值。
 // 设计依据：单一 KPI 对目标值 → 环形 gauge；数字置于环心（小尺寸下最易读）。
@@ -41,15 +44,53 @@ function dotLevel(s: ProviderSnapshot | undefined): Level {
   return levelOfPercent(Math.max(...pcts), 'ok')
 }
 
-export function CollapsedDot({ onExpand, hideBalance }: { onExpand: () => void; hideBalance: boolean }): React.JSX.Element {
+export function CollapsedDot({
+  onExpand,
+  hideBalance,
+  pet,
+  petOn,
+  onPet
+}: {
+  onExpand: () => void
+  hideBalance: boolean
+  pet: PetState
+  petOn: boolean
+  onPet: () => PetActionResult
+}): React.JSX.Element {
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
   const [idx, setIdx] = useState(0)
+  const [petAnim, setPetAnim] = useState<PetAction>('idle')
   const press = useRef({ down: false, moved: false, x: 0, y: 0 })
+  /** 长按标记：长按 = 撸一把（不展开面板） */
+  const longPressed = useRef(false)
+  const holdTimer = useRef<number | null>(null)
 
   useEffect(() => {
     void window.api.getState().then(setState)
     return window.api.onState(setState)
   }, [])
+
+  useEffect(
+    () => () => {
+      if (holdTimer.current !== null) window.clearTimeout(holdTimer.current)
+    },
+    []
+  )
+
+  const clearHold = (): void => {
+    if (holdTimer.current !== null) {
+      window.clearTimeout(holdTimer.current)
+      holdTimer.current = null
+    }
+  }
+
+  /** 长按 0.62s：撸一把（播放开心动画；冷却中不打扰用户） */
+  const petNow = (): void => {
+    const r = onPet()
+    if (!r.ok) return
+    setPetAnim('happy')
+    window.setTimeout(() => setPetAnim('idle'), 1600)
+  }
 
   // 按严重度排序：最接近限额的排最前（轮播第一帧即最重要信息）
   const snaps = useMemo(
@@ -68,10 +109,19 @@ export function CollapsedDot({ onExpand, hideBalance }: { onExpand: () => void; 
 
   const startDrag = (): void => {
     press.current.moved = true
+    clearHold()
     window.api.dragStart()
   }
   const onPointerDown = (e: React.PointerEvent): void => {
     press.current = { down: true, moved: false, x: e.clientX, y: e.clientY }
+    longPressed.current = false
+    clearHold()
+    if (petOn)
+      holdTimer.current = window.setTimeout(() => {
+        holdTimer.current = null
+        longPressed.current = true
+        petNow()
+      }, 620)
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {
@@ -85,9 +135,12 @@ export function CollapsedDot({ onExpand, hideBalance }: { onExpand: () => void; 
   const finish = (cancel = false): void => {
     if (!press.current.down) return
     const wasMoved = press.current.moved
+    const wasLong = longPressed.current
     press.current = { down: false, moved: false, x: 0, y: 0 }
+    longPressed.current = false
+    clearHold()
     if (wasMoved || cancel) window.api.dragEnd()
-    else onExpand()
+    else if (!wasLong) onExpand()
   }
   const onPointerUp = (e: React.PointerEvent): void => {
     try {
@@ -142,8 +195,8 @@ export function CollapsedDot({ onExpand, hideBalance }: { onExpand: () => void; 
       onPointerCancel={onPointerCancel}
       title={
         s
-          ? `${s.name}${pct != null ? ` · ${fmtPercent(pct)}` : ''}${isStale(s) ? `（${s.dataQuality === 'cached' ? '缓存数据 · ' + (dataTime(s) ? new Date(dataTime(s)!).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '') : '本机估算'}）` : ''} · 点击展开`
-          : '点击展开'
+          ? `${s.name}${pct != null ? ` · ${fmtPercent(pct)}` : ''}${isStale(s) ? `（${s.dataQuality === 'cached' ? '缓存数据 · ' + (dataTime(s) ? new Date(dataTime(s)!).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '') : '本机估算'}）` : ''} · 点击展开${petOn ? ` · 长按撸一把 ${pet.name}` : ''}`
+          : `点击展开${petOn ? ` · 长按撸一把 ${pet.name}` : ''}`
       }
     >
       <svg className="dot-ring" viewBox="0 0 56 56" aria-hidden="true">
@@ -162,7 +215,13 @@ export function CollapsedDot({ onExpand, hideBalance }: { onExpand: () => void; 
           />
         )}
       </svg>
-      <span className={`dot-value${value.length > 4 ? ' small' : ''}`}>{value}</span>
+      {petOn ? (
+        <span className="dot-pet" aria-hidden="true">
+          <PetStage id={pet.id} mood={petMood(pet)} action={petAnim} size={32} />
+        </span>
+      ) : (
+        <span className={`dot-value${value.length > 4 ? ' small' : ''}`}>{value}</span>
+      )}
       {isStale(s ?? {}) && (
         <span className="dot-badge" aria-hidden="true">
           <Icon name={s?.dataQuality === 'local' ? 'flask' : 'history'} size={9} />

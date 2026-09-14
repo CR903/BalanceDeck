@@ -204,6 +204,18 @@ export interface OpencodeAuthResponse {
   workspaceId?: string
 }
 
+/** 宠物数据迁移（导出/导入本地 JSON 文件）结果 */
+export interface PetTransferResponse {
+  ok: boolean
+  /** 用户取消选择文件 */
+  canceled?: boolean
+  /** 导出成功后的落盘路径 */
+  path?: string
+  /** 导入读到的文件内容（渲染层用 shared/pet 校验） */
+  text?: string
+  error?: string
+}
+
 export interface BalanceDeckApi {
   getState(): Promise<AppState>
   onState(cb: (s: AppState) => void): () => void
@@ -244,6 +256,10 @@ export interface BalanceDeckApi {
   setAutostart(open: boolean): Promise<boolean>
   /** 系统登录项里是否残留本应用（不受本开关控制，需手动清理） */
   hasForeignLoginItem(): Promise<boolean>
+  /** 宠物数据迁移：导出为本地 JSON 文件 */
+  exportPet(payload: string): Promise<PetTransferResponse>
+  /** 宠物数据迁移：从本地 JSON 文件导入（返回文本，由渲染层校验） */
+  importPet(): Promise<PetTransferResponse>
   /** 测试观测点：托盘交互模式（仅 --uitest） */
   debugTrayMode(): Promise<string>
 }

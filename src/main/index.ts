@@ -152,6 +152,8 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await sleep(6500)
   // 走查"断网/缓存"形态时需要一个真实快照做底模
   await exec('window.api.getState().then((s) => { window.__bd_state_snapshot = s.snapshots })')
+  // 记录宠物圆点偏好：走查会临时开启，结束时还原
+  const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
   await exec('window.api.expand()')
   await sleep(900)
   await shoot('1-card')
@@ -213,6 +215,43 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()")
   await sleep(1200)
   await shoot('5-dot')
+  // 各皮肤下的圆点立体感（回归"只有毛玻璃皮肤有立体效果"）
+  for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
+    await exec(`window.api.setSkin('${id}')`)
+    await sleep(750)
+    await shoot(`5-dot-${id}`)
+  }
+  // 圆点宠物：开启 → 收起 → 长按撸一把（爱心特效）
+  await exec('window.api.expand()')
+  await sleep(700)
+  if (!petWasOn) {
+    await exec("document.querySelector('.pet-dot-switch')?.click()")
+    await sleep(400)
+  }
+  await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()")
+  await sleep(1000)
+  await shoot('5b-dot-pet')
+  await exec(`(()=>{
+    const b=document.querySelector('.dot-btn'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    const o={clientX:rc.x+28,clientY:rc.y+28,pointerId:11,bubbles:true,pointerType:'mouse',button:0}
+    b.dispatchEvent(new PointerEvent('pointerdown',o))
+  })()`)
+  await sleep(1100)
+  await shoot('5c-dot-pet-happy')
+  await exec(`(()=>{
+    const b=document.querySelector('.dot-btn'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    const o={clientX:rc.x+28,clientY:rc.y+28,pointerId:11,bubbles:true,pointerType:'mouse',button:0}
+    b.dispatchEvent(new PointerEvent('pointerup',o))
+  })()`)
+  await sleep(400)
+  await exec('window.api.expand()')
+  await sleep(700)
+  if (!petWasOn) {
+    await exec("document.querySelector('.pet-dot-switch')?.click()")
+    await sleep(300)
+  }
 
   // 断网 / 缓存态（数据诚实性的设计走查）：注入 cached 快照 + offline
   await exec('window.api.expand()')
@@ -263,6 +302,68 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('[data-card-id]')?.click()")
   await sleep(800)
   await shoot('7b-offline-detail')
+
+  // README/宣传用演示图：注入干净示例数据（不含真实账户信息），拍一张主面板全貌
+  await exec("document.querySelector('.detail .icon-btn')?.click()")
+  await sleep(500)
+  // 收起宠物卡，保证三张演示卡都完整可见（拍完还原）
+  const petCardWasCollapsed = (await exec("window.api.getExtras(['ui:petCard']).then(e=>e['ui:petCard']==='0')")) === true
+  if (!petCardWasCollapsed) {
+    await exec("document.querySelector('.pet-collapse')?.click()")
+    await sleep(400)
+  }
+  await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
+  await sleep(900)
+  await shoot('9-demo')
+  if (!petCardWasCollapsed) {
+    await exec("document.querySelector('.pet-collapse')?.click()")
+    await sleep(300)
+  }
+}
+
+/** 演示数据（README 截图用：金额/百分比均为编造） */
+function demoSnapshot(): unknown[] {
+  const iso = (h: number): string => new Date(Date.now() + h * 3_600_000).toISOString()
+  const nowIso = new Date().toISOString()
+  const base = { builtin: true, dataQuality: 'official', dataAt: nowIso, updatedAt: nowIso }
+  return [
+    {
+      ...base,
+      id: 'demo-opencode',
+      name: 'OpenCode Go',
+      kind: 'coding',
+      mark: 'opencode',
+      plan: 'Go 套餐',
+      status: 'ok',
+      source: '控制台（精确） + 官方 API',
+      windows: [
+        { name: '5 小时', used: 0.62, limit: 12, unit: 'usd', percent: 5.2, resetAt: iso(3.4) },
+        { name: '本周', used: 9.9, limit: 30, unit: 'usd', percent: 33, resetAt: iso(52) },
+        { name: '本月', used: 24.6, limit: 60, unit: 'usd', percent: 41, resetAt: iso(210) }
+      ]
+    },
+    {
+      ...base,
+      id: 'demo-claude',
+      name: 'Claude Code',
+      kind: 'coding',
+      mark: 'claude',
+      plan: 'Max',
+      status: 'ok',
+      source: '本机统计',
+      windows: [{ name: '5 小时', used: 3.42, limit: 25, unit: 'usd', percent: 13.7, resetAt: iso(2.1) }]
+    },
+    {
+      ...base,
+      id: 'demo-deepseek',
+      name: 'DeepSeek',
+      kind: 'balance',
+      mark: 'deepseek',
+      status: 'ok',
+      source: '官方 API',
+      windows: [{ name: '账户余额', used: 1288.5, unit: 'cny' }]
+    }
+  ]
 }
 
 // —— UI 交互自动化测试 ——
@@ -541,6 +642,113 @@ async function runUiTest(
       return ra.bottom>rb.top && rb.bottom>ra.top ? 'ok' : 'fail:wrap'
     })()`)
   )
+
+  // 套餐卡：窗口切换（5H / W / M 胶囊）——点击第二个窗口必须生效并持久化，随后还原
+  r.windowChips = String(
+    await exec(`(async()=>{
+      const card=[...document.querySelectorAll('.pcard.plan')].find(c=>c.querySelectorAll('.win-chip').length>1)
+      if(!card) return 'skip:no-multi-window'
+      const id=card.dataset.cardId
+      const chips=()=>[...card.querySelectorAll('.win-chip')]
+      const on=()=>chips().findIndex(c=>c.classList.contains('on'))
+      const first=on()
+      const target=first===0?1:0
+      chips()[target].click()
+      await new Promise(r=>setTimeout(r,450))
+      const after=on()
+      const saved=(await window.api.getExtras(['ui:cardWindow:'+id]))['ui:cardWindow:'+id]
+      // 还原为最初选择，避免影响后续走查
+      chips()[first].click()
+      await new Promise(r=>setTimeout(r,350))
+      const restored=on()
+      return JSON.stringify({first,after,saved:!!saved,restored})
+    })()`)
+  )
+
+  // ─── 宠物精灵：卡片互动 + 数据持久化 + 圆点长按 ──────────────────────────────
+  const { getExtra } = await import('./keystore')
+  const readPet = async (): Promise<{ affection: number; fullness: number; level: number }> => {
+    const fallback = { affection: 60, fullness: 70, level: 1 }
+    const raw = await getExtra('ui:petState')
+    if (!raw) return fallback
+    try {
+      const v = JSON.parse(raw) as Partial<{ affection: number; fullness: number; level: number }>
+      return {
+        affection: typeof v.affection === 'number' ? v.affection : fallback.affection,
+        fullness: typeof v.fullness === 'number' ? v.fullness : fallback.fullness,
+        level: typeof v.level === 'number' ? v.level : fallback.level
+      }
+    } catch {
+      return fallback
+    }
+  }
+  const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
+  const hasPetCard = (await exec("!!document.querySelector('.pet-card')")) === true
+  const clickPetAction = (label: string): Promise<unknown> =>
+    exec(
+      `[...document.querySelectorAll('.pet-actions .btn-secondary')].find(b=>b.textContent.includes('${label}'))?.click()`
+    )
+  if (!hasPetCard) {
+    r.petCard = 'fail:no-card'
+    r.petStroke = 'fail:no-card'
+    r.petFeed = 'fail:no-card'
+  } else {
+    r.petCard = 'ok'
+    // 撸一把：亲密度上升（或已封顶）且写盘
+    const beforePet = await readPet()
+    await clickPetAction('撸一把')
+    await sleep(900)
+    const afterPet = await readPet()
+    r.petStroke =
+      afterPet.affection > beforePet.affection || beforePet.affection >= 100
+        ? 'ok'
+        : `fail:${beforePet.affection}->${afterPet.affection}`
+    // 喂食：饱食度上升；已吃饱则应被拒绝且数值不变
+    const beforeFeed = await readPet()
+    await clickPetAction('喂食')
+    await sleep(900)
+    const afterFeed = await readPet()
+    const fullBefore = beforeFeed.fullness >= 95
+    r.petFeed =
+      fullBefore ? (afterFeed.fullness === beforeFeed.fullness ? 'ok(refused)' : 'fail:not-refused') : afterFeed.fullness > beforeFeed.fullness ? 'ok' : `fail:${beforeFeed.fullness}->${afterFeed.fullness}`
+  }
+
+  // 圆点宠物：开关 → 收起显示精灵 → 长按撸一把（不展开面板）
+  if (hasPetCard) {
+    await exec("document.querySelector('.pet-dot-switch')?.click()")
+    await sleep(500)
+    r.petDotSwitch =
+      (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
+    await exec(footerClick('收起'))
+    await sleep(900)
+    r.petDotVisible = (await exec("!!document.querySelector('.dot-pet .pet')")) ? 'ok' : 'fail:not-shown'
+    await sleep(5200) // 等冷却结束，长按必须真的加亲密度
+    const affBefore = (await readPet()).affection
+    await exec(`(async()=>{
+      const b=document.querySelector('.dot-btn'); if(!b) return
+      const rc=b.getBoundingClientRect()
+      const o={clientX:rc.x+28,clientY:rc.y+28,pointerId:9,bubbles:true,pointerType:'mouse',button:0}
+      b.dispatchEvent(new PointerEvent('pointerdown',o))
+      await new Promise(r=>setTimeout(r,780))
+      b.dispatchEvent(new PointerEvent('pointerup',o))
+    })()`)
+    await sleep(600)
+    const affAfter = (await readPet()).affection
+    const stillCollapsed = bounds().width <= 60
+    r.petLongPress =
+      stillCollapsed && affAfter > affBefore ? 'ok' : `fail:${stillCollapsed ? '' : 'expanded'}:${affBefore}->${affAfter}`
+    await exec(dotClickJs())
+    await sleep(900)
+    // 还原用户的圆点宠物偏好
+    if (!petWasOn) {
+      await exec("document.querySelector('.pet-dot-switch')?.click()")
+      await sleep(400)
+    }
+  } else {
+    r.petDotSwitch = 'skipped'
+    r.petDotVisible = 'skipped'
+    r.petLongPress = 'skipped'
+  }
 
   // 开机自启：沙箱目录内往返（true → plist 落地且结构正确；false → 文件删除），不碰真实登录项
   const agentFile = join(autostartDir, 'dev.zhouri.balancedeck.plist')

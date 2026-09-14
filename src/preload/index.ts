@@ -6,7 +6,8 @@ import type {
   ProviderPatch,
   AddProviderPayload,
   CatalogEntry,
-  OpencodeAuthResponse
+  OpencodeAuthResponse,
+  PetTransferResponse
 } from '../shared/types'
 
 const api = {
@@ -67,7 +68,11 @@ const api = {
   getAutostart: (): Promise<boolean> => ipcRenderer.invoke('autostart:get'),
   setAutostart: (open: boolean): Promise<boolean> => ipcRenderer.invoke('autostart:set', open),
   /** 系统登录项里是否残留本应用（本开关无法移除，需用户手动清理） */
-  hasForeignLoginItem: (): Promise<boolean> => ipcRenderer.invoke('autostart:foreign')
+  hasForeignLoginItem: (): Promise<boolean> => ipcRenderer.invoke('autostart:foreign'),
+
+  // ─── 宠物数据迁移（本地文件）────────────────────────────────────────────────
+  exportPet: (payload: string): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:export', payload),
+  importPet: (): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:import')
 }
 
 contextBridge.exposeInMainWorld('api', api)

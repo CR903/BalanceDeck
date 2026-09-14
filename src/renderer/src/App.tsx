@@ -1,10 +1,24 @@
-import { Component, useEffect, useState } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
 import type { AppState } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
 import { CollapsedDot } from './CollapsedDot'
 import { renderTrayIcon } from './ProviderMark'
+import type { PetAction } from './PetSprites'
+import type { PetActionResult } from './PetCard'
+import {
+  applyDecay,
+  buildPetExport,
+  decodePetState,
+  defaultPetState,
+  encodePetState,
+  feedOnce,
+  petMeta,
+  petOnce,
+  type PetId,
+  type PetState
+} from '../../shared/pet'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -44,8 +58,104 @@ export default function App(): React.JSX.Element {
   /** 主面板余额显隐（ui:hideBalance）——隐私偏好，跨收起态共享 */
   const [hideBalance, setHideBalance] = useState(false)
 
+  // ─── 宠物精灵（状态由 App 统一持有：面板与收起态圆点共用同一份成长数据）──
+  const [pet, setPet] = useState<PetState>(() => defaultPetState())
+  const petRef = useRef(pet)
+  petRef.current = pet
+  /** 圆点是否显示宠物（ui:pet） */
+  const [petOn, setPetOn] = useState(false)
+  /** 面板宠物卡片是否收起（ui:petCard） */
+  const [petCollapsed, setPetCollapsed] = useState(false)
+  /** 当前播放的宠物动作（happy/eat），播完自动回 idle */
+  const [petAction, setPetAction] = useState<PetAction>('idle')
+  const actionTimer = useRef<number | null>(null)
+
+  const playPetAction = (a: PetAction): void => {
+    setPetAction(a)
+    if (actionTimer.current !== null) window.clearTimeout(actionTimer.current)
+    actionTimer.current = window.setTimeout(() => setPetAction('idle'), a === 'happy' ? 1700 : 2400)
+  }
+
+  const persistPet = (s: PetState): void => {
+    void window.api.setExtras({ 'ui:petState': encodePetState(s) })
+  }
+
+  /** 撸一把：+亲密度/+经验（冷却中返回 ok:false） */
+  const petNow = (): PetActionResult => {
+    const now = Date.now()
+    const before = petRef.current
+    const r = petOnce(applyDecay(before, now), now)
+    if (r.ok) {
+      setPet(r.state)
+      persistPet(r.state)
+      playPetAction('happy')
+    }
+    return { ok: r.ok, reason: r.reason, levelUps: r.state.level - before.level }
+  }
+
+  /** 喂食：+饱食度/+亲密度（吃饱了返回 ok:false） */
+  const feedNow = (): PetActionResult => {
+    const now = Date.now()
+    const before = petRef.current
+    const r = feedOnce(applyDecay(before, now), now)
+    if (r.ok) {
+      setPet(r.state)
+      persistPet(r.state)
+      playPetAction('eat')
+    }
+    return { ok: r.ok, reason: r.reason, levelUps: r.state.level - before.level }
+  }
+
+  /** 换一只：保留成长进度，只换形象与默认名 */
+  const changePet = (id: PetId): void => {
+    const now = Date.now()
+    const s: PetState = { ...applyDecay(petRef.current, now), id, name: petMeta(id).name, lastTickAt: now }
+    setPet(s)
+    persistPet(s)
+  }
+  const renamePet = (name: string): void => {
+    const s = { ...petRef.current, name }
+    setPet(s)
+    persistPet(s)
+  }
+  const togglePetDot = (on: boolean): void => {
+    setPetOn(on)
+    void window.api.setExtras({ 'ui:pet': on ? '1' : '' })
+  }
+  const togglePetCard = (): void => {
+    const next = !petCollapsed
+    setPetCollapsed(next)
+    void window.api.setExtras({ 'ui:petCard': next ? '0' : '1' })
+  }
+  const exportPet = async (): Promise<'ok' | 'cancel' | 'fail'> => {
+    const r = await window.api.exportPet(buildPetExport(petRef.current))
+    if (r.ok) return 'ok'
+    return r.canceled ? 'cancel' : 'fail'
+  }
+  const importPet = async (): Promise<'ok' | 'cancel' | 'fail'> => {
+    const r = await window.api.importPet()
+    if (!r.ok) return r.canceled ? 'cancel' : 'fail'
+    const st = decodePetState(r.text)
+    if (!st) return 'fail'
+    setPet(st)
+    persistPet(st)
+    return 'ok'
+  }
+
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance']).then((e) => setHideBalance(e['ui:hideBalance'] === '1'))
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:petCard']).then((e) => {
+      setHideBalance(e['ui:hideBalance'] === '1')
+      setPetOn(e['ui:pet'] === '1')
+      setPetCollapsed(e['ui:petCard'] === '0')
+      const st = decodePetState(e['ui:petState'])
+      if (st) setPet(applyDecay(st, Date.now()))
+    })
+  }, [])
+
+  // 惰性衰减的 UI 侧结算（持久化只在互动时写盘，见 persistPet）
+  useEffect(() => {
+    const t = window.setInterval(() => setPet((p) => applyDecay(p, Date.now())), 30_000)
+    return () => window.clearInterval(t)
   }, [])
 
   const toggleHideBalance = (): void => {
@@ -119,7 +229,13 @@ export default function App(): React.JSX.Element {
       <div className="app" data-skin={skin}>
         {skinCss && <style>{skinCss}</style>}
         {collapsed ? (
-          <CollapsedDot onExpand={doExpand} hideBalance={hideBalance} />
+          <CollapsedDot
+            onExpand={doExpand}
+            hideBalance={hideBalance}
+            pet={pet}
+            petOn={petOn}
+            onPet={petNow}
+          />
         ) : view === 'settings' ? (
           <SettingsView onBack={() => setView('card')} onDataChanged={() => void window.api.refreshNow()} />
         ) : view === 'detail' ? (
@@ -133,6 +249,18 @@ export default function App(): React.JSX.Element {
             state={state}
             hideBalance={hideBalance}
             onToggleHideBalance={toggleHideBalance}
+            pet={pet}
+            petOn={petOn}
+            petAction={petAction}
+            petCollapsed={petCollapsed}
+            onPet={petNow}
+            onFeed={feedNow}
+            onChangePet={changePet}
+            onRenamePet={renamePet}
+            onTogglePetDot={togglePetDot}
+            onTogglePetCard={togglePetCard}
+            onExportPet={exportPet}
+            onImportPet={importPet}
             onOpen={openDetail}
             onRefresh={() => void window.api.refreshNow()}
             onSettings={() => setView('settings')}

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
+import { shortWindowLabel } from '../../shared/tray-text'
+import type { PetId, PetState } from '../../shared/pet'
+import { PetCard, type PetActionResult } from './PetCard'
+import type { PetAction } from './PetSprites'
 import { Ring, Icon, IconButton, Bar, StatusDot } from './components'
 import { ProviderMark } from './ProviderMark'
 import {
@@ -19,10 +23,11 @@ import badgeIcon from './assets/icon.png?inline'
 // 主页：所有「已启用且有数据」的供应商以卡片网格呈现，点击任一卡片进入详情。
 // 卡片可拖拽排序（⌥←/⌥→ 亦可），顺序即优先级 —— 状态栏取第一位展示。
 
-/** 卡片主窗口：优先 5 小时/首个带限额的窗口，否则第一个窗口 */
-function primaryWindow(s: ProviderSnapshot): ProviderWindow | undefined {
-  if (s.windows.length === 0) return undefined
-  return s.windows.find((w) => w.limit != null && w.limit > 0) ?? s.windows[0]
+/** 卡片主窗口的默认选择：优先 5 小时/首个带限额的窗口，否则第一个窗口 */
+function defaultWindowIndex(s: ProviderSnapshot): number {
+  if (s.windows.length === 0) return 0
+  const i = s.windows.findIndex((w) => w.limit != null && w.limit > 0)
+  return i >= 0 ? i : 0
 }
 
 function CardLevel(s: ProviderSnapshot): Level {
@@ -45,13 +50,25 @@ function QualityChip({ s }: { s: ProviderSnapshot }): React.JSX.Element | null {
   )
 }
 
-/** 套餐卡（coding / token）：环形进度 + 用量 + 重置 */
-function PlanCard({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.Element {
+/** 套餐卡（coding / token）：窗口切换 + 环形进度 + 用量 + 重置 */
+function PlanCard({
+  s,
+  now,
+  winIndex,
+  onSelectWindow
+}: {
+  s: ProviderSnapshot
+  now: number
+  winIndex: number
+  onSelectWindow: (name: string) => void
+}): React.JSX.Element {
   const lvl = CardLevel(s)
-  const w = primaryWindow(s)
+  const idx = Math.min(Math.max(0, winIndex), Math.max(0, s.windows.length - 1))
+  const w: ProviderWindow | undefined = s.windows[idx]
   const pct = w ? windowPercent(w) : null
   const isActive = s.status === 'ok' && pct != null
   const stale = isStale(s)
+  const multi = s.windows.length > 1
 
   return (
     <>
@@ -60,6 +77,29 @@ function PlanCard({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.E
         <span className="pcard-name">{s.name}</span>
         <StatusDot lvl={lvl} />
       </span>
+      {multi && (
+        <span className="pcard-wins" role="group" aria-label="切换用量窗口">
+          {s.windows.map((win, i) => (
+            <button
+              key={win.name}
+              type="button"
+              className={
+                'win-chip' +
+                ` lvl-${levelOfPercent(windowPercent(win), 'ok')}` +
+                (i === idx ? ' on' : '')
+              }
+              title={`${win.name}${windowPercent(win) != null ? ` · ${windowPercent(win)}%` : ''}`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelectWindow(win.name)
+              }}
+            >
+              {shortWindowLabel(win.name)}
+            </button>
+          ))}
+        </span>
+      )}
       <span className="pcard-mid">
         {isActive ? (
           <Ring pct={pct!} lvl={lvl} size={58} stroke={5} dim={stale} />
@@ -176,6 +216,18 @@ export function CardView({
   state,
   hideBalance,
   onToggleHideBalance,
+  pet,
+  petOn,
+  petAction,
+  petCollapsed,
+  onPet,
+  onFeed,
+  onChangePet,
+  onRenamePet,
+  onTogglePetDot,
+  onTogglePetCard,
+  onExportPet,
+  onImportPet,
   onOpen,
   onRefresh,
   onSettings,
@@ -184,6 +236,18 @@ export function CardView({
   state: AppState
   hideBalance: boolean
   onToggleHideBalance: () => void
+  pet: PetState
+  petOn: boolean
+  petAction: PetAction
+  petCollapsed: boolean
+  onPet: () => PetActionResult
+  onFeed: () => PetActionResult
+  onChangePet: (id: PetId) => void
+  onRenamePet: (name: string) => void
+  onTogglePetDot: (on: boolean) => void
+  onTogglePetCard: () => void
+  onExportPet: () => Promise<'ok' | 'cancel' | 'fail'>
+  onImportPet: () => Promise<'ok' | 'cancel' | 'fail'>
   onOpen: (id: string) => void
   onRefresh: () => void
   onSettings: () => void
@@ -202,6 +266,32 @@ export function CardView({
   useEffect(() => {
     setOrder((prev) => reconcileOrder(prev, idsKey ? idsKey.split(',') : []))
   }, [idsKey])
+
+  // 卡片窗口偏好：`ui:cardWindow:<实例id>` = 窗口名（如「本周」），未设置时用默认窗口
+  const [winPrefs, setWinPrefs] = useState<Record<string, string>>({})
+  const winKeys = useMemo(() => configured.map((s) => `ui:cardWindow:${s.id}`), [idsKey])
+  const winKeysKey = winKeys.join(',')
+  useEffect(() => {
+    if (!winKeys.length) {
+      setWinPrefs({})
+      return
+    }
+    void window.api.getExtras(winKeys).then(setWinPrefs)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [winKeysKey])
+
+  const activeWindowIndex = (s: ProviderSnapshot): number => {
+    const pref = winPrefs[`ui:cardWindow:${s.id}`]
+    if (pref) {
+      const i = s.windows.findIndex((w) => w.name === pref)
+      if (i >= 0) return i
+    }
+    return defaultWindowIndex(s)
+  }
+  const selectWindow = (id: string, name: string): void => {
+    setWinPrefs((p) => ({ ...p, [`ui:cardWindow:${id}`]: name }))
+    void window.api.setExtras({ [`ui:cardWindow:${id}`]: name })
+  }
 
   const ordered = useMemo(() => {
     if (!order.length) return configured
@@ -479,6 +569,20 @@ export function CardView({
       </header>
 
       <div className="body-scroll">
+        <PetCard
+          pet={pet}
+          petOn={petOn}
+          action={petAction}
+          collapsed={petCollapsed}
+          onPet={onPet}
+          onFeed={onFeed}
+          onChangePet={onChangePet}
+          onRename={onRenamePet}
+          onToggleDot={onTogglePetDot}
+          onToggleCollapsed={onTogglePetCard}
+          onExport={onExportPet}
+          onImport={onImportPet}
+        />
         {firstLoad ? (
           <Skeleton />
         ) : configured.length === 0 ? (
@@ -522,7 +626,12 @@ export function CardView({
                   {s.kind === 'balance' ? (
                     <BalanceCard s={s} now={now} hide={hideBalance} />
                   ) : (
-                    <PlanCard s={s} now={now} />
+                    <PlanCard
+                      s={s}
+                      now={now}
+                      winIndex={activeWindowIndex(s)}
+                      onSelectWindow={(name) => selectWindow(s.id, name)}
+                    />
                   )}
                 </div>
               )
