@@ -101,7 +101,7 @@ function PlanCard({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.E
 }
 
 /** 余额卡：金额为主 */
-function BalanceCard({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.Element {
+function BalanceCard({ s, now, hide }: { s: ProviderSnapshot; now: number; hide: boolean }): React.JSX.Element {
   const lvl = CardLevel(s)
   const w = s.windows[0]
   const isActive = s.status === 'ok' && !!w
@@ -116,7 +116,19 @@ function BalanceCard({ s, now }: { s: ProviderSnapshot; now: number }): React.JS
         <StatusDot lvl={lvl} />
       </span>
       <span className="pcard-big">
-        {isActive ? fmtAmount(w.used, w.unit) : s.status === 'error' ? <Icon name="lightning" size={22} /> : '—'}
+        {isActive ? (
+          hide ? (
+            <span className="amount-hidden" aria-label="余额已隐藏">
+              ••••
+            </span>
+          ) : (
+            fmtAmount(w.used, w.unit)
+          )
+        ) : s.status === 'error' ? (
+          <Icon name="lightning" size={22} />
+        ) : (
+          '—'
+        )}
       </span>
       <span className="pcard-foot">
         {stale ? (
@@ -162,12 +174,16 @@ function reconcileOrder(prev: string[], ids: string[]): string[] {
 
 export function CardView({
   state,
+  hideBalance,
+  onToggleHideBalance,
   onOpen,
   onRefresh,
   onSettings,
   onCollapse
 }: {
   state: AppState
+  hideBalance: boolean
+  onToggleHideBalance: () => void
   onOpen: (id: string) => void
   onRefresh: () => void
   onSettings: () => void
@@ -450,6 +466,11 @@ export function CardView({
           </span>
         </span>
         <IconButton
+          name={hideBalance ? 'eyeOff' : 'eye'}
+          title={hideBalance ? '显示余额' : '隐藏余额'}
+          onClick={onToggleHideBalance}
+        />
+        <IconButton
           name="refresh"
           title="立即刷新"
           className={scanning ? 'spinning' : ''}
@@ -498,7 +519,11 @@ export function CardView({
                     onOpen(s.id)
                   }}
                 >
-                  {s.kind === 'balance' ? <BalanceCard s={s} now={now} /> : <PlanCard s={s} now={now} />}
+                  {s.kind === 'balance' ? (
+                    <BalanceCard s={s} now={now} hide={hideBalance} />
+                  ) : (
+                    <PlanCard s={s} now={now} />
+                  )}
                 </div>
               )
             })}

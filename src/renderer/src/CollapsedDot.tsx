@@ -41,7 +41,7 @@ function dotLevel(s: ProviderSnapshot | undefined): Level {
   return levelOfPercent(Math.max(...pcts), 'ok')
 }
 
-export function CollapsedDot({ onExpand }: { onExpand: () => void }): React.JSX.Element {
+export function CollapsedDot({ onExpand, hideBalance }: { onExpand: () => void; hideBalance: boolean }): React.JSX.Element {
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
   const [idx, setIdx] = useState(0)
   const press = useRef({ down: false, moved: false, x: 0, y: 0 })
@@ -117,13 +117,13 @@ export function CollapsedDot({ onExpand }: { onExpand: () => void }): React.JSX.
 
   const pct = worst ? windowPercent(worst) : null
 
-  // 中心数值：套餐类显示百分比（有小数则带小数），余额类显示紧凑金额
+  // 中心数值：套餐类显示百分比（有小数则带小数），余额类显示紧凑金额（可隐藏）
   let value = '…'
   if (s) {
     if (s.status === 'error') value = '!'
     else if (s.status === 'nodata') value = '—'
     else if (pct != null) value = fmtPercent(pct)
-    else if (worst) value = compactAmount(worst.used, worst.unit)
+    else if (worst) value = hideBalance && s.kind === 'balance' ? '••••' : compactAmount(worst.used, worst.unit)
     else value = '—'
   }
 

@@ -69,6 +69,8 @@ type IconName =
   | 'history'
   | 'flask'
   | 'wifiOff'
+  | 'eye'
+  | 'eyeOff'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   refresh: (
@@ -161,6 +163,20 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M2 8.8a15 15 0 0 1 4.2-2.6" />
       <path d="M22 8.8a15 15 0 0 0-11.3-3.8" />
       <path d="m2 2 20 20" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M2.5 12S6 5.5 12 5.5c1.2 0 2.3.25 3.3.66" />
+      <path d="M19.4 8.7c1.3 1.5 2.1 3.3 2.1 3.3S18 18.5 12 18.5c-1.4 0-2.7-.35-3.8-.9" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <path d="m3 3 18 18" />
     </>
   )
 }

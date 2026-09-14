@@ -282,6 +282,8 @@ export function SettingsView({ onBack, onDataChanged }: { onBack: () => void; on
   const [skins, setSkins] = useState<{ id: string; name: string; builtin: boolean }[]>([])
   const [refreshInterval, setRefreshInterval] = useState('60')
   const [autostart, setAutostart] = useState(false)
+  /** 系统登录项里残留的本应用（旧版本遗留，本开关管不到） */
+  const [foreignLoginItem, setForeignLoginItem] = useState(false)
 
   const refresh = useCallback(async () => {
     const [p, cat, ex] = await Promise.all([
@@ -296,6 +298,7 @@ export function SettingsView({ onBack, onDataChanged }: { onBack: () => void; on
     setRefreshInterval(ex['refreshInterval'] || ex['interval:plan'] || '60')
     await window.api.listSkins().then(setSkins)
     await window.api.getAutostart().then(setAutostart)
+    await window.api.hasForeignLoginItem().then(setForeignLoginItem)
   }, [])
 
   useEffect(() => {
@@ -660,6 +663,12 @@ export function SettingsView({ onBack, onDataChanged }: { onBack: () => void; on
             <span className="knob" />
           </button>
         </div>
+        {foreignLoginItem && (
+          <div className="settings-note warn">
+            系统「登录项」里还残留着本应用（多来自旧版本），本开关无法移除它。请到
+            「系统偏好设置 → 用户与群组 → 登录项」中手动删除，否则仍会开机启动。
+          </div>
+        )}
         {payload?.scanHits && payload.scanHits.length > 0 && (
           <div className="scan-hits">
             <div className="field-label">环境变量扫描</div>

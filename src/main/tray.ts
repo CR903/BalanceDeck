@@ -18,6 +18,7 @@ let toggleFn: () => void = () => {}
 let currentIconKey = ''
 let currentImage: Electron.NativeImage | null = null
 let lastTitle = ''
+let contextMenu: Menu | null = null
 const iconCache = new Map<string, Electron.NativeImage>()
 
 function defaultIconPath(): string {
@@ -34,21 +35,39 @@ export function createTray(onToggle: () => void, onRefresh: () => void): Tray {
   }
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
   tray.setToolTip('BalanceDeck 余额板')
+  // 左键点击 → 直接切换悬浮卡片显隐（这是菜单栏组件的核心操作）
   tray.on('click', () => toggleFn())
+  if (process.platform === 'darwin') {
+    // ⚠️ macOS 上 setContextMenu 会让菜单抢占左键点击（click 事件不再触发），
+    // 表现为"点击状态栏只弹菜单、面板要再从菜单里点一次"。
+    // 因此 macOS 只在右键时弹出菜单；左键保持显隐切换（见 rebuildMenu）。
+    tray.on('right-click', () => {
+      if (tray && contextMenu) tray.popUpContextMenu(contextMenu)
+    })
+  }
   rebuildMenu(onRefresh)
   return tray
 }
 
+function buildMenu(onRefresh: () => void): Menu {
+  return Menu.buildFromTemplate([
+    { label: '显示 / 隐藏悬浮卡片', click: () => toggleFn() },
+    { label: '立即刷新', click: () => onRefresh() },
+    { type: 'separator' },
+    { label: '退出 BalanceDeck', click: () => app.quit() }
+  ])
+}
+
 export function rebuildMenu(onRefresh: () => void): void {
   if (!tray) return
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: '显示 / 隐藏悬浮卡片', click: () => toggleFn() },
-      { label: '立即刷新', click: () => onRefresh() },
-      { type: 'separator' },
-      { label: '退出 BalanceDeck', click: () => app.quit() }
-    ])
-  )
+  contextMenu = buildMenu(onRefresh)
+  // macOS 的菜单在右键时手动弹出，不调 setContextMenu（否则左键会被菜单吃掉）
+  if (process.platform !== 'darwin') tray.setContextMenu(contextMenu)
+}
+
+/** 测试观测点：托盘交互模式（macOS 必须为 click-toggle，回归"点击不显隐"） */
+export function trayInteractionMode(): 'click-toggle' | 'context-menu' {
+  return process.platform === 'darwin' ? 'click-toggle' : 'context-menu'
 }
 
 /**

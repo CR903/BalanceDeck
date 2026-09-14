@@ -13,7 +13,7 @@
     "uitest": "npm run build && electron . --uitest",
     "shots": "npm run build && electron . --shots",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "icons": "node scripts/gen-icons.js && mkdir -p src/renderer/src/assets && cp build/icon.png src/renderer/src/assets/icon.png",
+    "icons": "node scripts/gen-icons.js && mkdir -p src/renderer/src/assets && cp build/badge.png src/renderer/src/assets/icon.png",
     "test:ssr": "node scripts/test-ssr-parser.mjs",
     "test:percent": "node scripts/test-percent.mjs",
     "test:quality": "node scripts/test-quality.mjs",

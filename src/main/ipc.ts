@@ -1,7 +1,8 @@
-import { ipcMain, app } from 'electron'
+import { ipcMain } from 'electron'
 import { setCollapsed, getOverlay, dragStart, dragStop } from './overlay'
 import { refreshNow, currentState, resort, reconfigure, debugPush } from './scheduler'
-import { setTrayIcon } from './tray'
+import { setTrayIcon, trayInteractionMode } from './tray'
+import { getAutostart, setAutostart, hasSystemLoginItem } from './autostart'
 import { trayTitle } from '../shared/tray-text'
 import { getKey, setKey, setExtra, getExtra } from './keystore'
 import { scanEnv } from './scanner'
@@ -172,7 +173,8 @@ export function registerIpc(): void {
     }
     // 频率变更需重排定时器（否则最长要等一整轮才生效）
     if (touchedInterval) reconfigure()
-    else refreshNow()
+    // 纯界面偏好（ui:*，如隐藏余额）不触发采集，避免无畏的网络请求
+    else if (!Object.keys(patch ?? {}).every((k) => k.startsWith('ui:'))) refreshNow()
   })
 
   // ─── 托盘图标（渲染层栅格化的供应商 logo，template PNG）────────────────────
@@ -191,13 +193,12 @@ export function registerIpc(): void {
     if (typeof id === 'string' && id) void setSkin(id)
   })
 
-  // ─── 开机自启 ──────────────────────────────────────────────────────────────
+  // ─── 开机自启（macOS 走 LaunchAgent，Windows 走 LoginItem API）──────────────
 
-  ipcMain.handle('autostart:get', () => app.getLoginItemSettings().openAtLogin)
-  ipcMain.handle('autostart:set', (_e, open: boolean) => {
-    app.setLoginItemSettings({ openAtLogin: !!open })
-    return app.getLoginItemSettings().openAtLogin
-  })
+  ipcMain.handle('autostart:get', () => getAutostart())
+  ipcMain.handle('autostart:set', (_e, open: boolean) => setAutostart(!!open))
+  // 系统里是否有本开关管不到的旧登录项（提示用户手动清理）
+  ipcMain.handle('autostart:foreign', () => hasSystemLoginItem())
 
   // ─── 测试观测点（仅 --uitest 注册；生产运行时不暴露任何注入能力）──────────
 
@@ -208,6 +209,8 @@ export function registerIpc(): void {
     })
     // 托盘标题在渲染层不可见，只能由主进程回传（验证状态栏文案）
     ipcMain.handle('debug:tray-title', () => trayTitle(currentState().snapshots, !!currentState().offline))
+    // 托盘交互模式：macOS 必须是 click-toggle（左键直接显隐；右键才弹菜单）
+    ipcMain.handle('debug:tray-mode', () => trayInteractionMode())
   }
 
   // 渲染进程申请打开设置视图时，确保窗口处于展开态（由 renderer 直接切视图）

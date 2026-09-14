@@ -41,6 +41,18 @@ export default function App(): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
   const [skin, setSkinId] = useState('aero')
   const [skinCss, setSkinCss] = useState<string | null>(null)
+  /** 主面板余额显隐（ui:hideBalance）——隐私偏好，跨收起态共享 */
+  const [hideBalance, setHideBalance] = useState(false)
+
+  useEffect(() => {
+    void window.api.getExtras(['ui:hideBalance']).then((e) => setHideBalance(e['ui:hideBalance'] === '1'))
+  }, [])
+
+  const toggleHideBalance = (): void => {
+    const next = !hideBalance
+    setHideBalance(next)
+    void window.api.setExtras({ 'ui:hideBalance': next ? '1' : '' })
+  }
 
   useEffect(() => {
     void window.api.getState().then(setState)
@@ -107,7 +119,7 @@ export default function App(): React.JSX.Element {
       <div className="app" data-skin={skin}>
         {skinCss && <style>{skinCss}</style>}
         {collapsed ? (
-          <CollapsedDot onExpand={doExpand} />
+          <CollapsedDot onExpand={doExpand} hideBalance={hideBalance} />
         ) : view === 'settings' ? (
           <SettingsView onBack={() => setView('card')} onDataChanged={() => void window.api.refreshNow()} />
         ) : view === 'detail' ? (
@@ -119,6 +131,8 @@ export default function App(): React.JSX.Element {
         ) : (
           <CardView
             state={state}
+            hideBalance={hideBalance}
+            onToggleHideBalance={toggleHideBalance}
             onOpen={openDetail}
             onRefresh={() => void window.api.refreshNow()}
             onSettings={() => setView('settings')}

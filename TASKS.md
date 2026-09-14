@@ -313,6 +313,41 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - `dragEscapeCancel`：Escape 取消后顺序不变、无悬空卡片
 - `--shots` 新增 `8-drag-preview` / `8b-drag-cancelled` 走查截图
 
+## 2026-09-14 第十四轮：两个 bug + 四项体验（用户反馈）
+
+**1. BUG：开机自启开关无效（完全点不动）**
+- 端到端定位：在本机（macOS 12.7.6 + Electron 37.10.3）用探针实测 —— `app.setLoginItemSettings({openAtLogin:false})` 之后
+  `getLoginItemSettings()` 仍为 `true`，系统 BTM 数据库 `backgrounditems.btm` mtime 毫秒级不变 → **该 API 在本平台是空操作**
+  （Electron < macOS 13 走 LSSharedFileList 老接口，与系统的 Background Task Management 已脱节；`get` 又会命中历史遗留登录项）。
+- 改为 **LaunchAgent 实现（仅 macOS）**：`~/Library/LaunchAgents/dev.zhouri.balancedeck.plist`（`RunAtLoad` + `open -a <App>.app`），
+  以「文件是否存在」为唯一状态源；关闭时额外调一次 Electron API 兜底清理旧格式登录项（macOS 13+ 有效）。
+  Windows 仍用 `app.setLoginItemSettings`（注册表 Run 键）。
+- `src/main/autostart.ts` 新增；uitest 用 `BALANCEDECK_AUTOSTART_DIR` 沙箱目录往返校验（true→plist 落地且结构正确 / false→文件删除），不碰真实登录项。
+- **残留登录项警示**：设置页检测到系统登录项里仍有本应用（旧版本遗留 / 手动添加，本开关管不到）时给出琥珀色提示，指引到「系统偏好设置 → 用户与群组 → 登录项」手动删除。
+- 启动自愈：应用被移动过（如 dist/ → /Applications）且已开启自启时，自动用当前 .app 路径重写登录项。
+- 遗留：用户机器上此前注册的极老登录项无法由 API 删除，靠上面的警示提示手动移除一次。
+
+**2. BUG：点击状态栏只弹菜单，不能显隐面板**
+- 根因：macOS 上调过 `tray.setContextMenu()` 后，左键点击被菜单抢占（`click` 事件不再触发）。
+- 修复：macOS 不再 `setContextMenu`，改为左键 `click` → 直接切换显隐、**右键** `popUpContextMenu` 弹菜单；Windows 行为不变。
+- 回归：uitest 新增 `debug:tray-mode` 断言（darwin 必须为 `click-toggle`）。
+
+**3. 主面板余额支持显隐**
+- 卡片标题栏新增眼睛按钮（`hideBalance`/`showBalance` 两种图标），偏好存 `extras.ui:hideBalance`（即改即存，纯 UI 键不触发采集）。
+- 开启后：余额卡片大额显示 `••••`；收起态圆点同步打码（套餐百分比不受影响）。
+
+**4. 打包后 Dock / 访达图标偏大**
+- 根因：应用图标图形铺满整张画布（512×512 无留白），而 macOS 图标网格要求 1024 画布内图形占 824。
+- 修复：`gen-icons.js` 生成 1024×1024（四周各留 100）的 `build/icon.png`；界面内徽标改用满幅版 `build/badge.png`（`npm run icons` 拷贝到 assets）。
+
+**5. OpenCode Go 卡片「用量 / 限额」折行把卡片撑高**
+- `.pcard-meta` 由纵向堆叠改为**一行**（`flex-direction: row` + baseline）：`$0.09 / $12.00` 单行显示，卡片高度随之回落。
+
+**6. 收起态圆点扁平、边缘发黑**
+- `.dot-btn::before` 叠加玻璃质感：顶部径向高光 + 发丝亮边（`inset 0 0 0 1px` 白 16%）+ 底部内阴影，深色壁纸下不再是扁平黑圆（外阴影仍由原生 `hasShadow` 提供）。
+
+**验证**：typecheck ✓ build ✓ 单元测试 ✓ uitest（含 5 项新断言）✓ shots 走查（新增 `1b-card-hide-balance`）✓ dist:mac ✓（icns 1024 留白 100px 实测校验）
+
 ## 已知注意事项
 - Electron 必须 ≤37（macOS 12 兼容），升级前先跑 `npm run smoke`。
 - 智谱余额端点为社区验证版本（`/api/paas/v4/users/me/balance`），响应格式变化时适配器会报"响应格式未识别"，属预期自愈提示。

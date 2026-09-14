@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { createOverlay, toggleOverlay, loadPersisted, getOverlay } from './overlay'
 import { createTray, updateTray, currentTrayTitle, trayImageInfo } from './tray'
+import { syncAutostart } from './autostart'
 import { startScheduler, refreshNow, currentState, stopScheduler } from './scheduler'
 import { registerIpc, consumeDragFired } from './ipc'
 import type { AppState } from '../shared/types'
@@ -119,6 +120,8 @@ app.whenReady().then(async () => {
   createOverlay()
   createTray(toggleOverlay, refreshNow)
   startScheduler(pushState, updateTray)
+  // 已开启开机自启时，用当前 .app 路径重写登录项（应用被移动过的自愈）
+  syncAutostart()
 })
 
 app.on('window-all-closed', () => {
@@ -153,6 +156,12 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await sleep(900)
   await shoot('1-card')
   await shoot('1-corner', { x: 0, y: 0, width: 80, height: 80 })
+  // 余额显隐（点击眼睛 → 打码；再点还原）
+  await exec("[...document.querySelectorAll('.icon-btn')].find(b=>/余额/.test(b.title))?.click()")
+  await sleep(500)
+  await shoot('1b-card-hide-balance')
+  await exec("[...document.querySelectorAll('.icon-btn')].find(b=>/余额/.test(b.title))?.click()")
+  await sleep(400)
   if (await exec("!!document.querySelector('.pcard')")) {
     await exec("document.querySelector('.pcard')?.click()")
     await sleep(800)
@@ -180,6 +189,8 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
 
   await exec("document.querySelector('.settings-body')?.scrollTo(0, 99999)")
   await sleep(500)
+  // 系统区（开机自启开关 + 残留登录项警示）
+  await shoot('3c-settings-system')
   await exec("[...document.querySelectorAll('.add-btn')].find(b=>b.textContent.includes('自定义'))?.click()")
   await sleep(700)
   await exec("document.querySelector('.custom-form')?.scrollIntoView({block:'center'})")
@@ -260,6 +271,9 @@ async function runUiTest(
   consoleErrors: string[]
 ): Promise<Record<string, string>> {
   const r: Record<string, string> = {}
+  // 开机自启测试落在临时目录，避免在开发者机器上写入真实 LaunchAgent
+  const autostartDir = join(app.getPath('temp'), 'balancedeck-uitest-autostart')
+  process.env.BALANCEDECK_AUTOSTART_DIR = autostartDir
   const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
   const exec = (js: string): Promise<unknown> => win.webContents.executeJavaScript(js, true)
   const bounds = (): Electron.Rectangle => win.getBounds()
@@ -478,6 +492,78 @@ async function runUiTest(
     !trayTitle || (!/undefined|NaN/.test(trayTitle) && /[0-9]/.test(trayTitle))
       ? `ok(${trayTitle})`
       : `fail:${trayTitle}`
+
+  // 托盘交互模式：macOS 左键直接显隐面板（回归"点击状态栏只弹菜单"）
+  const trayMode = String(await exec('window.api.debugTrayMode()'))
+  r.trayMode =
+    process.platform === 'darwin'
+      ? trayMode === 'click-toggle'
+        ? 'ok'
+        : `fail:${trayMode}`
+      : `skipped(${trayMode})`
+
+  // 主面板余额显隐（眼睛按钮：打码 + 偏好持久化 + 可还原）
+  const clickEye = (): Promise<unknown> =>
+    exec(
+      "[...document.querySelectorAll('.icon-btn')].find(b=>/余额/.test(b.title))?.click()"
+    )
+  const readHidden = async (): Promise<boolean> =>
+    (await exec("window.api.getExtras(['ui:hideBalance']).then(e=>e['ui:hideBalance']==='1')")) === true
+  const hasBalanceCard = (await exec("!!document.querySelector('.pcard.balance')")) === true
+  const wasHidden = await readHidden()
+  const flip = async (): Promise<{ hidden: boolean; masked: boolean }> => {
+    await clickEye()
+    await sleep(400)
+    return {
+      hidden: await readHidden(),
+      masked: (await exec("!!document.querySelector('.pcard.balance .amount-hidden')")) === true
+    }
+  }
+  const first = await flip()
+  r.hideBalance =
+    first.hidden === !wasHidden && (!hasBalanceCard || first.masked === first.hidden)
+      ? 'ok'
+      : `fail:${JSON.stringify(first)}`
+  const back = await flip()
+  r.hideBalanceRestore =
+    back.hidden === wasHidden && (!hasBalanceCard || back.masked === back.hidden)
+      ? 'ok'
+      : `fail:${JSON.stringify(back)}`
+
+  // 套餐卡：用量与限额必须同一行（回归"折行把卡片撑高"）——两段文字框竖直方向必须重叠
+  r.planMetaOneLine = String(
+    await exec(`(()=>{
+      const card=[...document.querySelectorAll('.pcard.plan')].find(c=>c.querySelector('.pcard-limit'))
+      if(!card) return 'skip:no-plan-limit'
+      const a=card.querySelector('.pcard-amount'), b=card.querySelector('.pcard-limit')
+      if(!a||!b) return 'skip:no-el'
+      const ra=a.getBoundingClientRect(), rb=b.getBoundingClientRect()
+      return ra.bottom>rb.top && rb.bottom>ra.top ? 'ok' : 'fail:wrap'
+    })()`)
+  )
+
+  // 开机自启：沙箱目录内往返（true → plist 落地且结构正确；false → 文件删除），不碰真实登录项
+  const agentFile = join(autostartDir, 'dev.zhouri.balancedeck.plist')
+  const autoOn = (await exec('window.api.setAutostart(true)')) === true
+  const autoGet = (await exec('window.api.getAutostart()')) === true
+  let plistOk = true
+  if (process.platform === 'darwin') {
+    const { existsSync, readFileSync, readdirSync } = await import('fs')
+    const text = existsSync(agentFile) ? readFileSync(agentFile, 'utf-8') : ''
+    const list = existsSync(autostartDir) ? readdirSync(autostartDir).join('|') : 'NO-DIR'
+    plistOk =
+      text.includes('<key>RunAtLoad</key>') &&
+      text.includes('/usr/bin/open') &&
+      text.includes('LimitLoadToSessionType') &&
+      list === 'dev.zhouri.balancedeck.plist'
+  }
+  const autoOff = (await exec('window.api.setAutostart(false)')) === false
+  // 关闭后状态必须真的为「关」（文件已删除）
+  const autoFinalOff = (await exec('window.api.getAutostart()')) === false
+  r.autostart =
+    autoOn && autoGet && plistOk && autoOff && autoFinalOff
+      ? 'ok'
+      : `fail:on=${autoOn},get=${autoGet},plist=${plistOk},off=${autoOff},finalOff=${autoFinalOff}`
 
   // 数据诚实：注入"缓存 / 本机估算 / 出错"验证降级渲染（真实数据难复现）
   const fakeSnap = (quality: string): string =>

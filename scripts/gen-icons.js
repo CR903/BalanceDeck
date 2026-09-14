@@ -57,32 +57,40 @@ function roundedRectMask(x, y, size, radius) {
   return true
 }
 
-/** 应用图标：渐变蓝紫圆角方块 + 白色三柱状图 */
-function genAppIcon(size) {
+/**
+ * 应用图标：渐变蓝紫圆角方块 + 白色三柱状图。
+ *
+ * `artSize` 决定图形在画布中的占比：macOS 使用 Apple 图标网格 —— 1024 画布内
+ * 圆角方形占 824（四周各留 100）。不留白时 Dock / 访达 / 启动台里会比系统
+ * 图标明显大一圈（用户反馈："程序坞图标比别的 app 大，不协调"）。
+ */
+function genAppIcon(size, artSize = size) {
   const px = Buffer.alloc(size * size * 4)
-  const r = Math.round(size * 0.22)
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 4
-      if (!roundedRectMask(x, y, size, r)) continue
-      const t = (x + y) / (2 * size)
+  const off = Math.round((size - artSize) / 2)
+  const r = Math.round(artSize * 0.22)
+  for (let y = 0; y < artSize; y++) {
+    for (let x = 0; x < artSize; x++) {
+      if (!roundedRectMask(x, y, artSize, r)) continue
+      const i = ((y + off) * size + (x + off)) * 4
+      const t = (x + y) / (2 * artSize)
       px[i] = Math.round(58 + (124 - 58) * t) // R: #3a7bd5 -> #7c3aed
       px[i + 1] = Math.round(123 + (58 - 123) * t)
       px[i + 2] = Math.round(213 + (237 - 213) * t)
       px[i + 3] = 255
     }
   }
-  // 三根柱子（柱状图，从左到右升高）
-  const barW = Math.round(size * 0.11)
+  // 三根柱子（柱状图，从左到右升高；底边统一在 78% 处）
+  const barW = Math.round(artSize * 0.11)
+  const baseline = Math.round(artSize * 0.78)
   const barDefs = [
-    [Math.round(size * 0.27), Math.round(size * 0.62), Math.round(size * 0.28)],
-    [Math.round(size * 0.445), Math.round(size * 0.45), Math.round(size * 0.55)],
-    [Math.round(size * 0.62), Math.round(size * 0.28), Math.round(size * 0.72)]
+    [Math.round(artSize * 0.27), Math.round(artSize * 0.62)],
+    [Math.round(artSize * 0.445), Math.round(artSize * 0.45)],
+    [Math.round(artSize * 0.62), Math.round(artSize * 0.28)]
   ]
-  for (const [x0, y0, yEnd] of barDefs) {
-    for (let y = y0; y < size * yEnd / size + y0 && y < Math.round(size * 0.78); y++) {
+  for (const [x0, y0] of barDefs) {
+    for (let y = y0; y < baseline; y++) {
       for (let x = x0; x < x0 + barW; x++) {
-        const i = (y * size + x) * 4
+        const i = ((y + off) * size + (x + off)) * 4
         px[i] = 255
         px[i + 1] = 255
         px[i + 2] = 255
@@ -156,7 +164,10 @@ function icoEncode(px, size) {
 
 const buildDir = join(__dirname, '..', 'build')
 mkdirSync(buildDir, { recursive: true })
-writeFileSync(join(buildDir, 'icon.png'), pngEncode(genAppIcon(512), 512, 512))
+// macOS 应用图标：1024 画布 + 824 图形（Apple 图标网格，避免 Dock 里偏大）
+writeFileSync(join(buildDir, 'icon.png'), pngEncode(genAppIcon(1024, 824), 1024, 1024))
+// 界面内徽标：图形铺满画布（圆角方形直接做 8px 圆角遮罩）
+writeFileSync(join(buildDir, 'badge.png'), pngEncode(genAppIcon(512), 512, 512))
 writeFileSync(join(buildDir, 'icon.ico'), icoEncode(genAppIcon(256), 256))
 writeFileSync(join(buildDir, 'trayTemplate.png'), pngEncode(genTrayIcon(16), 16, 16))
 writeFileSync(join(buildDir, 'trayTemplate@2x.png'), pngEncode(genTrayIcon(32), 32, 32))

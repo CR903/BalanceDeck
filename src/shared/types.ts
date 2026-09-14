@@ -242,4 +242,8 @@ export interface BalanceDeckApi {
   onSkin(cb: (id: string) => void): () => void
   getAutostart(): Promise<boolean>
   setAutostart(open: boolean): Promise<boolean>
+  /** 系统登录项里是否残留本应用（不受本开关控制，需手动清理） */
+  hasForeignLoginItem(): Promise<boolean>
+  /** 测试观测点：托盘交互模式（仅 --uitest） */
+  debugTrayMode(): Promise<string>
 }

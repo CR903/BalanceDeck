@@ -48,6 +48,8 @@ const api = {
   debugPush: (snapshots: unknown, offline?: boolean): Promise<void> =>
     ipcRenderer.invoke('debug:push', snapshots, offline === true),
   debugTrayTitle: (): Promise<string> => ipcRenderer.invoke('debug:tray-title'),
+  /** 托盘交互模式：macOS 应为 click-toggle（左键直接显隐，右键菜单） */
+  debugTrayMode: (): Promise<string> => ipcRenderer.invoke('debug:tray-mode'),
 
   // ─── 皮肤 ──────────────────────────────────────────────────────────────────
   listSkins: (): Promise<SkinInfo[]> => ipcRenderer.invoke('skins:list'),
@@ -63,7 +65,9 @@ const api = {
 
   // ─── 系统 ──────────────────────────────────────────────────────────────────
   getAutostart: (): Promise<boolean> => ipcRenderer.invoke('autostart:get'),
-  setAutostart: (open: boolean): Promise<boolean> => ipcRenderer.invoke('autostart:set', open)
+  setAutostart: (open: boolean): Promise<boolean> => ipcRenderer.invoke('autostart:set', open),
+  /** 系统登录项里是否残留本应用（本开关无法移除，需用户手动清理） */
+  hasForeignLoginItem: (): Promise<boolean> => ipcRenderer.invoke('autostart:foreign')
 }
 
 contextBridge.exposeInMainWorld('api', api)
