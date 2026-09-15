@@ -3,9 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 本地应用：脚本/样式只允许自身；图片与 fetch 额外允许 data:/blob: ——
+         3D 宠物素材（GLB）以 base64 data URL 内联，贴图由 loader 解成 blob URL。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:"
     />
     <title>BalanceDeck</title>
   </head>

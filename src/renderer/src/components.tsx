@@ -71,6 +71,9 @@ type IconName =
   | 'wifiOff'
   | 'eye'
   | 'eyeOff'
+  | 'heart'
+  | 'download'
+  | 'upload'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   refresh: (
@@ -163,6 +166,21 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M2 8.8a15 15 0 0 1 4.2-2.6" />
       <path d="M22 8.8a15 15 0 0 0-11.3-3.8" />
       <path d="m2 2 20 20" />
+    </>
+  ),
+  heart: <path d="M12 20.7 4.6 13.3a4.6 4.6 0 0 1 6.5-6.5l.9.9.9-.9a4.6 4.6 0 0 1 6.5 6.5Z" />,
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="M7 11l5 5 5-5" />
+      <path d="M4 20h16" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 17V5" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M4 20h16" />
     </>
   ),
   eye: (

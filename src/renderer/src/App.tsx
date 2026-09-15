@@ -3,11 +3,11 @@ import type { AppState } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
-import { CollapsedDot } from './CollapsedDot'
+import { PetBall } from './PetBall'
 import { renderTrayIcon } from './ProviderMark'
-import type { PetAction } from './PetSprites'
-import type { PetActionResult } from './PetCard'
+import type { PetAction } from './pet3d/scene'
 import {
+  PETS,
   applyDecay,
   buildPetExport,
   decodePetState,
@@ -15,10 +15,13 @@ import {
   encodePetState,
   feedOnce,
   petMeta,
+  petMood,
   petOnce,
+  type PetActionResult,
   type PetId,
   type PetState
 } from '../../shared/pet'
+import type { PetMenuModel } from '../../shared/types'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -58,20 +61,25 @@ export default function App(): React.JSX.Element {
   /** 主面板余额显隐（ui:hideBalance）——隐私偏好，跨收起态共享 */
   const [hideBalance, setHideBalance] = useState(false)
 
-  // ─── 宠物精灵（状态由 App 统一持有：面板与收起态圆点共用同一份成长数据）──
+  // ─── 宠物（状态由 App 统一持有：悬浮球、右键菜单、设置页共用同一份成长数据）──
   const [pet, setPet] = useState<PetState>(() => defaultPetState())
   const petRef = useRef(pet)
   petRef.current = pet
-  /** 圆点是否显示宠物（ui:pet） */
-  const [petOn, setPetOn] = useState(false)
-  /** 面板宠物卡片是否收起（ui:petCard） */
-  const [petCollapsed, setPetCollapsed] = useState(false)
+  /** 收起态是否作为 3D 桌面宠物（ui:pet）：关闭后收起态退回 2D 圆点 */
+  const [petOn, setPetOn] = useState(true)
+  /** 悬浮球是否显示用量环（ui:petRing） */
+  const [petRing, setPetRing] = useState(true)
+  /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
+  const [alwaysTop, setAlwaysTop] = useState(true)
   /** 当前播放的宠物动作（happy/eat），播完自动回 idle */
   const [petAction, setPetAction] = useState<PetAction>('idle')
+  /** 动作序号：同一动作重复触发时也要求重播 */
+  const [actionSeq, setActionSeq] = useState(0)
   const actionTimer = useRef<number | null>(null)
 
   const playPetAction = (a: PetAction): void => {
     setPetAction(a)
+    setActionSeq((n) => n + 1)
     if (actionTimer.current !== null) window.clearTimeout(actionTimer.current)
     actionTimer.current = window.setTimeout(() => setPetAction('idle'), a === 'happy' ? 1700 : 2400)
   }
@@ -118,14 +126,70 @@ export default function App(): React.JSX.Element {
     setPet(s)
     persistPet(s)
   }
-  const togglePetDot = (on: boolean): void => {
+  /** 收起态是否显示 3D 桌面宠物（关闭 = 退回 2D 圆点） */
+  const togglePetBall = (on: boolean): void => {
     setPetOn(on)
-    void window.api.setExtras({ 'ui:pet': on ? '1' : '' })
+    void window.api.setExtras({ 'ui:pet': on ? '1' : '0' })
   }
-  const togglePetCard = (): void => {
-    const next = !petCollapsed
-    setPetCollapsed(next)
-    void window.api.setExtras({ 'ui:petCard': next ? '0' : '1' })
+  /** 总在最前（关闭后不再悬浮于其它窗口之上） */
+  const toggleAlwaysTop = (on: boolean): void => {
+    setAlwaysTop(on)
+    window.api.setAlwaysOnTop(on)
+    void window.api.setExtras({ 'ui:alwaysOnTop': on ? '1' : '0' })
+  }
+  /** 悬浮球是否显示用量环 */
+  const togglePetRing = (on: boolean): void => {
+    setPetRing(on)
+    void window.api.setExtras({ 'ui:petRing': on ? '1' : '0' })
+  }
+
+  /** 悬浮球右键菜单：原生菜单由主进程渲染，动作回到这里执行 */
+  const petMenu = async (): Promise<string | null> => {
+    const p = petRef.current
+    const model: PetMenuModel = {
+      title: `${p.name} · Lv.${p.level}`,
+      status: `亲密度 ${Math.round(p.affection)} · 饱食度 ${Math.round(p.fullness)} · ${
+        petMood(p) === 'hungry' ? '饿了' : petMood(p) === 'lonely' ? '有点孤单' : petMood(p) === 'happy' ? '心情很好' : '还好'
+      }`,
+      canPet: true,
+      canFeed: p.fullness < 95,
+      pets: PETS.map((x) => ({ id: x.id, name: x.name, checked: x.id === p.id })),
+      ring: petRing,
+      alwaysOnTop: alwaysTop,
+      hideBalance
+    }
+    const picked = await window.api.petMenu(model)
+    if (!picked) return null
+    if (picked === 'pet') {
+      petNow()
+    } else if (picked === 'feed') {
+      feedNow()
+    } else if (picked.startsWith('pet:')) {
+      const id = picked.slice(4)
+      if (PETS.some((x) => x.id === id)) changePet(id as PetId)
+    } else if (picked === 'toggle-top') {
+      const next = !alwaysTop
+      setAlwaysTop(next)
+      window.api.setAlwaysOnTop(next)
+      void window.api.setExtras({ 'ui:alwaysOnTop': next ? '1' : '0' })
+    } else if (picked === 'toggle-ring') {
+      const next = !petRing
+      setPetRing(next)
+      void window.api.setExtras({ 'ui:petRing': next ? '1' : '0' })
+    } else if (picked === 'toggle-balance') {
+      const next = !hideBalance
+      setHideBalance(next)
+      void window.api.setExtras({ 'ui:hideBalance': next ? '1' : '' })
+    } else if (picked === 'expand') {
+      setCollapsed(false)
+      setView('card')
+      window.api.expand()
+    } else if (picked === 'settings') {
+      setCollapsed(false)
+      setView('settings')
+      window.api.expand()
+    }
+    return picked
   }
   const exportPet = async (): Promise<'ok' | 'cancel' | 'fail'> => {
     const r = await window.api.exportPet(buildPetExport(petRef.current))
@@ -143,14 +207,21 @@ export default function App(): React.JSX.Element {
   }
 
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:petCard']).then((e) => {
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
+      // 默认是 3D 悬浮球；只有用户显式开启（'1'）才是 3D 桌面宠物
       setPetOn(e['ui:pet'] === '1')
-      setPetCollapsed(e['ui:petCard'] === '0')
+      setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
+      setPetRing(e['ui:petRing'] !== '0')
       const st = decodePetState(e['ui:petState'])
       if (st) setPet(applyDecay(st, Date.now()))
     })
   }, [])
+
+  // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 桌面宠物（更大漫游区）
+  useEffect(() => {
+    window.api.setPetMode(petOn)
+  }, [petOn])
 
   // 惰性衰减的 UI 侧结算（持久化只在互动时写盘，见 persistPet）
   useEffect(() => {
@@ -229,15 +300,38 @@ export default function App(): React.JSX.Element {
       <div className="app" data-skin={skin}>
         {skinCss && <style>{skinCss}</style>}
         {collapsed ? (
-          <CollapsedDot
-            onExpand={doExpand}
+          <PetBall
+            pet={pet}
+            roam={petOn}
             hideBalance={hideBalance}
+            action={petAction}
+            actionSeq={actionSeq}
+            onExpand={doExpand}
+            onDragStart={(grab) => window.api.dragStart(grab)}
+            onDragEnd={() => window.api.dragEnd()}
+            onPet={petNow}
+            onMenu={petMenu}
+            onRename={renamePet}
+            showRing={petRing}
+          />
+        ) : view === 'settings' ? (
+          <SettingsView
+            onBack={() => setView('card')}
+            onDataChanged={() => void window.api.refreshNow()}
             pet={pet}
             petOn={petOn}
             onPet={petNow}
+            onFeed={feedNow}
+            onChangePet={changePet}
+            onRenamePet={renamePet}
+            onTogglePetBall={togglePetBall}
+            onTogglePetRing={togglePetRing}
+            petRing={petRing}
+            alwaysTop={alwaysTop}
+            onToggleAlwaysTop={toggleAlwaysTop}
+            onExportPet={exportPet}
+            onImportPet={importPet}
           />
-        ) : view === 'settings' ? (
-          <SettingsView onBack={() => setView('card')} onDataChanged={() => void window.api.refreshNow()} />
         ) : view === 'detail' ? (
           <DetailView
             s={current}
@@ -249,18 +343,6 @@ export default function App(): React.JSX.Element {
             state={state}
             hideBalance={hideBalance}
             onToggleHideBalance={toggleHideBalance}
-            pet={pet}
-            petOn={petOn}
-            petAction={petAction}
-            petCollapsed={petCollapsed}
-            onPet={petNow}
-            onFeed={feedNow}
-            onChangePet={changePet}
-            onRenamePet={renamePet}
-            onTogglePetDot={togglePetDot}
-            onTogglePetCard={togglePetCard}
-            onExportPet={exportPet}
-            onImportPet={importPet}
             onOpen={openDetail}
             onRefresh={() => void window.api.refreshNow()}
             onSettings={() => setView('settings')}

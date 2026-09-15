@@ -1,5 +1,15 @@
 import { ipcMain } from 'electron'
-import { setCollapsed, getOverlay, dragStart, dragStop } from './overlay'
+import {
+  setCollapsed,
+  getOverlay,
+  dragStart,
+  dragStop,
+  setPetHitbox,
+  petIgnoreState,
+  setPetMode,
+  setAlwaysOnTopPref,
+  petWindowState
+} from './overlay'
 import { refreshNow, currentState, resort, reconfigure, debugPush } from './scheduler'
 import { setTrayIcon, trayInteractionMode } from './tray'
 import { getAutostart, setAutostart, hasSystemLoginItem } from './autostart'
@@ -19,7 +29,7 @@ import {
   listInstances
 } from './providers'
 import { startOpencodeAuth, cancelOpencodeAuth } from './opencode-auth'
-import type { ProviderPatch, AddProviderPayload, ProvidersPayload } from '../shared/types'
+import type { ProviderPatch, AddProviderPayload, ProvidersPayload, PetMenuModel } from '../shared/types'
 
 // 测试观测点：dragStart 是否被触发过（--uitest 用）
 let dragFired = false
@@ -50,9 +60,10 @@ export function registerIpc(): void {
     dragStop()
     setCollapsed(false)
   })
-  ipcMain.on('ui:drag-start', () => {
+  // 拖拽起点：渲染层给出抓取点（球在窗口内的位置），避免拖动时球跳到光标中心
+  ipcMain.on('ui:drag-start', (_e, grab?: { x: number; y: number }) => {
     dragFired = true
-    dragStart()
+    dragStart(grab && typeof grab.x === 'number' && typeof grab.y === 'number' ? grab : undefined)
   })
   ipcMain.on('ui:drag-end', () => dragStop())
 
@@ -239,9 +250,87 @@ export function registerIpc(): void {
     }
   })
 
+  // ─── 悬浮球（3D 桌面宠物）：原生右键菜单 + 鼠标穿透命中框 ────────────────────
+  //
+  // 菜单模型由渲染层给出（它才是宠物状态的唯一持有者），主进程只负责渲染原生菜单
+  // 并回传选中项 id；动效、状态落盘、皮肤等业务动作仍在渲染层执行。
+
+  ipcMain.handle('pet:menu', (_e, model: PetMenuModel): Promise<string | null> => {
+    return new Promise((resolve) => {
+      void (async () => {
+        const { Menu } = await import('electron')
+        const m: PetMenuModel = {
+          title: String(model?.title ?? ''),
+          status: String(model?.status ?? ''),
+          canPet: model?.canPet !== false,
+          canFeed: model?.canFeed !== false,
+          pets: Array.isArray(model?.pets) ? model.pets.slice(0, 8) : [],
+          ring: model?.ring !== false,
+          alwaysOnTop: model?.alwaysOnTop !== false,
+          hideBalance: model?.hideBalance === true
+        }
+        let picked: string | null = null
+        const items: Electron.MenuItemConstructorOptions[] = [
+          { label: m.title || '宠物', enabled: false },
+          ...(m.status ? [{ label: m.status, enabled: false } as Electron.MenuItemConstructorOptions] : []),
+          { type: 'separator' },
+          { label: '撸一把', enabled: m.canPet, click: () => (picked = 'pet') },
+          { label: '喂食', enabled: m.canFeed, click: () => (picked = 'feed') },
+          { type: 'separator' },
+          { label: '换一只', enabled: false },
+          ...m.pets.map(
+            (p): Electron.MenuItemConstructorOptions => ({
+              label: p.name,
+              type: 'radio',
+              checked: p.checked,
+              click: () => (picked = `pet:${p.id}`)
+            })
+          ),
+          { label: '改名…', click: () => (picked = 'rename') },
+          { type: 'separator' },
+          { label: '显示用量环', type: 'checkbox', checked: m.ring, click: () => (picked = 'toggle-ring') },
+          { label: '总在最前', type: 'checkbox', checked: m.alwaysOnTop, click: () => (picked = 'toggle-top') },
+          { label: '隐藏余额', type: 'checkbox', checked: m.hideBalance, click: () => (picked = 'toggle-balance') },
+          { type: 'separator' },
+          { label: '展开面板', click: () => (picked = 'expand') },
+          {
+            label: '设置…',
+            click: () => {
+              picked = 'settings'
+            }
+          }
+        ]
+        // 菜单关闭后回传选中项（无论是否选中都 resolve，避免渲染层 await 悬挂）
+        Menu.buildFromTemplate(items).popup({
+          window: getOverlay() ?? undefined,
+          callback: () => resolve(picked)
+        })
+      })()
+    })
+  })
+
+  // 收起态形态：球（默认） ↔ 桌面宠物（球内角色可走动，窗口更大）
+  ipcMain.on('pet:mode', (_e, roam: unknown) => setPetMode(roam === true))
+
+  // 总在最前：关闭后窗口不再悬浮于其它窗口之上
+  ipcMain.on('ui:always-on-top', (_e, on: unknown) => setAlwaysOnTopPref(on !== false))
+
+  ipcMain.on('pet:hitbox', (_e, rect: { x: number; y: number; width: number; height: number } | null) => {
+    if (!rect || typeof rect.x !== 'number' || typeof rect.y !== 'number') {
+      setPetHitbox(null)
+      return
+    }
+    setPetHitbox({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
+  })
+
+
   // ─── 测试观测点（仅 --uitest 注册；生产运行时不暴露任何注入能力）──────────
 
-  if (process.argv.includes('--uitest') || process.argv.includes('--shots')) {
+  if (
+    process.argv.includes('--uitest') ||
+    process.argv.includes('--shots') ||
+    process.argv.includes('--ballshot')
+  ) {
     // 注入受控快照，用于验证"缓存 / 本机估算 / 出错"等降级渲染分支
     ipcMain.handle('debug:push', (_e, snapshots: unknown, offline: unknown) => {
       if (Array.isArray(snapshots)) debugPush(snapshots as never, offline === true)
@@ -250,6 +339,13 @@ export function registerIpc(): void {
     ipcMain.handle('debug:tray-title', () => trayTitle(currentState().snapshots, !!currentState().offline))
     // 托盘交互模式：macOS 必须是 click-toggle（左键直接显隐；右键才弹菜单）
     ipcMain.handle('debug:tray-mode', () => trayInteractionMode())
+    // 穿透状态 / 收起态 / 漫游轮询是否在跑（验证球外区域可点到桌面）
+    ipcMain.handle('debug:pet-state', () => ({ ...petIgnoreState(), ...petWindowState() }))
+    // 设置置顶偏好（uitest 用；生产走渲染层 UI）
+    ipcMain.handle('debug:set-top', (_e, on: unknown) => {
+      setAlwaysOnTopPref(on !== false)
+      return petWindowState()
+    })
   }
 
   // 渲染进程申请打开设置视图时，确保窗口处于展开态（由 renderer 直接切视图）

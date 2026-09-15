@@ -7,6 +7,7 @@
 import { loadTs } from './lib/load-ts.mjs'
 
 const {
+  PETS,
   PET_DECAY,
   PET_COOLDOWN_MS,
   addExp,
@@ -48,7 +49,8 @@ eq(def.id, 'mochi', '默认角色')
 eq(def.level, 1, '初始等级 1')
 eq(def.affection, 60, '初始亲密度 60')
 eq(def.fullness, 70, '初始饱食度 70')
-eq(petMeta('slime').name, '果冻怪', '角色元数据（果冻怪）')
+eq(petMeta('bunny').name, '兔兔', '角色元数据（兔兔）')
+eq(petMeta('fox').name, '小狐狸', '角色元数据（小狐狸）')
 eq(petMeta('nope').id, 'mochi', '未知角色回退到默认')
 
 console.log('用例 2：惰性衰减（不足 1 分钟不结算）')
@@ -114,6 +116,9 @@ eq(decodePetState('not json'), null, '坏 JSON → null')
 eq(decodePetState('{}', T0).id, 'mochi', '缺字段用默认值兜底')
 eq(decodePetState(JSON.stringify({ id: 'hacker', level: 1000, affection: 999, name: '   ' }), T0).id, 'mochi', '非法角色回退')
 eq(decodePetState(JSON.stringify({ id: 'dino', level: 1000, affection: 999 }), T0).level, 99, '等级封顶 99')
+eq(decodePetState(JSON.stringify({ id: 'dino' }), T0).id, 'fox', '旧角色 dino 迁移到 fox')
+eq(decodePetState(JSON.stringify({ id: 'slime' }), T0).id, 'bunny', '旧角色 slime 迁移到 bunny')
+eq(decodePetState(JSON.stringify({ id: '不存在' }), T0).id, PETS[0].id, '未知角色回落到第一只')
 eq(decodePetState(JSON.stringify({ id: 'dino', affection: 999 }), T0).affection, 100, '亲密度封顶 100')
 eq(decodePetState(JSON.stringify({ id: 'dino', name: 'x'.repeat(50) }), T0).name.length, 12, '名字截断 12 字')
 

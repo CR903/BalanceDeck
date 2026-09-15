@@ -9,6 +9,7 @@ import type {
 } from '../../shared/types'
 import { Icon, IconButton } from './components'
 import { ProviderMark } from './ProviderMark'
+import { PetSection, type PetSectionProps } from './PetSection'
 import badgeIcon from './assets/icon.png?inline'
 
 // 设置页：供应商实例管理（添加 / 编辑 / 启停 / 删除）+ 外观 + 刷新频率 + 系统。
@@ -261,7 +262,19 @@ function ProviderRow({
   )
 }
 
-export function SettingsView({ onBack, onDataChanged }: { onBack: () => void; onDataChanged: () => void }): React.JSX.Element {
+export function SettingsView({
+  onBack,
+  onDataChanged,
+  alwaysTop,
+  onToggleAlwaysTop,
+  ...petProps
+}: {
+  onBack: () => void
+  onDataChanged: () => void
+  /** 悬浮球是否总在最前（ui:alwaysOnTop） */
+  alwaysTop: boolean
+  onToggleAlwaysTop: (on: boolean) => void
+} & PetSectionProps): React.JSX.Element {
   const [payload, setPayload] = useState<ProvidersPayload | null>(null)
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -614,6 +627,8 @@ export function SettingsView({ onBack, onDataChanged }: { onBack: () => void; on
           </div>
         )}
 
+        <PetSection {...petProps} />
+
         <div className="section-title">外观</div>
         <label className="field">
           <span className="field-label">皮肤（卡片上右键也可快速切换；外部皮肤放入 userData/skins 即自动发现）</span>
@@ -652,6 +667,20 @@ export function SettingsView({ onBack, onDataChanged }: { onBack: () => void; on
         </div>
 
         <div className="section-title">系统</div>
+        <div className="enable-row">
+          <span>
+            悬浮球总在最前
+            <em className="tag env">置顶</em>
+          </span>
+          <button
+            type="button"
+            className={'switch' + (alwaysTop ? ' on' : '')}
+            title={alwaysTop ? '关闭后不再悬浮于其它窗口之上' : '开启后始终显示在最前面'}
+            onClick={() => onToggleAlwaysTop(!alwaysTop)}
+          >
+            <span className="knob" />
+          </button>
+        </div>
         <div className="enable-row">
           <span>开机自启</span>
           <button

@@ -7,7 +7,9 @@ import type {
   AddProviderPayload,
   CatalogEntry,
   OpencodeAuthResponse,
-  PetTransferResponse
+  PetTransferResponse,
+  PetMenuModel,
+  PetHitbox
 } from '../shared/types'
 
 const api = {
@@ -19,7 +21,7 @@ const api = {
   },
   collapse: (): void => ipcRenderer.send('ui:collapse'),
   expand: (): void => ipcRenderer.send('ui:expand'),
-  dragStart: (): void => ipcRenderer.send('ui:drag-start'),
+  dragStart: (grab?: { x: number; y: number }): void => ipcRenderer.send('ui:drag-start', grab),
   dragEnd: (): void => ipcRenderer.send('ui:drag-end'),
   debugDragState: (): Promise<boolean> => ipcRenderer.invoke('debug:drag-state'),
   refreshNow: (): Promise<void> => ipcRenderer.invoke('ui:refresh'),
@@ -72,7 +74,36 @@ const api = {
 
   // ─── 宠物数据迁移（本地文件）────────────────────────────────────────────────
   exportPet: (payload: string): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:export', payload),
-  importPet: (): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:import')
+  importPet: (): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:import'),
+
+  // ─── 悬浮球（3D 桌面宠物）──────────────────────────────────────────────────
+  /** 右键菜单：把菜单模型交给主进程弹原生菜单，回传选中项 id（未选中返回 null） */
+  petMenu: (model: PetMenuModel): Promise<string | null> => ipcRenderer.invoke('pet:menu', model),
+  /** 收起态形态：true = 3D 桌面宠物（漫游区），false = 3D 悬浮球 */
+  setPetMode: (roam: boolean): void => ipcRenderer.send('pet:mode', roam === true),
+  /** 总在最前开关 */
+  setAlwaysOnTop: (on: boolean): void => ipcRenderer.send('ui:always-on-top', on !== false),
+  /** 命中框（窗口内 CSS 像素）：球以外的区域由主进程设为鼠标穿透 */
+  setPetHitbox: (rect: PetHitbox): void => ipcRenderer.send('pet:hitbox', rect),
+  /** 测试观测点：穿透/漫游状态（仅测试模式注册） */
+  debugPetState: (): Promise<{
+    ignore: boolean
+    collapsed: boolean
+    roaming: boolean
+    shadow: boolean
+    roam: boolean
+    alwaysOnTop: boolean
+  }> =>
+    ipcRenderer.invoke('debug:pet-state'),
+  /** 测试观测点：设置置顶（仅测试模式注册） */
+  debugSetTop: (on: boolean): Promise<{ roam: boolean; alwaysOnTop: boolean }> =>
+    ipcRenderer.invoke('debug:set-top', on),
+  /** 光标是否悬停在球上（主进程轮询回传） */
+  onPetCursor: (cb: (over: boolean) => void): (() => void) => {
+    const l = (_e: unknown, over: boolean): void => cb(over)
+    ipcRenderer.on('pet:cursor', l)
+    return () => ipcRenderer.removeListener('pet:cursor', l)
+  }
 }
 
 contextBridge.exposeInMainWorld('api', api)

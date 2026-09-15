@@ -19,7 +19,8 @@
     "test:quality": "node scripts/test-quality.mjs",
     "test:tray": "node scripts/test-tray.mjs",
     "test:pet": "node scripts/test-pet.mjs",
-    "test": "npm run test:percent && npm run test:ssr && npm run test:quality && npm run test:tray && npm run test:pet",
+    "test:walker": "node scripts/test-walker.mjs",
+    "test": "npm run test:percent && npm run test:ssr && npm run test:quality && npm run test:tray && npm run test:pet && npm run test:walker",
     "details:test": "electron . --details-test",
     "keystore:debug": "electron scripts/keystore-debug.js",
     "instances:debug": "node scripts/instances-debug.mjs",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "@types/three": "^0.177.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^37.10.3",
     "electron-builder": "^26.15.3",
@@ -39,6 +41,7 @@
   },
   "dependencies": {
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "three": "^0.177.0"
   }
 }

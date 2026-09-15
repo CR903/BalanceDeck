@@ -1,6 +1,15 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'path'
-import { createOverlay, toggleOverlay, loadPersisted, getOverlay } from './overlay'
+import {
+  createOverlay,
+  toggleOverlay,
+  loadPersisted,
+  getOverlay,
+  setCollapsed,
+  petIgnoreState,
+  petHitboxDebug,
+  primePrefs
+} from './overlay'
 import { createTray, updateTray, currentTrayTitle, trayImageInfo } from './tray'
 import { syncAutostart } from './autostart'
 import { startScheduler, refreshNow, currentState, stopScheduler } from './scheduler'
@@ -16,6 +25,19 @@ const shots = process.argv.includes('--shots')
 // --details-test：控制台每模型明细抓取自检（一次性抓取并打印，用于排障）
 const detailsTest = process.argv.includes('--details-test')
 
+// 受限环境下跑自检：某些沙箱里 Chromium 的 GPU 进程起不来（表现为启动即 SIGTRAP）。
+// BD_SANDBOX_OFF=1 会关掉进程沙箱并允许软件 WebGL —— **仅用于开发/CI 自检**，
+// 用户正常启动应用时不走这条分支。
+// 自检用 userData 覆盖：受限环境里 ~/Library/Application Support 不可写，
+// BD_USER_DATA=<目录> 可把状态文件（state.json / secrets.bin / skins）落到指定位置。
+if (process.env.BD_USER_DATA) app.setPath('userData', process.env.BD_USER_DATA)
+
+if (process.env.BD_SANDBOX_OFF === '1') {
+  app.commandLine.appendSwitch('no-sandbox')
+  app.commandLine.appendSwitch('disable-gpu-sandbox')
+  app.commandLine.appendSwitch('enable-unsafe-swiftshader')
+}
+
 app.dock?.hide?.()
 
 loadPersisted()
@@ -28,6 +50,9 @@ function pushState(s: AppState): void {
 }
 
 app.whenReady().then(async () => {
+  // 先读偏好：收起态形态（球/桌面宠物）与是否置顶，窗口按最终形态一次成型
+  await primePrefs()
+
   if (detailsTest) {
     void (async () => {
       const { getExtra } = await import('./keystore')
@@ -45,6 +70,170 @@ app.whenReady().then(async () => {
       }
       app.quit()
     })()
+    return
+  }
+
+  // --ballshot：只拍收起态 3D 悬浮球（含命中环），迭代 3D 观感时用，十几秒出图
+  if (process.argv.includes('--ballshot')) {
+    // 兜底：无论如何 60s 内退出（离线环境下采集可能长时间阻塞）
+    setTimeout(() => app.quit(), 60_000)
+    const win = createOverlay()
+    // 渲染层报错要看得到（模型解析/贴图/着色器问题都在这里暴露）
+    win.webContents.on('console-message', (_e, level, message) => {
+      if (level >= 2) process.stdout.write(`[renderer:${level}] ${message.slice(0, 300)}\n`)
+    })
+    await new Promise((r) => setTimeout(r, 9000))
+    // 注入演示数据：让用量环/数值有真实形态（拍出来才看得出设计）
+    if (process.env.BD_FAKE_DATA !== '0') {
+      try {
+        await win.webContents.executeJavaScript(
+          `window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`,
+          true
+        )
+      } catch (e) {
+        process.stdout.write('fakeData failed: ' + String(e) + '\n')
+      }
+      await new Promise((r) => setTimeout(r, 1200))
+    }
+    // BD_PET=1：开启「桌面宠物」形态后再收起（默认拍球形态）
+    const wantPet = process.env.BD_PET === '1'
+    const openSettings = `[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()`
+    const back = `[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()`
+    const collapse = `[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()`
+    if (wantPet) {
+      await win.webContents.executeJavaScript('window.api.expand()', true)
+      await new Promise((r) => setTimeout(r, 800))
+      await win.webContents.executeJavaScript(openSettings, true)
+      await new Promise((r) => setTimeout(r, 800))
+      await win.webContents.executeJavaScript(
+        "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()",
+        true
+      )
+      await new Promise((r) => setTimeout(r, 600))
+      await win.webContents.executeJavaScript(back, true)
+      await new Promise((r) => setTimeout(r, 600))
+      await win.webContents.executeJavaScript(collapse, true)
+      await new Promise((r) => setTimeout(r, 1600))
+    } else if (process.env.BD_SKIP_COLLAPSE !== '1') {
+      setCollapsed(true)
+    }
+    await new Promise((r) => setTimeout(r, 4500))
+    const { mkdirSync, writeFileSync } = await import('fs')
+    mkdirSync('/tmp/balancedeck-shots', { recursive: true })
+    const shot = async (name: string, n = 1): Promise<void> => {
+      for (let i = 0; i < n; i++) {
+        const img = await win.webContents.capturePage()
+        writeFileSync(`/tmp/balancedeck-shots/${name}${n > 1 ? '-' + (i + 1) : ''}.png`, img.toPNG())
+        if (i < n - 1) await new Promise((r) => setTimeout(r, 900))
+      }
+      process.stdout.write(`shot: ${name}\n`)
+    }
+    await shot(wantPet ? 'pet' : 'ball', 3)
+    process.stdout.write(
+      'diag: ' +
+        String(
+          await win.webContents.executeJavaScript(
+            `JSON.stringify({
+               win: [window.innerWidth, window.innerHeight],
+               stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
+               canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
+               ball: window.__bd_ball?.() ?? null
+             })`,
+            true
+          )
+        ) +
+        '\n'
+    )
+    // BD_TOGGLE=1：快速验证「桌面宠物」开关与形态切换
+    if (process.env.BD_TOGGLE === '1') {
+      await win.webContents.executeJavaScript('window.api.expand()', true)
+      await new Promise((r) => setTimeout(r, 800))
+      await win.webContents.executeJavaScript(openSettings, true)
+      await new Promise((r) => setTimeout(r, 1200))
+      process.stdout.write(
+        'switches: ' +
+          String(await win.webContents.executeJavaScript("document.querySelectorAll('.pet-sec .switch').length", true)) +
+          ' pet=' +
+          String(await win.webContents.executeJavaScript("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet'])", true)) +
+          '\n'
+      )
+      await win.webContents.executeJavaScript("[...document.querySelectorAll('.pet-sec .switch')][0]?.click()", true)
+      await new Promise((r) => setTimeout(r, 1200))
+      process.stdout.write(
+        'after click: pet=' +
+          String(await win.webContents.executeJavaScript("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet'])", true)) +
+          ' switchOn=' +
+          String(await win.webContents.executeJavaScript("document.querySelectorAll('.pet-sec .switch')[0]?.classList.contains('on')", true)) +
+          '\n'
+      )
+    }
+    // BD_ISOLATE=1：逐个隐藏场景物体各拍一张（定位"多出来的东西"）
+    if (process.env.BD_ISOLATE === '1') {
+      const n = Number(
+        await win.webContents.executeJavaScript('window.__bd_ball().dump.length', true)
+      )
+      for (let i = 0; i < n; i++) {
+        await win.webContents.executeJavaScript(`window.__bd_hide(${i}, false)`, true)
+        await new Promise((r) => setTimeout(r, 350))
+        const img = await win.webContents.capturePage()
+        writeFileSync(`/tmp/balancedeck-shots/iso-${i}.png`, img.toPNG())
+        await win.webContents.executeJavaScript(`window.__bd_hide(${i}, true)`, true)
+        process.stdout.write(`iso-${i}\n`)
+      }
+    }
+    // BD_SETTINGS=1：拍设置页宠物分区（核对 3D 缩略图）
+    if (process.env.BD_SETTINGS === '1') {
+      await win.webContents.executeJavaScript('window.api.expand()', true)
+      await new Promise((r) => setTimeout(r, 700))
+      await win.webContents.executeJavaScript(openSettings, true)
+      await new Promise((r) => setTimeout(r, 900))
+      await win.webContents.executeJavaScript("document.querySelector('.pet-sec')?.scrollIntoView({block:'center'})", true)
+      await new Promise((r) => setTimeout(r, 4200))
+      await shot('settings-pet')
+      process.stdout.write(
+        'petInfo: ' +
+          String(await win.webContents.executeJavaScript('JSON.stringify(window.__bd_ball?.() ?? null)', true)) +
+          '\n'
+      )
+    }
+    // BD_PETS=1：逐只角色各拍一张（核对 3D 素材观感）
+    if (process.env.BD_PETS === '1') {
+      const ids = ['mochi', 'shiba', 'penguin', 'fox', 'panda', 'bunny', 'koala', 'tiger']
+      for (let i = 0; i < ids.length; i++) {
+        await win.webContents.executeJavaScript('window.api.expand()', true)
+        await new Promise((r) => setTimeout(r, 700))
+        await win.webContents.executeJavaScript(openSettings, true)
+        await new Promise((r) => setTimeout(r, 600))
+        await win.webContents.executeJavaScript(
+          `document.querySelectorAll('.pet-chip')[${i}]?.click()`,
+          true
+        )
+        await new Promise((r) => setTimeout(r, 400))
+        await win.webContents.executeJavaScript(back, true)
+        await new Promise((r) => setTimeout(r, 400))
+        await win.webContents.executeJavaScript(collapse, true)
+        await new Promise((r) => setTimeout(r, 2200))
+        await shot(`pet-${ids[i]}`)
+      }
+    }
+    if (process.env.BD_SKINS === '1') {
+      const { setSkin } = await import('./skins')
+      for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
+        await setSkin(id)
+        await new Promise((r) => setTimeout(r, 1400))
+        await shot(`ball-skin-${id}`)
+      }
+    }
+    {
+      const { petIgnoreState } = await import('./overlay')
+      process.stdout.write('ballState: ' + JSON.stringify(petIgnoreState()) + '\n')
+    }
+    if (process.env.BD_DEBUG_RING === '1') {
+      process.stdout.write(
+        'ballDiag: ' + String(await win.webContents.executeJavaScript('JSON.stringify(window.__bd_ball?.() ?? null)', true)) + '\n'
+      )
+    }
+    app.quit()
     return
   }
 
@@ -73,7 +262,11 @@ app.whenReady().then(async () => {
       preloadError = `${p}: ${err}`
     })
     win.webContents.on('console-message', (_e, level, message) => {
-      if (level >= 3) consoleErrors.push(message.slice(0, 200))
+      if (level >= 3) {
+        consoleErrors.push(message.slice(0, 200))
+        // 测试期实时打印：出错时能立刻看到栈（否则要等整轮结束）
+        if (process.env.BD_TRACE === '1') process.stdout.write(`[renderer:${level}] ${message.slice(0, 400)}\n`)
+      }
     })
     createTray(toggleOverlay, refreshNow)
     // 托盘回调传真实 updateTray：让 smoke 能验证状态栏文案与图标链路
@@ -143,9 +336,16 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await setSkin('aero')
   const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
   const exec = (js: string): Promise<unknown> => win.webContents.executeJavaScript(js, true)
-  const shoot = async (name: string, rect?: { x: number; y: number; width: number; height: number }): Promise<void> => {
-    const img = rect ? await win.webContents.capturePage(rect) : await win.webContents.capturePage()
-    writeFileSync(`${OUT}/${name}.png`, img.toPNG())
+  const shoot = async (
+    name: string,
+    opts: { rect?: { x: number; y: number; width: number; height: number }; frames?: number } = {}
+  ): Promise<void> => {
+    const frames = Math.max(1, opts.frames ?? 1)
+    for (let i = 0; i < frames; i++) {
+      const img = opts.rect ? await win.webContents.capturePage(opts.rect) : await win.webContents.capturePage()
+      writeFileSync(`${OUT}/${name}${frames > 1 ? '-' + (i + 1) : ''}.png`, img.toPNG())
+      if (i < frames - 1) await sleep(900)
+    }
     process.stdout.write(`shot: ${name}\n`)
   }
 
@@ -157,7 +357,7 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec('window.api.expand()')
   await sleep(900)
   await shoot('1-card')
-  await shoot('1-corner', { x: 0, y: 0, width: 80, height: 80 })
+  await shoot('1-corner', { rect: { x: 0, y: 0, width: 80, height: 80 } })
   // 余额显隐（点击眼睛 → 打码；再点还原）
   await exec("[...document.querySelectorAll('.icon-btn')].find(b=>/余额/.test(b.title))?.click()")
   await sleep(500)
@@ -209,49 +409,93 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('.advanced')?.scrollIntoView({block:'center'})")
   await sleep(500)
   await shoot('6-settings-advanced')
-  // 收起态圆点
-  await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
+  // ─── 收起态：3D 悬浮球（默认形态）／桌面宠物（可选形态）─────────────────────
+  const openSettings = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()"
+  const backBtn = "[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()"
+  const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
+  /** 点「桌面宠物」开关（.pet-sec 里第 1 个开关） */
+  const petToggle = "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()"
+  const longPress = (down: boolean): string => `(()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    const o={clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,pointerId:11,bubbles:true,pointerType:'mouse',button:0,buttons:${down ? 1 : 0}}
+    b.dispatchEvent(new PointerEvent('${down ? 'pointerdown' : 'pointerup'}',o))
+  })()`
+
+  await exec(backBtn)
   await sleep(500)
-  await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()")
-  await sleep(1200)
-  await shoot('5-dot')
-  // 各皮肤下的圆点立体感（回归"只有毛玻璃皮肤有立体效果"）
+  // 设置页宠物分区特写（3D 缩略图 / 养成数据 / 两个开关 / 数据迁移）
+  await exec(openSettings)
+  await sleep(700)
+  await exec("document.querySelector('.pet-sec')?.scrollIntoView({block:'center'})")
+  await sleep(4500) // 等 8 张 3D 缩略图渲染完（软渲染器上要几秒）
+  await shoot('4b-settings-pet')
+  await exec(backBtn)
+  await sleep(500)
+
+  // ① 球形态（默认）：球 + 用量环 + 环心数值
+  await exec(collapseBtn)
+  await sleep(1800)
+  await shoot('5-ball', { frames: 3 })
+  // 各皮肤下的球体（回归"只有毛玻璃皮肤有立体效果"）
   for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
     await exec(`window.api.setSkin('${id}')`)
-    await sleep(750)
-    await shoot(`5-dot-${id}`)
+    await sleep(1100)
+    await shoot(`5c-ball-${id}`)
   }
-  // 圆点宠物：开启 → 收起 → 长按撸一把（爱心特效）
+
+  // ② 桌面宠物形态：球内角色会走动 + 长按撸一把 + 右键菜单
   await exec('window.api.expand()')
   await sleep(700)
-  if (!petWasOn) {
-    await exec("document.querySelector('.pet-dot-switch')?.click()")
-    await sleep(400)
-  }
-  await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()")
-  await sleep(1000)
-  await shoot('5b-dot-pet')
-  await exec(`(()=>{
-    const b=document.querySelector('.dot-btn'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+28,clientY:rc.y+28,pointerId:11,bubbles:true,pointerType:'mouse',button:0}
-    b.dispatchEvent(new PointerEvent('pointerdown',o))
-  })()`)
-  await sleep(1100)
-  await shoot('5c-dot-pet-happy')
-  await exec(`(()=>{
-    const b=document.querySelector('.dot-btn'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+28,clientY:rc.y+28,pointerId:11,bubbles:true,pointerType:'mouse',button:0}
-    b.dispatchEvent(new PointerEvent('pointerup',o))
-  })()`)
+  await exec(openSettings)
+  await sleep(600)
+  await exec(petToggle)
   await sleep(400)
+  await exec(backBtn)
+  await sleep(400)
+  await exec(collapseBtn)
+  await sleep(2000)
+  await shoot('5b-pet', { frames: 2 })
+  await exec(longPress(true))
+  await sleep(900)
+  await shoot('5d-pet-happy')
+  await exec(longPress(false))
+  await sleep(400)
+  await exec(`(()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
+  })()`)
+  await sleep(900)
+  await shoot('5e-pet-menu')
+  await exec("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+  await sleep(500)
+
+  // 逐只角色各拍一张（3D 素材观感）
+  const species = ['shiba', 'penguin', 'fox', 'panda']
+  for (let i = 0; i < species.length; i++) {
+    await exec('window.api.expand()')
+    await sleep(700)
+    await exec(openSettings)
+    await sleep(700)
+    await exec(`document.querySelectorAll('.pet-chip')[${[1, 2, 3, 4][i]}]?.click()`)
+    await sleep(500)
+    await exec(backBtn)
+    await sleep(400)
+    await exec(collapseBtn)
+    await sleep(1800)
+    await shoot(`5f-pet-${species[i]}`)
+  }
+
+  // 还原：关掉桌面宠物（默认球形态），回到卡片视图
   await exec('window.api.expand()')
   await sleep(700)
-  if (!petWasOn) {
-    await exec("document.querySelector('.pet-dot-switch')?.click()")
-    await sleep(300)
-  }
+  await exec(openSettings)
+  await sleep(700)
+  await exec(petToggle)
+  await sleep(400)
+  await exec(backBtn)
+  await sleep(500)
 
   // 断网 / 缓存态（数据诚实性的设计走查）：注入 cached 快照 + offline
   await exec('window.api.expand()')
@@ -306,19 +550,9 @@ async function runShots(win: Electron.BrowserWindow): Promise<void> {
   // README/宣传用演示图：注入干净示例数据（不含真实账户信息），拍一张主面板全貌
   await exec("document.querySelector('.detail .icon-btn')?.click()")
   await sleep(500)
-  // 收起宠物卡，保证三张演示卡都完整可见（拍完还原）
-  const petCardWasCollapsed = (await exec("window.api.getExtras(['ui:petCard']).then(e=>e['ui:petCard']==='0')")) === true
-  if (!petCardWasCollapsed) {
-    await exec("document.querySelector('.pet-collapse')?.click()")
-    await sleep(400)
-  }
   await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
   await sleep(900)
   await shoot('9-demo')
-  if (!petCardWasCollapsed) {
-    await exec("document.querySelector('.pet-collapse')?.click()")
-    await sleep(300)
-  }
 }
 
 /** 演示数据（README 截图用：金额/百分比均为编造） */
@@ -378,12 +612,19 @@ async function runUiTest(
   const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
   const exec = (js: string): Promise<unknown> => win.webContents.executeJavaScript(js, true)
   const bounds = (): Electron.Rectangle => win.getBounds()
-  const dotClickJs = (px = 20): string => `(()=>{
-    const b=document.querySelector('.dot-btn'); if(!b) return 'no-dot'
+  /** 收起态的窗口是 320×230 漫游区，球在正中：点击 = 点命中层中心 */
+  const ballCenterJs = `(()=>{
+    const c=document.querySelector('.petball'); if(!c) return null
+    const rc=c.getBoundingClientRect()
+    return { x: rc.x + rc.width/2, y: rc.y + rc.height/2 }
+  })()`
+  const dotClickJs = (dx = 0, dy = 0): string => `(()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return 'no-dot'
     const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+${px},clientY:rc.y+${px},pointerId:7,bubbles:true,pointerType:'mouse',button:0}
+    const cx=rc.x+rc.width/2, cy=rc.y+rc.height/2
+    const o={clientX:cx+${dx},clientY:cy+${dy},pointerId:7,bubbles:true,pointerType:'mouse',button:0,buttons:1}
     b.dispatchEvent(new PointerEvent('pointerdown',o))
-    b.dispatchEvent(new PointerEvent('pointerup',o))
+    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
     return 'sent'
   })()`
 
@@ -427,25 +668,33 @@ async function runUiTest(
   await exec(footerClick('收起'))
   await sleep(900)
   const b1 = bounds()
-  r.collapse = b1.width <= 60 && b1.height <= 60 ? 'ok' : `fail:${b1.width}x${b1.height}`
-  r.dotDom = (await exec("!!document.querySelector('.dot-btn')")) ? 'ok' : 'fail'
+  r.collapse = b1.width === 200 && b1.height === 210 ? 'ok' : `fail:${b1.width}x${b1.height}`
+  r.dotDom = (await exec("!!document.querySelector('.petball') && !!document.querySelector('.petball-hit')"))
+    ? 'ok'
+    : 'fail'
+  r.ball3d = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
+  r.ballValue = String(await exec("document.querySelector('.petball-value')?.textContent ?? ''"))
 
   // 拖拽：>8px 判拖拽，不展开；窗口位置变化；随后圆点仍在
   const before = bounds()
+  // 抓取点用真实光标与窗口位置换算：合成事件不会真的移动鼠标，这样窗口不会被甩走
+  const cur = screen.getCursorScreenPoint()
+  const grabX = cur.x - before.x
+  const grabY = cur.y - before.y
   await exec(`(async()=>{
-    const b=document.querySelector('.dot-btn'); if(!b) return
+    const b=document.querySelector('.petball-hit'); if(!b) return
     const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+10,clientY:rc.y+10,pointerId:8,bubbles:true,pointerType:'mouse',button:0}
+    const o={clientX:rc.x+${grabX},clientY:rc.y+${grabY},pointerId:8,bubbles:true,pointerType:'mouse',button:0,buttons:1}
     b.dispatchEvent(new PointerEvent('pointerdown',o))
     for(let i=1;i<=6;i++){
-      b.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:rc.x+10+i*9,clientY:rc.y+10}))
+      b.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:o.clientX+i*9,clientY:o.clientY}))
       await new Promise(res=>setTimeout(res,40))
     }
-    b.dispatchEvent(new PointerEvent('pointerup',o))
+    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
   })()`)
   await sleep(900)
   const after = bounds()
-  r.dragNoExpand = (await exec("!!document.querySelector('.dot-btn')")) ? 'ok' : 'fail:expanded'
+  r.dragNoExpand = (await exec("!!document.querySelector('.petball')")) ? 'ok' : 'fail:expanded'
   r.dragMoved = after.x !== before.x || after.y !== before.y ? 'ok' : 'no-real-cursor-move'
   r.dragFired = consumeDragFired() ? 'ok' : 'fail'
 
@@ -461,17 +710,23 @@ async function runUiTest(
   await sleep(900)
   r.reClickExpand = bounds().width > 300 ? 'ok' : 'fail'
 
-  // 圆点漂移回归：收起→展开→收起→展开 两轮循环后，展开态位置必须回到原位
-  const d0 = bounds()
+  // 漂移回归：多轮开合后，收起态的球必须回到同一位置（旧版每轮右移 328px 直至出屏）
+  await exec(footerClick('收起'))
+  await sleep(700)
+  const ballA = bounds()
   for (let i = 0; i < 2; i++) {
-    await exec(footerClick('收起'))
-    await sleep(600)
     await exec(dotClickJs())
-    await sleep(800)
+    await sleep(700)
+    await exec(footerClick('收起'))
+    await sleep(700)
   }
-  const d2 = bounds()
+  const ballB = bounds()
   r.noDrift =
-    d2.x === d0.x && d2.y === d0.y ? 'ok' : `fail:(${d0.x},${d0.y})->(${d2.x},${d2.y})`
+    ballA.x === ballB.x && ballA.y === ballB.y
+      ? 'ok'
+      : `fail:(${ballA.x},${ballA.y})->(${ballB.x},${ballB.y})`
+  await exec(dotClickJs())
+  await sleep(800)
   r.logoBadge = (await exec("!!document.querySelector('.brand-badge img')")) ? 'ok' : 'fail:no-img'
   r.gridAfterRefresh = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
 
@@ -482,7 +737,7 @@ async function runUiTest(
   await sleep(2500)
   await exec(footerClick('收起'))
   await sleep(700)
-  r.refreshThenCollapse = bounds().width <= 60 ? 'ok' : `fail:${bounds().width}`
+  r.refreshThenCollapse = bounds().width === 200 ? 'ok' : `fail:${bounds().width}`
   await exec(dotClickJs())
   await sleep(900)
   r.refreshThenExpand = bounds().width > 300 ? 'ok' : 'fail'
@@ -665,7 +920,7 @@ async function runUiTest(
     })()`)
   )
 
-  // ─── 宠物精灵：卡片互动 + 数据持久化 + 圆点长按 ──────────────────────────────
+  // ─── 宠物：设置页互动 + 3D 悬浮球（桌面宠物）+ 鼠标穿透 ─────────────────────
   const { getExtra } = await import('./keystore')
   const readPet = async (): Promise<{ affection: number; fullness: number; level: number }> => {
     const fallback = { affection: 60, fullness: 70, level: 1 }
@@ -682,74 +937,198 @@ async function runUiTest(
       return fallback
     }
   }
+  // 用户原本是否开着「桌面宠物」（'1' 才算开；默认关闭 = 3D 球形态）
   const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
-  const hasPetCard = (await exec("!!document.querySelector('.pet-card')")) === true
+  // 面板不再常驻宠物卡（用户要求）：确认已移除
+  r.petCardRemoved = (await exec("!!document.querySelector('.pet-card')")) ? 'fail:still-there' : 'ok'
+
+  // 设置页宠物分区：撸一把 / 喂食 / 换一只 / 桌面宠物开关
+  await exec(footerClick('设置'))
+  await sleep(700)
+  r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 8"))
+    ? 'ok'
+    : 'fail:no-section'
+  // 角色缩略图由 3D 素材渲染（异步）：等它们出来
+  for (let i = 0; i < 40; i++) {
+    if ((await exec("document.querySelectorAll('.pet-chip img').length === 8")) === true) break
+    await sleep(400)
+  }
+  r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 8")) ? 'ok' : 'fail:no-thumbs'
   const clickPetAction = (label: string): Promise<unknown> =>
     exec(
-      `[...document.querySelectorAll('.pet-actions .btn-secondary')].find(b=>b.textContent.includes('${label}'))?.click()`
+      `[...document.querySelectorAll('.pet-sec .pet-actions .btn-secondary')].find(b=>b.textContent.includes('${label}'))?.click()`
     )
-  if (!hasPetCard) {
-    r.petCard = 'fail:no-card'
-    r.petStroke = 'fail:no-card'
-    r.petFeed = 'fail:no-card'
-  } else {
-    r.petCard = 'ok'
-    // 撸一把：亲密度上升（或已封顶）且写盘
-    const beforePet = await readPet()
-    await clickPetAction('撸一把')
-    await sleep(900)
-    const afterPet = await readPet()
-    r.petStroke =
-      afterPet.affection > beforePet.affection || beforePet.affection >= 100
-        ? 'ok'
-        : `fail:${beforePet.affection}->${afterPet.affection}`
-    // 喂食：饱食度上升；已吃饱则应被拒绝且数值不变
-    const beforeFeed = await readPet()
-    await clickPetAction('喂食')
-    await sleep(900)
-    const afterFeed = await readPet()
-    const fullBefore = beforeFeed.fullness >= 95
-    r.petFeed =
-      fullBefore ? (afterFeed.fullness === beforeFeed.fullness ? 'ok(refused)' : 'fail:not-refused') : afterFeed.fullness > beforeFeed.fullness ? 'ok' : `fail:${beforeFeed.fullness}->${afterFeed.fullness}`
-  }
+  const beforePet = await readPet()
+  await clickPetAction('撸一把')
+  await sleep(900)
+  const afterPet = await readPet()
+  r.petStroke =
+    afterPet.affection > beforePet.affection || beforePet.affection >= 100
+      ? 'ok'
+      : `fail:${beforePet.affection}->${afterPet.affection}`
+  const beforeFeed = await readPet()
+  await clickPetAction('喂食')
+  await sleep(900)
+  const afterFeed = await readPet()
+  const fullBefore = beforeFeed.fullness >= 95
+  r.petFeed = fullBefore
+    ? afterFeed.fullness === beforeFeed.fullness
+      ? 'ok(refused)'
+      : 'fail:not-refused'
+    : afterFeed.fullness > beforeFeed.fullness
+      ? 'ok'
+      : `fail:${beforeFeed.fullness}->${afterFeed.fullness}`
 
-  // 圆点宠物：开关 → 收起显示精灵 → 长按撸一把（不展开面板）
-  if (hasPetCard) {
-    await exec("document.querySelector('.pet-dot-switch')?.click()")
+  // 换一只：形象与默认名一起切换
+  const petIdBefore = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''"))
+  await exec(`[...document.querySelectorAll('.pet-chip')].find(c=>!c.classList.contains('on'))?.click()`)
+  await sleep(600)
+  r.petSwitch = (await exec("document.querySelector('.pet-chip.on')?.textContent?.length > 0")) ? 'ok' : 'fail'
+  void petIdBefore
+
+  // 桌面宠物开关：关掉 → 收起态退回 2D 圆点（无 WebGL）；再开回来
+  const petSwitch = async (): Promise<void> => {
+    await exec("[...document.querySelectorAll('.pet-sec .switch')][0]?.click()")
     await sleep(500)
-    r.petDotSwitch =
-      (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
-    await exec(footerClick('收起'))
-    await sleep(900)
-    r.petDotVisible = (await exec("!!document.querySelector('.dot-pet .pet')")) ? 'ok' : 'fail:not-shown'
-    await sleep(5200) // 等冷却结束，长按必须真的加亲密度
-    const affBefore = (await readPet()).affection
-    await exec(`(async()=>{
-      const b=document.querySelector('.dot-btn'); if(!b) return
-      const rc=b.getBoundingClientRect()
-      const o={clientX:rc.x+28,clientY:rc.y+28,pointerId:9,bubbles:true,pointerType:'mouse',button:0}
-      b.dispatchEvent(new PointerEvent('pointerdown',o))
-      await new Promise(r=>setTimeout(r,780))
-      b.dispatchEvent(new PointerEvent('pointerup',o))
-    })()`)
-    await sleep(600)
-    const affAfter = (await readPet()).affection
-    const stillCollapsed = bounds().width <= 60
-    r.petLongPress =
-      stillCollapsed && affAfter > affBefore ? 'ok' : `fail:${stillCollapsed ? '' : 'expanded'}:${affBefore}->${affAfter}`
-    await exec(dotClickJs())
-    await sleep(900)
-    // 还原用户的圆点宠物偏好
-    if (!petWasOn) {
-      await exec("document.querySelector('.pet-dot-switch')?.click()")
-      await sleep(400)
+  }
+  const gotoView = async (v: 'card' | 'settings' | 'collapse'): Promise<void> => {
+    if (v === 'collapse') {
+      await exec('window.api.collapse()')
+      await sleep(1200)
+      return
     }
-  } else {
-    r.petDotSwitch = 'skipped'
-    r.petDotVisible = 'skipped'
-    r.petLongPress = 'skipped'
+    await exec('window.api.expand()')
+    await sleep(700)
+    if (v === 'settings') {
+      await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()")
+      await sleep(700)
+    }
   }
 
+  // 开关语义：默认未设置 = 球形态；点一次 → 开启桌面宠物（'1'）；再点 → 关闭（'0'）
+  await petSwitch()
+  r.petToggleSaved = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
+
+  // ── 桌面宠物形态：窗口是漫游区（320×230），角色素材就位，穿透生效 ──
+  await gotoView('collapse')
+  r.petBallOn = (await exec("document.querySelector('.petball')?.dataset.roam === '1'")) ? 'ok' : 'fail:roam-off'
+  r.petRoamWindow = bounds().width === 320 && bounds().height === 230 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  r.pet3dCanvas = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
+  for (let i = 0; i < 30; i++) {
+    if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) break
+    await sleep(300)
+  }
+  r.petModel = (await exec('window.__bd_ball?.()?.petReady === true')) ? 'ok' : 'fail:model-not-loaded'
+  r.petSvgIdle = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''"))
+  r.petCenterValue = (await exec("!!document.querySelector('.petball-center-value')"))
+    ? 'fail:should-be-caption'
+    : 'ok'
+
+  // 置顶开关（默认开；关掉后主进程不再置顶；再开回来）
+  const topDefault = (await exec('window.api.debugPetState()')) as { alwaysOnTop: boolean } | null
+  r.petTopDefault = topDefault?.alwaysOnTop === true ? 'ok' : 'fail:default-off'
+  const topOff = (await exec('window.api.debugSetTop(false)')) as { alwaysOnTop: boolean } | null
+  r.petTopOff = topOff?.alwaysOnTop === false ? 'ok' : 'fail:still-on-top'
+  const topOn = (await exec('window.api.debugSetTop(true)')) as { alwaysOnTop: boolean } | null
+  r.petTopOn = topOn?.alwaysOnTop === true ? 'ok' : 'fail:cannot-restore'
+
+  // 穿透机制：主进程轮询在跑（roaming）+ 渲染层已上报命中框（hitbox 非空）
+  const watch = petIgnoreState()
+  const hb = petHitboxDebug()
+  r.petPierce = watch.roaming && hb && hb.width > 20 ? 'ok' : `fail:roaming=${watch.roaming},hb=${JSON.stringify(hb)}`
+  r.petCmdOk = watch.collapsed === true && bounds().width === 320 ? 'ok' : `fail:${bounds().width}`
+  // 收起态必须关掉原生窗口阴影（否则 macOS 会按窗口矩形投一层方框阴影，实机表现为"宠物外面有个四方形框"）
+  r.petNoWindowShadow = watch.shadow === false ? 'ok' : 'fail:has-shadow'
+  const ball = (await exec('window.__bd_ball?.() ?? null')) as
+    | { rect: { x: number; y: number; width: number; height: number }; measure: { box: { width: number; height: number } } }
+    | null
+  r.petDiag = JSON.stringify({
+    watch,
+    hb: hb && { w: Math.round(hb.width), h: Math.round(hb.height) },
+    rect: ball && { w: Math.round(ball.rect.width), h: Math.round(ball.rect.height) },
+    ink: ball && { w: ball.measure.box.width, h: ball.measure.box.height }
+  })
+
+  // 长按撸一把：亲密度上升、播放开心动作，且**不展开面板**
+  await sleep(5400) // 越过互动冷却（5s）
+  const affBefore = (await readPet()).affection
+  await exec(`(async()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    const o={clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,pointerId:31,bubbles:true,pointerType:'mouse',button:0,buttons:1}
+    b.dispatchEvent(new PointerEvent('pointerdown',o))
+    await new Promise(r=>setTimeout(r,780))
+    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
+  })()`)
+  await sleep(600)
+  const affAfter = (await readPet()).affection
+  const stillCollapsedAfterHold = bounds().width === 320
+  r.petLongPress =
+    stillCollapsedAfterHold && affAfter > affBefore
+      ? 'ok'
+      : `fail:${stillCollapsedAfterHold ? '' : 'expanded'}:${affBefore}->${affAfter}`
+  r.petToast = (await exec("!!document.querySelector('.petball-toast')")) ? 'ok' : 'fail:no-toast'
+
+  // 回归：右键（含菜单被点开后关闭）不得让宠物进入"黏住光标"的假拖拽状态
+  //   —— 现象是菜单关掉后移动鼠标，窗口跟着光标乱跑，直到再点一次宠物才释放
+  consumeDragFired()
+  await exec(`(async()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    const cx=rc.x+rc.width/2, cy=rc.y+rc.height/2
+    const right={clientX:cx,clientY:cy,pointerId:21,bubbles:true,pointerType:'mouse',button:2,buttons:2}
+    b.dispatchEvent(new PointerEvent('pointerdown',right))
+    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:cx,clientY:cy,bubbles:true}))
+    await new Promise(r=>setTimeout(r,200))
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))
+    await new Promise(r=>setTimeout(r,300))
+    // 菜单关闭后：无按键移动鼠标（buttons=0），绝不允许触发拖拽
+    for(let i=1;i<=5;i++){
+      b.dispatchEvent(new PointerEvent('pointermove',{clientX:cx+i*20,clientY:cy,pointerId:21,bubbles:true,pointerType:'mouse',button:-1,buttons:0}))
+      await new Promise(r=>setTimeout(r,40))
+    }
+  })()`)
+  await sleep(600)
+  r.petNoStickyDrag = consumeDragFired() ? 'fail:drag-started' : 'ok'
+  r.petStillCollapsed = bounds().width === 320 ? 'ok' : `fail:${bounds().width}`
+
+  // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
+  await exec(`(()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
+  })()`)
+  await sleep(900)
+  r.petMenuOpened = win.isDestroyed() ? 'fail:destroyed' : 'ok'
+  await exec(`(()=>{ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})) })()`)
+  await sleep(600)
+
+  await gotoView('settings')
+  await petSwitch()
+  r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
+  await gotoView('collapse')
+  r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.roam === '0'")) ? 'ok' : 'fail:roam-on'
+  r.petBallWindow = bounds().width === 200 && bounds().height === 210 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  r.petBall3d =
+    (await exec("!!document.querySelector('.pet3d-canvas')")) &&
+    !(await exec("!!document.querySelector('.petball-fallback')"))
+      ? 'ok'
+      : 'fail:no-canvas'
+  // 球形态：数值回到环心（宠物形态才放球下方胶囊）
+  r.petBallCenterValue = (await exec("!!document.querySelector('.petball-center-value')")) ? 'ok' : 'fail:no-center-value'
+  await exec(dotClickJs())
+  await sleep(1000)
+  r.petBallExpand = bounds().width > 300 ? 'ok' : `fail:${bounds().width}`
+
+  // 还原用户的桌面宠物偏好（默认：关闭）
+  if (petWasOn) {
+    await exec(footerClick('设置'))
+    await sleep(600)
+    await petSwitch()
+    await sleep(300)
+    await exec(footerClick('返回'))
+    await sleep(400)
+  }
   // 开机自启：沙箱目录内往返（true → plist 落地且结构正确；false → 文件删除），不碰真实登录项
   const agentFile = join(autostartDir, 'dev.zhouri.balancedeck.plist')
   const autoOn = (await exec('window.api.setAutostart(true)')) === true

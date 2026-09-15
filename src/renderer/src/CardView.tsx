@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { shortWindowLabel } from '../../shared/tray-text'
-import type { PetId, PetState } from '../../shared/pet'
-import { PetCard, type PetActionResult } from './PetCard'
-import type { PetAction } from './PetSprites'
 import { Ring, Icon, IconButton, Bar, StatusDot } from './components'
 import { ProviderMark } from './ProviderMark'
 import {
@@ -216,18 +213,6 @@ export function CardView({
   state,
   hideBalance,
   onToggleHideBalance,
-  pet,
-  petOn,
-  petAction,
-  petCollapsed,
-  onPet,
-  onFeed,
-  onChangePet,
-  onRenamePet,
-  onTogglePetDot,
-  onTogglePetCard,
-  onExportPet,
-  onImportPet,
   onOpen,
   onRefresh,
   onSettings,
@@ -236,18 +221,6 @@ export function CardView({
   state: AppState
   hideBalance: boolean
   onToggleHideBalance: () => void
-  pet: PetState
-  petOn: boolean
-  petAction: PetAction
-  petCollapsed: boolean
-  onPet: () => PetActionResult
-  onFeed: () => PetActionResult
-  onChangePet: (id: PetId) => void
-  onRenamePet: (name: string) => void
-  onTogglePetDot: (on: boolean) => void
-  onTogglePetCard: () => void
-  onExportPet: () => Promise<'ok' | 'cancel' | 'fail'>
-  onImportPet: () => Promise<'ok' | 'cancel' | 'fail'>
   onOpen: (id: string) => void
   onRefresh: () => void
   onSettings: () => void
@@ -569,20 +542,6 @@ export function CardView({
       </header>
 
       <div className="body-scroll">
-        <PetCard
-          pet={pet}
-          petOn={petOn}
-          action={petAction}
-          collapsed={petCollapsed}
-          onPet={onPet}
-          onFeed={onFeed}
-          onChangePet={onChangePet}
-          onRename={onRenamePet}
-          onToggleDot={onTogglePetDot}
-          onToggleCollapsed={onTogglePetCard}
-          onExport={onExportPet}
-          onImport={onImportPet}
-        />
         {firstLoad ? (
           <Skeleton />
         ) : configured.length === 0 ? (

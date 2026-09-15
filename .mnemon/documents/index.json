@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "38d69245-956d-408c-ae68-40d6fde75151",
+      "title": "BalanceDeck 收起态 3D 桌面宠物：实现架构、自检流程与坑位",
+      "description": "BalanceDeck 悬浮球/桌面宠物工程参考：three.js 场景构成、逐皮肤令牌、漫游与鼠标穿透协议、命中半径换算、--ballshot/uitest 自检工具、受限沙箱与 WebGL 环境坑位、已修的 bug 类。",
+      "status": "active",
+      "filename": "balancedeck-3d-38d69245.md",
+      "relativePath": "documents/active/balancedeck-3d-38d69245.md",
+      "sourcePaths": [
+        "src/renderer/src/pet3d/scene.ts",
+        "src/renderer/src/pet3d/rig.ts",
+        "src/renderer/src/pet3d/walker.ts",
+        "src/renderer/src/pet3d/tokens.ts",
+        "src/renderer/src/PetBall.tsx",
+        "src/renderer/src/PetSection.tsx",
+        "src/main/overlay.ts",
+        "src/main/ipc.ts",
+        "src/shared/types.ts",
+        "scripts/test-walker.mjs"
+      ],
+      "sessionIds": [
+        "28104388-49cb-4466-9ea5-f8443d20b4ae"
+      ],
+      "createdAt": "2026-09-15T07:20:44.006Z",
+      "updatedAt": "2026-09-15T07:20:44.006Z",
+      "lastAccessedAt": "2026-09-15T08:45:47.131Z",
+      "revision": 1,
+      "contentHash": "70fc696515067b374fa449c180524f2034cc0e45060503a64574530ef7a56fc1",
+      "sizeBytes": 10910,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "067a74d8-c3d4-42ec-8b9c-a9bd100dc025",
+      "title": "BalanceDeck 收起态 3D 第二轮：球/宠物双形态、置顶开关与 CC0 GLB 素材管线（含 Electron 坑位）",
+      "description": "BalanceDeck 第十七轮增量工程参考：默认 3D 球形态 vs 桌面宠物形态、ui:alwaysOnTop、收起态必须关原生窗口阴影（方框根因）、Kenney Cube Pets CC0 GLB 内联管线与 CSP、Electron 主进程定时器崩溃类坑、three.js 组合坑、自检命令与断言。修正并替代既有文档 38d69245 中已过期的部分事实。",
+      "status": "active",
+      "filename": "balancedeck-3d-cc0-glb-electron-067a74d8.md",
+      "relativePath": "documents/active/balancedeck-3d-cc0-glb-electron-067a74d8.md",
+      "sourcePaths": [
+        "src/main/overlay.ts",
+        "src/main/ipc.ts",
+        "src/renderer/src/pet3d/scene.ts",
+        "src/renderer/src/pet3d/models.ts",
+        "src/renderer/src/pet3d/thumbnail.ts",
+        "src/renderer/src/PetBall.tsx",
+        "src/renderer/src/PetSection.tsx",
+        "src/renderer/src/assets/pets/LICENSE-kenney-cube-pets.txt",
+        "electron.vite.config.ts",
+        "src/renderer/index.html",
+        "src/shared/pet.ts",
+        "scripts/test-walker.mjs",
+        "scripts/test-pet.mjs",
+        "DESIGN.md",
+        "TASKS.md"
+      ],
+      "sessionIds": [
+        "9ad3b162-23db-45a5-a2fe-99798cf74087"
+      ],
+      "createdAt": "2026-09-15T08:25:44.850Z",
+      "updatedAt": "2026-09-15T08:25:44.850Z",
+      "lastAccessedAt": "2026-09-15T08:45:47.131Z",
+      "revision": 1,
+      "contentHash": "e1270842c383bb34602a334c081abc360bb9ed07be2957e787d36f6385b96265",
+      "sizeBytes": 9646,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "3b531203-d169-4571-a6bc-78472cd54224",
+      "title": "BalanceDeck 收起态交互：指针状态机契约与「黏住光标」根因（第十八轮）",
+      "description": "BalanceDeck 悬浮球指针交互增量：右键/原生菜单抢走事件序列导致「宠物黏住光标」的根因与修复契约（主键判定、buttons 校验、菜单前后复位、window 级兜底）、合成指针事件必须带 buttons、设置页开关行间距约定、回归断言与验证数字。",
+      "status": "active",
+      "filename": "balancedeck-3b531203.md",
+      "relativePath": "documents/active/balancedeck-3b531203.md",
+      "sourcePaths": [
+        "src/renderer/src/PetBall.tsx",
+        "src/renderer/src/skins.css",
+        "src/main/index.ts",
+        "src/main/overlay.ts",
+        "DESIGN.md",
+        "TASKS.md"
+      ],
+      "sessionIds": [
+        "8533e722-e807-4fd3-915e-d0ebd9101020"
+      ],
+      "createdAt": "2026-09-15T08:46:12.699Z",
+      "updatedAt": "2026-09-15T08:46:12.699Z",
+      "lastAccessedAt": "2026-09-15T08:46:12.699Z",
+      "revision": 1,
+      "contentHash": "e97077cc2b1bd4d1da243a3cc6caceea5cf4d2a6169fc8154fe61f387f6315e7",
+      "sizeBytes": 5256,
+      "memoryBodyIds": []
+    }
+  ]
+}

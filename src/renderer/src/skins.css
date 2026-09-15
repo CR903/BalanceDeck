@@ -1260,6 +1260,10 @@ textarea {
   border: 1px solid var(--border);
   font-size: 12.5px;
 }
+/* 相邻开关行之间留出间距：两块圆角卡片贴在一起会看着像一整块 */
+.enable-row + .enable-row {
+  margin-top: 8px;
+}
 
 .add-row {
   display: flex;
@@ -1447,72 +1451,238 @@ textarea {
   color: var(--warn);
 }
 
-/* ─── 收起态圆点（环形仪表 + 中心数值）────────────────────────────────────── */
-.dot-btn {
-  -webkit-app-region: no-drag;
+/* ═══════════════════════════════════════════════════════════════════════════════
+   收起态：3D 悬浮球（桌面宠物）
+   WebGL 负责球体、角色与用量环；这里的 DOM 只做「文字与命中层」——
+   透明窗口里 DOM 文字最清晰，命中层负责把鼠标事件限制在球上（其余穿透）。
+   ═══════════════════════════════════════════════════════════════════════════════ */
+.petball {
   position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  /* 窗口其余区域由主进程设为鼠标穿透；容器本身不吃事件 */
+  pointer-events: none;
+}
+.petball-stage,
+.pet3d-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* 命中层：覆盖球的投影范围（位置由渲染层按投影持续上报给主进程） */
+.petball-hit {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: grab;
+}
+.petball-hit:active {
+  cursor: grabbing;
+}
+
+/* 球形态：百分比回到环心（原「3D 圆球」形态的读数位置） */
+.petball-center-value {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7), 0 0 14px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.petball-center-value.small {
+  font-size: 15px;
+}
+.petball.lvl-warn .petball-center-value {
+  color: #ffc46b;
+}
+.petball.lvl-danger .petball-center-value {
+  color: #ff8a80;
+}
+
+/* 球下方数值：胶囊底衬 + 白字，任何皮肤/壁纸下都读得清 */
+.petball-caption {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 9px 4px;
+  border-radius: 11px;
+  background: rgba(16, 16, 18, 0.5);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.petball-caption.sub {
+  padding: 2px 8px 3px;
+  gap: 0;
+}
+.petball-value {
+  font-size: 15px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  text-align: center;
+  white-space: nowrap;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65), 0 0 12px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.petball-value.small {
+  font-size: 12px;
+}
+.petball-dots {
+  display: flex;
+  gap: 3px;
+  margin-top: 3px;
+}
+.petball-dots i {
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
+  background: rgba(255, 255, 255, 0.38);
+}
+.petball-dots i.on {
+  background: rgba(255, 255, 255, 0.95);
+}
+.petball-label {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.72);
+}
+.petball.lvl-warn .petball-value {
+  color: #ffc46b;
+}
+.petball.lvl-danger .petball-value {
+  color: #ff8a80;
+}
+
+/* 悬停：轻微放大给人一种「被注意到」的反馈（球体本身由 WebGL 画） */
+.petball.hover .petball-stage {
+  transform: scale(1.03);
+  transition: transform 240ms var(--ease);
+}
+.petball-stage {
+  transition: transform 320ms var(--ease);
+}
+
+/* 缓存/估算标记 */
+.petball-badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
   display: grid;
   place-items: center;
-  /* 圆形由 CSS 决定，窗口四角完全透明 */
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: rgba(20, 20, 22, 0.5);
+  color: rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
+/* 互动反馈（撸一把 / 升级 / 吃饱了） */
+.petball-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(20, 20, 22, 0.55);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: petball-pop 220ms var(--ease);
+}
+@keyframes petball-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+/* 改名输入（右键菜单 → 改名…） */
+.petball-rename {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.petball-rename input {
+  width: 168px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--accent);
+  background: rgba(20, 20, 22, 0.72);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: center;
+  outline: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+/* 命中环（仅 --uitest / --shots 的 ?bddebug 下显示）：核对球体投影与命中判定 */
+.petball-debugring {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 1px dashed rgba(255, 0, 128, 0.9);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* ─── 2D 兜底圆点（关闭桌面宠物 / WebGL 不可用）───────────────────────────── */
+.petball.no3d .petball-fallback {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
   background: var(--bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  transition: transform var(--dur) var(--ease);
-  overflow: hidden;
-}
-/* 球面光影：顶亮底暗 + 发丝亮边 —— 颜色随皮肤令牌走（各皮肤 --dot-top/--dot-bottom/--dot-rim） */
-.dot-btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  pointer-events: none;
-  background:
-    radial-gradient(125% 120% at 32% 16%, var(--dot-top), rgba(255, 255, 255, 0) 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0) 46%, var(--dot-bottom) 100%);
   box-shadow:
     inset 0 1px 1.5px var(--dot-rim),
-    inset 0 0 0 1px var(--dot-rim);
+    inset 0 0 0 1px var(--dot-rim),
+    inset 0 -6px 12px var(--dot-bottom),
+    0 6px 18px rgba(0, 0, 0, 0.28);
 }
-/* 宠物模式：圆点中心显示精灵（KPI 仍由光环与悬浮提示表达） */
-.dot-pet {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-}
-.dot-btn:active {
-  transform: scale(0.94);
-}
-
-.dot-ring {
+.petball.no3d .petball-fallback svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
-.dot-ring-track {
-  stroke: var(--track);
-}
-.dot-ring-fill {
-  stroke: var(--ok);
-  transition: stroke-dasharray 600ms var(--ease), stroke var(--dur) var(--ease);
-}
-.dot-btn.lvl-warn .dot-ring-fill {
-  stroke: var(--warn);
-}
-.dot-btn.lvl-danger .dot-ring-fill {
-  stroke: var(--danger);
-}
-.dot-btn.lvl-muted .dot-ring-fill {
-  stroke: var(--fg-faint);
-}
-
-.dot-value {
+.petball.no3d .dot-value {
   position: relative;
   font-size: 13px;
   font-weight: 680;
@@ -1520,48 +1690,112 @@ textarea {
   letter-spacing: -0.03em;
   line-height: 1;
   color: var(--fg);
-  max-width: 42px;
-  text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.dot-value.small {
+.petball.no3d .dot-value.small {
   font-size: 10px;
-  letter-spacing: -0.02em;
 }
-.dot-btn.lvl-ok .dot-value {
-  color: var(--fg);
-}
-.dot-btn.lvl-warn .dot-value {
+.petball.no3d.lvl-warn .dot-value {
   color: var(--warn);
 }
-.dot-btn.lvl-danger .dot-value {
+.petball.no3d.lvl-danger .dot-value {
   color: var(--danger);
 }
-.dot-btn.lvl-muted .dot-value {
-  color: var(--fg-dim);
+.petball.no3d .petball-value {
+  color: var(--fg);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
-.dot-pager {
-  position: absolute;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+
+/* ─── 设置页「宠物」分区 ──────────────────────────────────────────────────── */
+.pet-sec {
+  margin: 4px 0 2px;
+  padding: 11px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
   display: flex;
-  gap: 2.5px;
+  flex-direction: column;
+  gap: 9px;
 }
-.dot-pager i {
-  width: 3px;
-  height: 3px;
+.pet-sec-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pet-sec .pet-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 13px;
+}
+.pet-avatar img,
+.pet-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.pet-avatar-ph,
+.pet-chip-ph {
+  display: block;
+  width: 60%;
+  height: 60%;
   border-radius: 50%;
-  background: var(--fg-faint);
-  opacity: 0.55;
-  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+  background: var(--surface-sunken);
 }
-.dot-pager i.on {
-  background: var(--fg-dim);
-  opacity: 1;
+.pet-sec-mood {
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+.pet-vitals {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.pet-sec-label {
+  margin-top: 2px;
+}
+.pet-chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.pet-chip img {
+  width: 40px;
+  height: 40px;
+}
+.pet-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 2px 5px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--fg-dim);
+  font-size: 9.5px;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.pet-chip:hover {
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+.pet-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: 650;
+}
+.pet-sec-foot {
+  min-height: 14px;
+  font-size: 10px;
+  color: var(--fg-faint);
+}
+.pet-sec .pet-actions {
+  margin-top: 0;
+}
+.pet-sec .enable-row {
+  margin-top: 0;
 }
 
 /* ─── 错误兜底 ────────────────────────────────────────────────────────────── */
@@ -1836,59 +2070,6 @@ textarea {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* ─── 宠物卡片（主面板互动中心）──────────────────────────────────────────── */
-.pet-card {
-  margin: 2px 0 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-.pet-card-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.pet-card-title {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-faint);
-}
-.pet-card-mood {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 10.5px;
-  color: var(--fg-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pet-card-head-actions {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-.pet-card-head-actions .mini-btn {
-  height: 22px;
-  padding: 0 7px;
-  font-size: 10.5px;
-}
-.pet-collapse .icon {
-  transition: transform var(--dur) var(--ease);
-  transform: rotate(180deg);
-}
-.pet-card.collapsed .pet-collapse .icon {
-  transform: rotate(0deg);
-}
-.pet-card-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-}
 .pet-avatar {
   flex: 0 0 auto;
   width: 64px;
@@ -2009,27 +2190,6 @@ textarea {
 .pet-actions .btn-secondary {
   height: 28px;
   font-size: 11.5px;
-}
-.pet-dot-switch {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 20px;
-}
-.pet-dot-switch .knob {
-  width: 16px;
-  height: 16px;
-}
-.pet-dot-switch.on .knob {
-  transform: translateX(14px);
-}
-.pet-card-foot {
-  margin-top: 7px;
-  min-height: 14px;
-  font-size: 10px;
-  color: var(--fg-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ─── 精灵动画：呼吸 + 眨眼（所有角色共用）────────────────────────────────── */

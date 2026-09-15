@@ -221,7 +221,7 @@ export interface BalanceDeckApi {
   onState(cb: (s: AppState) => void): () => void
   collapse(): void
   expand(): void
-  dragStart(): void
+  dragStart(grab?: { x: number; y: number }): void
   dragEnd(): void
   refreshNow(): Promise<void>
   openSettings(): void
@@ -260,6 +260,54 @@ export interface BalanceDeckApi {
   exportPet(payload: string): Promise<PetTransferResponse>
   /** 宠物数据迁移：从本地 JSON 文件导入（返回文本，由渲染层校验） */
   importPet(): Promise<PetTransferResponse>
+  /** 悬浮球右键菜单：渲染层给出菜单模型，主进程弹原生菜单并回传选中项 */
+  petMenu(model: PetMenuModel): Promise<string | null>
+  /** 收起态形态：true = 3D 桌面宠物（漫游区），false = 3D 悬浮球（默认） */
+  setPetMode(roam: boolean): void
+  /** 总在最前开关（关闭后不再悬浮于其它窗口之上） */
+  setAlwaysOnTop(on: boolean): void
+  /** 悬浮球命中框（窗口内 CSS 像素）：窗口其余区域的鼠标事件由主进程穿透 */
+  setPetHitbox(rect: PetHitbox): void
+  /** 光标是否悬停在球上（主进程轮询回传；用于停步/让位） */
+  onPetCursor(cb: (over: boolean) => void): () => void
   /** 测试观测点：托盘交互模式（仅 --uitest） */
   debugTrayMode(): Promise<string>
+  /** 测试观测点：悬浮球穿透/漫游/形态/置顶状态（仅 --uitest / --shots） */
+  debugPetState(): Promise<{
+    ignore: boolean
+    collapsed: boolean
+    roaming: boolean
+    /** 原生窗口阴影（收起态必须为 false：GPU 合成内容会被投一层方框阴影） */
+    shadow: boolean
+    roam: boolean
+    alwaysOnTop: boolean
+  }>
+  /** 测试观测点：设置置顶 */
+  debugSetTop(on: boolean): Promise<{ roam: boolean; alwaysOnTop: boolean }>
+}
+
+/** 悬浮球命中框（窗口内 CSS 像素坐标） */
+export interface PetHitbox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** 悬浮球右键菜单模型（原生菜单由主进程渲染，业务动作由渲染层执行） */
+export interface PetMenuModel {
+  /** 标题行（宠物名 + 等级 + 心情） */
+  title: string
+  /** 状态行（亲密度/饱食度） */
+  status: string
+  canPet: boolean
+  canFeed: boolean
+  /** 可切换的宠物列表 */
+  pets: { id: string; name: string; checked: boolean }[]
+  /** 是否显示 KPI 环 */
+  ring: boolean
+  /** 是否总在最前 */
+  alwaysOnTop: boolean
+  /** 是否打码余额 */
+  hideBalance: boolean
 }

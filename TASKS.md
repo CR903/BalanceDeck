@@ -375,6 +375,108 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 
 **验证**：typecheck ✓ build ✓ 单元测试 159 ✓ uitest 60 项 ✓ shots ✓ dist:mac ✓
 
+## 2026-09-15 第十八轮：设置项间距 + 右键后「宠物黏住光标」修复（用户反馈 2 项）
+
+**1. 设置页两个开关框挨太近**
+- 根因：`.enable-row` 是独立圆角卡片（有底色 + 描边），相邻两块之间没有任何间距，
+  视觉上贴成一整块。
+- 修复：`.enable-row + .enable-row { margin-top: 8px }`（系统分区的「悬浮球总在最前 / 开机自启」两行）。
+
+**2. 右键弹菜单后点宠物区域外 → 宠物黏着鼠标乱动，直到再点一次宠物才释放**
+- 根因：右键按下同样会触发 `pointerdown`，于是 `press.current.down` 被置为 true；
+  原生菜单弹出后抢走了事件序列，**菜单关闭时的那次点击不会回到本窗口**，
+  `pointerup` 永远不会到达 → 按下状态一直残留。
+  此后只要鼠标在球上移动超过 8px，就被判为拖拽 → 主进程拖拽循环让窗口跟着光标跑。
+- 修复（`PetBall.tsx`）：
+  - `pointerdown` 只处理主键（`e.button !== 0` 直接返回），右键不再进入按下/长按状态；
+  - `pointermove` 要求 `e.buttons & 1`（主键仍按着），否则视为指针状态失效并复位；
+  - 抽出 `resetPress()`：右键菜单弹出前后各调用一次；并挂 window 级兜底
+    （`pointerup` / `pointercancel` / `blur`）——指针在窗口外抬起或窗口失焦时同样复位。
+- 回归断言：uitest 新增 `petNoStickyDrag`（右键 → 菜单 → 无按键移动鼠标 5 次，断言
+  **未触发任何拖拽**）与 `petStillCollapsed`；同时补回被重构时漏掉的 `petLongPress` / `petToast`。
+- 注意：合成指针事件必须带 `buttons`（真实事件一定有），否则会被新判定当成失效状态 ——
+  uitest / shots 里所有拖拽与长按用例已同步补上。
+
+**验证**：typecheck ✓ build ✓ 单元测试 187 ✓ uitest 78 项 ✓ shots 29 张 ✓
+
+## 2026-09-15 第十七轮：默认球形态 + 置顶开关 + 真 3D 素材 + 崩溃修复（用户反馈 4 项）
+
+**1. 悬浮球默认回到「3D 圆球」形态，开启桌面宠物才是宠物形态**
+- 形态与窗口尺寸绑定：球形态 200×210（贴合球体，百分比回到环心）；桌面宠物形态 320×230（漫游区，角色可走动）。
+- 主进程按 `ui:pet` 决定收起态尺寸（`collapsedTarget()`），启动时先 `primePrefs()` 再建窗口避免闪一下；
+  开关切换即时 `setPetMode()` 缩放当前窗口。默认**关闭**（未设置 = 球形态）。
+- 两种形态都走同一套 WebGL 场景，球形态只是不加载/不显示角色。
+
+**2. 悬浮球支持置顶开关**
+- `ui:alwaysOnTop`（默认开）：`setAlwaysOnTop(on, on ? 'floating' : 'normal')`；
+  球右键菜单「总在最前」+ 设置页「系统 → 悬浮球总在最前」双入口；uitest 断言默认开/可关/可还原。
+
+**3. 「宠物外面有个四方形框」+ 宠物不够真实**
+- 方框根因：收起态窗口是 GPU 合成的透明窗口，macOS 会按**窗口矩形**投一层原生阴影。
+  现收起态 `hasShadow = false`（展开态保留卡片阴影），立体感交给场景内的接触阴影；
+  uitest 新增 `petNoWindowShadow` 断言。
+- 宠物换成**专业 3D 素材**：[Kenney「Cube Pets 2.0」](https://kenney.nl/assets/cube-pets)（**CC0 1.0**），
+  内置 8 只（猫/柴犬/企鹅/狐狸/熊猫/兔/考拉/虎），删除了早期自绘的程序化角色。
+- 素材管线：`electron.vite.config.ts` 新增 `glbInline()` 插件把 `*.glb?inline` 转 base64 data URL
+  （Vite 自带 `?inline` 对二进制会当字符串内联而报错），每只独立 chunk 按需加载；
+  Cube Pets 的外链贴图 `Textures/colormap.png` 一并内联并用 `LoadingManager.setURLModifier` 重定向；
+  CSP 放宽 `img-src`/`connect-src` 到 `data: blob:`。
+- 渲染升级：ACES 色调映射 + `RoomEnvironment` 环境光照 + PCF 软阴影 + 玻璃球壳菲涅尔亮边；
+  软渲染器自动关阴影（顺带修掉"关阴影后 ShadowMaterial 渲染成深色圆盘"）。
+- 设置页缩略图：临时渲染器渲一帧 → `toDataURL` → 立即释放上下文（8 只角色不能各占一个 WebGL 上下文）。
+- 旧角色 id 自动迁移（`dino`→`fox`、`slime`→`bunny`），养成进度不丢；`test:pet` 增至 64 项（含迁移用例）。
+
+**4. 点击悬浮球弹「Uncaught Exception」**
+- 根因：拖拽定时器里 `win.setPosition(nx, ny)` 收到 `NaN`（Electron 报 `conversion failure from `），
+  而定时器回调抛异常会直接终止主进程。
+- 修复：抓取点/光标坐标/目标坐标全部 `Number.isFinite` 校验，非有限值跳过该帧；
+  拖拽帧与光标轮询两处定时器整体 `try/catch`（异常只记一次日志）。
+- 顺带修掉一个测试钩子缺陷：`window.__bd_ball()` 返回值里带了函数，导致 `executeJavaScript`
+  结果无法结构化克隆（同样表现为 renderer 侧 `An object could not be cloned` 未捕获异常）。
+
+**验证**：typecheck ✓ build ✓ 单元测试 187 ✓ uitest 74 项（含两种形态/置顶/无方框阴影/穿透）✓ shots 29 张 ✓
+- 走查新增：`5-ball-{1..3}`（球形态连拍）、`5c-ball-{5 皮肤}`、`5b-pet`（宠物形态）、`5d-pet-happy`（撸一把）、
+  `5e-pet-menu`（原生菜单）、`5f-pet-{shiba,penguin,fox,panda}`（逐只素材）、`4b-settings-pet`（3D 缩略图）。
+- `docs/pet-3d.png` 新增，`docs/dot-pet.png`、`docs/screenshot.png` 更新。
+
+## 2026-09-15 第十六轮：收起态重做为 3D 桌面宠物 + 面板去宠物卡（用户反馈 2 项）
+
+**1. 悬浮球「黑色边框、没有立体感、只有毛玻璃皮肤有效果」**
+- 根因：上一版圆点是「深色实心圆 + 2D 渐变高光」，外阴影由窗口原生 `hasShadow` 提供，
+  深色壁纸下就是一枚黑圆；立体渲染全是写死的白色高光，浅/深皮肤各自偏弱。
+- 重做：收起态改为 **three.js WebGL 渲染的玻璃球**——低不透明度球壳 + 菲涅尔亮边 + **皮肤色暗边（非黑）**
+  + 顶/底镜面高光 + 地面接触阴影 + 贴球面的 3D 管状进度环；立体感来自真实光照。
+- 逐皮肤生效：3D 场景所有颜色都从 `document` 的 CSS 变量读取（`pet3d/tokens.ts`），
+  壳体取 `--bg-solid`、环色取 `--ok/--warn/--danger`、底托取 `--track`、暗边取 `--fg` —— **新增皮肤零代码**。
+- 走查新增各皮肤球体特写：`5c-ball-{aero,dark,minimal,candy,ink}.png`。
+
+**2. 面板宠物模块 → 整个悬浮球变成 3D 桌面宠物**
+- 面板里的宠物卡整块删除（`PetCard.tsx` / `CollapsedDot.tsx` 已移除），面板只放 KPI。
+- 收起态窗口 56×56 → **320×230 透明漫游区**：程序化建模的 3D 卡通角色（`pet3d/rig.ts`，5 只原创）
+  在球内自主走动、发呆、打盹；球体随角色浮沉，脚下有接触阴影；背面外扩描边保证小尺寸可读性。
+- 走动状态机 `pet3d/walker.ts`（纯函数，24 项单测）：随机选点 → 行走 → 到达/超时 → 发呆，
+  贴边回头、硬边界、掉帧位移夹紧。
+- 交互：单击展开、拖动移动（抓取点跟随）、**长按 0.62s 撸一把**、**右键原生菜单**
+  （撸一把/喂食/换一只/改名/显示用量环/隐藏余额/展开/设置，菜单模型由渲染层给出）。
+- 鼠标穿透：窗口里只有球接收鼠标（命中框随球移动 90ms 上报 + 主进程 90ms 光标轮询 +
+  `setIgnoreMouseEvents(ignore, { forward: true })`）；**收起态才开轮询**，展开面板立即关。
+  ⚠️ 本轮抓到并修掉一个真 bug：`setCollapsed` 里穿透开关接反（展开时反而开穿透），
+  会导致面板出现「点了没反应」的空洞 —— uitest `petPierce` 断言就是为它加的。
+- 宠物管理迁移到**设置页「宠物」分区**：改名 / 换一只 / 桌面宠物开关 / 显示用量环开关 /
+  亲密度与饱食度 / 撸一把喂食 / 导出导入迁移（2D 精灵仍用于缩略图）。
+- 兜底：WebGL 不可用或用户关掉「桌面宠物」时退回原 2D 圆点（`--dot-*` 令牌保留），功能不丢。
+- 持久化：新增 `ui:petRing`；`ui:pet` 语义改为「是否 3D 桌面宠物」（默认开）；不再使用 `ui:petCard`。
+
+**验证**：typecheck ✓ build ✓ 单元测试 183（新增 walker 24）✓ uitest 74 项 ✓ shots 26 张 ✓
+- 走查新增：`4b-settings-pet` / `5-ball` / `5b-ball-walk` / `5c-ball-{5 皮肤}` / `5d-ball-pet-happy` /
+  `5e-ball-menu` / `5f-ball-2d`；`docs/dot-pet.png`、`docs/screenshot.png` 已更新。
+- 新增自检工具：`electron . --ballshot`（只拍悬浮球，`BD_SKINS=1` 逐皮肤、`BD_DEBUG_RING=1` 画命中环）、
+  渲染层 `window.__bd_ball()` 暴露命中框 vs 真实像素范围。
+- 受限环境自检开关：`BD_SANDBOX_OFF=1`（关进程沙箱 + 允许软件 WebGL）、`BD_USER_DATA=<目录>`。
+
+**已知取舍**：球在漫游区内走动时窗口不跟随（`setBounds` 有延迟，跟随会产生抖动感），
+路线图里列为后续项；当前窗口 320×230 足以让角色走到屏幕的任意可视位置。
+
 ## 已知注意事项
 - Electron 必须 ≤37（macOS 12 兼容），升级前先跑 `npm run smoke`。
 - 智谱余额端点为社区验证版本（`/api/paas/v4/users/me/balance`），响应格式变化时适配器会报"响应格式未识别"，属预期自愈提示。

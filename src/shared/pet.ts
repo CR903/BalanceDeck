@@ -10,7 +10,13 @@
 // 角色全部为原创 Q 版精灵（无版权风险）；素材以 SVG 描述，见 renderer/PetSprites.tsx。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type PetId = 'mochi' | 'shiba' | 'penguin' | 'dino' | 'slime'
+export type PetId = 'mochi' | 'shiba' | 'penguin' | 'fox' | 'panda' | 'bunny' | 'koala' | 'tiger'
+
+/** 旧版角色 id → 现役角色（早期自绘精灵换成了 CC0 3D 素材，保留用户的养成进度） */
+export const LEGACY_PET_IDS: Record<string, PetId> = {
+  dino: 'fox',
+  slime: 'bunny'
+}
 
 export interface PetMeta {
   id: PetId
@@ -23,11 +29,14 @@ export interface PetMeta {
 }
 
 export const PETS: PetMeta[] = [
-  { id: 'mochi', name: '麻薯猫', desc: '软乎乎的三花猫，最爱蹭屏幕', trick: '歪头蹭蹭' },
-  { id: 'shiba', name: '豆柴', desc: '热情的小柴犬，一叫就摇尾巴', trick: '甩尾转圈' },
+  { id: 'mochi', name: '麻薯猫', desc: '软乎乎的方块猫，最爱蹭屏幕', trick: '歪头蹭蹭' },
+  { id: 'shiba', name: '豆柴', desc: '热情的小柴犬，一叫就摇尾巴', trick: '原地转圈' },
   { id: 'penguin', name: '企鹅仔', desc: '肚子圆滚滚的打工企鹅', trick: '拍拍小翅膀' },
-  { id: 'dino', name: '小恐龙', desc: '以为自己很凶的绿恐龙', trick: '嗷呜一声' },
-  { id: 'slime', name: '果冻怪', desc: '透明果冻，弹起来会抖三抖', trick: '果冻弹跳' }
+  { id: 'fox', name: '小狐狸', desc: '机灵的橘狐狸，走路带风', trick: '竖耳张望' },
+  { id: 'panda', name: '熊猫团子', desc: '抱着竹子就能睡着', trick: '团成球' },
+  { id: 'bunny', name: '兔兔', desc: '耳朵会抖的小白兔', trick: '蹦蹦跳跳' },
+  { id: 'koala', name: '考拉', desc: '慢半拍的抱树专家', trick: '抱紧不放' },
+  { id: 'tiger', name: '小老虎', desc: '条纹小老虎，其实很温柔', trick: '伸个懒腰' }
 ]
 
 export function petMeta(id: PetId): PetMeta {
@@ -36,6 +45,13 @@ export function petMeta(id: PetId): PetMeta {
 
 export function isPetId(v: unknown): v is PetId {
   return typeof v === 'string' && PETS.some((p) => p.id === v)
+}
+
+/** 归一化角色 id：现役直接返回，旧版按 LEGACY_PET_IDS 迁移，未识别回落到第一只 */
+export function normalizePetId(v: unknown): PetId {
+  if (isPetId(v)) return v
+  if (typeof v === 'string' && LEGACY_PET_IDS[v]) return LEGACY_PET_IDS[v]
+  return PETS[0].id
 }
 
 export interface PetState {
@@ -150,6 +166,14 @@ export function feedOnce(s: PetState, now: number): { state: PetState; ok: boole
   }
 }
 
+/** 互动结果（面板/悬浮球/设置页共用） */
+export interface PetActionResult {
+  ok: boolean
+  reason?: 'cooldown' | 'full'
+  /** 本次互动是否带来升级（UI 用来播升级提示） */
+  levelUps: number
+}
+
 /** 综合心情（喂食/亲密度/等级 → 表情） */
 export type PetMood = 'happy' | 'fine' | 'hungry' | 'lonely'
 
@@ -176,7 +200,7 @@ export function decodePetState(raw: string | null | undefined, now = Date.now())
   try {
     const v = JSON.parse(raw) as Partial<PetState>
     if (!v || typeof v !== 'object') return null
-    const id = isPetId(v.id) ? v.id : 'mochi'
+    const id = normalizePetId(v.id)
     const base = defaultPetState(id, now)
     const num = (x: unknown, fallback: number): number => (typeof x === 'number' && Number.isFinite(x) ? x : fallback)
     return {
