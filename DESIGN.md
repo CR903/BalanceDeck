@@ -292,6 +292,23 @@ GLM Coding Plan、Kimi 会员等多数**无公开余额 API**。策略：能走�
 - 贴图：Cube Pets 的调色板是**外链**的 `Textures/colormap.png`，从 data URL 加载时相对路径无从解析，
   于是把这张 PNG 也内联，并用 `LoadingManager.setURLModifier` 把该路径重定向过去。
 - CSP 相应放宽 `img-src` / `connect-src` 到 `data: blob:`（仍只允许自身脚本与样式）。
+- 真人系（Aria / Ray，2026-09-19 新增）走独立分支，不复用上面这套：
+  - 素材：**[Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox)（MIT）**，
+    商务装一女一男；`npm run fetch:humans`（`scripts/fetch-human-pets.mjs`）拉取 FBX + 动作剪辑，
+    TGA 用系统 `sips` 转 PNG≤1024，落到 gitignored 的 `resources/human-pets/`，打包走
+    `extraResources`（`predist` 钩子保证先拉取）。README 第三方素材区同步署名。
+  - 加载：运行时 FBX 直读（three 自带 `FBXLoader`，无需 blender 转换链），实例化必须
+    `SkeletonUtils.clone`（普通 clone 蒙皮会粘模板骨骼）；`bd-asset://` 协议
+    （`src/main/human-assets.ts`，限定目录 + 防穿越）供 `file://` 渲染层读取，打包后
+    走 `process.resourcesPath`，dev 走仓库 `resources/`；CSP 加 `bd-asset:`。
+  - 动画：`AnimationMixer` + gait→clip 交叉淡化（walk/idle 常播循环，wave/talk 单次），
+    剪辑与模型同系、骨骼名天然对齐（`Bip01_Footsteps` 等非变形 helper 缺失是预期的，
+    mixer 静默跳过）；`scene.ts` 按 `isHumanPet` 切姿态驱动，真人跳过整体变换块。
+  - 泡泡：DOM `.petball-bubble`（`PetBall.tsx`），切换问好 + 长按回应 + 90s 余额播报，
+    沿用余额显隐与缓存/估算口径；Q 版仍走 1.6s toast。
+  - 设置页真人缩略图直接用采集期 `preview.png`（不占 WebGL 上下文）。
+  - 踩坑：逐只拍摄必须等到 `petReady`（真人 5 个 FBX 解析比 Q 版慢，固定 2200ms 会拍到空球）；
+    `dump` 钩子带 `self/parent` 可区分自身隐藏与祖先链隐藏。
 - 归一化：加载后统一「居中 + 缩放到目标高度（26 世界单位）+ 脚踩 y=0」；
   **动画层与归一化层必须是两层 Group** —— 动画直接改外层容器的 scale 会把归一化缩放覆盖掉
   （曾经因此把模型缩回原始尺寸而"看不见宠物"）。

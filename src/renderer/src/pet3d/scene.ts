@@ -1,7 +1,9 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { PetId, PetMood } from '../../../shared/pet'
+import { isHumanPet } from '../../../shared/pet'
 import { hasPetModel, instantiatePet } from './models'
+import { instantiateHuman, type HumanClip } from './human'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
 import {
   DEFAULT_WALKER,
@@ -33,6 +35,15 @@ const CAM_DISTANCE = 162
 const CAM_FOV = 35
 /** 角色在球内的目标高度（世界单位） */
 const PET_HEIGHT = 26
+/** 真人系角色在球内的目标高度（世界单位）：细高体型，比 26 的 Q 版高一截，ballshot 核对 */
+const HUMAN_HEIGHT = 36
+
+interface HumanRuntime {
+  mixer: THREE.AnimationMixer
+  root: THREE.Group
+  actions: Record<HumanClip, THREE.AnimationAction>
+  cur: HumanClip
+}
 
 export type PetAction = 'idle' | 'happy' | 'eat' | 'sleep'
 
@@ -349,20 +360,59 @@ export function createPet3dScene(
   let roam = opts.roam === true
   let petId: PetId = id
   let petHolder: THREE.Group | null = null
+  let human: HumanRuntime | null = null
   let loadToken = 0
   /** 姿态动画相位（素材无骨骼，靠整体变换表达动作） */
   const pose = { phase: 0, time: 0, gait: 0 }
 
+  const disposeCurrentPet = (): void => {
+    if (petHolder) {
+      petGroup.remove(petHolder)
+      petHolder = null
+    }
+    if (human) {
+      human.mixer.stopAllAction()
+      human.mixer.uncacheRoot(human.root)
+      human = null
+    }
+  }
+
   const attachPet = async (want: PetId): Promise<void> => {
-    if (!hasPetModel(want)) return
     const token = ++loadToken
     try {
+      if (isHumanPet(want)) {
+        // 真人系：骨骼模型 + mixer，失败只留球体（与 legacy 同样的兜底姿态）
+        const inst = await instantiateHuman(want, HUMAN_HEIGHT)
+        if (token !== loadToken) {
+          inst.dispose()
+          return
+        }
+        disposeCurrentPet()
+        petHolder = inst.group
+        petHolder.visible = roam
+        petGroup.add(petHolder)
+        const actions = {
+          walk: inst.mixer.clipAction(inst.clips.walk),
+          idle: inst.mixer.clipAction(inst.clips.idle),
+          wave: inst.mixer.clipAction(inst.clips.wave),
+          talk: inst.mixer.clipAction(inst.clips.talk)
+        }
+        actions.walk.setLoop(THREE.LoopRepeat, Infinity)
+        actions.idle.setLoop(THREE.LoopRepeat, Infinity)
+        actions.idle.play()
+        human = { mixer: inst.mixer, root: inst.group, actions, cur: 'idle' }
+        if (inst.unbound.length > 0) {
+          console.warn('[pet3d] 真人动作绑定缺失节点：', inst.unbound.join(','))
+        }
+        return
+      }
+      if (!hasPetModel(want)) return
       const inst = await instantiatePet(want, PET_HEIGHT)
       if (token !== loadToken) {
         inst.dispose()
         return
       }
-      if (petHolder) petGroup.remove(petHolder)
+      disposeCurrentPet()
       // 动画层与归一化层分离：inst.group 自带「缩放/居中」变换，
       // 动画只动外层容器，不会把归一化缩放覆盖掉（曾因此把模型缩回原始尺寸而看不见）
       const anim = new THREE.Group()
@@ -520,8 +570,27 @@ export function createPet3dScene(
     petGroup.position.y += bob
     blob.scale.setScalar(1 - bob * 0.02)
 
+    // ─── 真人系位姿：骨骼动画（mixer），gait/action → clip 交叉淡化 ─────────────
+    if (human) {
+      human.mixer.update(dt)
+      const want: HumanClip =
+        gait === 'walk' ? 'walk' : action === 'happy' ? 'wave' : action === 'eat' ? 'talk' : 'idle'
+      if (want !== human.cur) {
+        const prev = human.actions[human.cur]
+        const next = human.actions[want]
+        const looped = want === 'walk' || want === 'idle'
+        next.reset()
+        next.setLoop(looped ? THREE.LoopRepeat : THREE.LoopOnce, Infinity)
+        next.clampWhenFinished = !looped
+        next.fadeIn(0.25).play()
+        prev.fadeOut(0.25)
+        human.cur = want
+      }
+    }
+
     // ─── 角色位姿（素材无骨骼：整体变换表达动作）─────────────────────────────
-    if (petHolder) {
+    // 真人系走 mixer 分支，跳过这里（动作剪辑自带呼吸/摆动）
+    if (petHolder && !human) {
       const g = gaitBlend
       const mood = stats.mood
       let y = 0
@@ -643,7 +712,7 @@ export function createPet3dScene(
       })
     },
     dump: () => {
-      const out: { name: string; type: string; visible: boolean; pos: number[]; size: number[] }[] = []
+      const out: { name: string; type: string; visible: boolean; self: boolean; parent: string | null; pos: number[]; size: number[] }[] = []
       scene.updateWorldMatrix(true, true)
       scene.traverse((o) => {
         const m = o as THREE.Mesh
@@ -661,6 +730,8 @@ export function createPet3dScene(
           name: m.name || m.geometry?.type || 'mesh',
           type: m.geometry?.type ?? '',
           visible: eff,
+          self: m.visible,
+          parent: m.parent ? `${m.parent.type}${(m.parent as THREE.Group).visible === false ? '(hidden)' : ''}` : null,
           pos: [Math.round(c.x), Math.round(c.y), Math.round(c.z)],
           size: [Math.round(size.x), Math.round(size.y), Math.round(size.z)]
         })
@@ -707,6 +778,10 @@ export function createPet3dScene(
       cancelAnimationFrame(raf)
       ro.disconnect()
       loadToken++ // 让在途的加载结果作废
+      if (human) {
+        human.mixer.stopAllAction()
+        human = null
+      }
       petHolder = null
       for (const g of sceneGeo) g.dispose()
       sceneGeo.length = 0

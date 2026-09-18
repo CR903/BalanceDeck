@@ -1,6 +1,6 @@
 {
   "name": "balancedeck",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "BalanceDeck 余额板 — coding plan 与 API 余额悬浮仪表盘",
   "main": "./out/main/index.js",
   "author": "zhouri",
@@ -21,12 +21,15 @@
     "test:pet": "node scripts/test-pet.mjs",
     "test:walker": "node scripts/test-walker.mjs",
     "test": "npm run test:percent && npm run test:ssr && npm run test:quality && npm run test:tray && npm run test:pet && npm run test:walker",
+    "fetch:humans": "node scripts/fetch-human-pets.mjs",
     "details:test": "electron . --details-test",
     "keystore:debug": "electron scripts/keystore-debug.js",
     "instances:debug": "node scripts/instances-debug.mjs",
     "verify:opencode": "node scripts/verify-opencode.mjs",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:win": "npm run build && electron-builder --win",
+    "predist:mac": "npm run fetch:humans",
+    "predist:win": "npm run fetch:humans"
   },
   "devDependencies": {
     "@types/react": "^18.3.31",

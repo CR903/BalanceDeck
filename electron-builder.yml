@@ -9,6 +9,9 @@ files:
 extraResources:
   - from: build
     to: build
+  # 真人系宠物素材（MIT，gitignored，dist 前由 predist 钩子拉取；缺失则构建失败并提示）
+  - from: resources/human-pets
+    to: human-pets
 asar: true
 mac:
   category: public.app-category.utilities

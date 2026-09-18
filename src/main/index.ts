@@ -14,6 +14,7 @@ import { createTray, updateTray, currentTrayTitle, trayImageInfo } from './tray'
 import { syncAutostart } from './autostart'
 import { startScheduler, refreshNow, currentState, stopScheduler } from './scheduler'
 import { registerIpc, consumeDragFired } from './ipc'
+import { registerHumanAssetScheme, setupHumanAssetProtocol } from './human-assets'
 import type { AppState } from '../shared/types'
 
 // --smoke：构建验证模式。采集一轮后把快照写到 stdout 并自动退出，不留常驻窗口。
@@ -40,6 +41,9 @@ if (process.env.BD_SANDBOX_OFF === '1') {
 
 app.dock?.hide?.()
 
+// bd-asset:// 特权 scheme 必须在 ready 前注册（真人系宠物素材用）
+registerHumanAssetScheme()
+
 loadPersisted()
 registerIpc()
 
@@ -50,6 +54,8 @@ function pushState(s: AppState): void {
 }
 
 app.whenReady().then(async () => {
+  // 真人系宠物素材协议（bd-asset://human-pets…，缺失时渲染层回落，不阻塞启动）
+  setupHumanAssetProtocol()
   // 先读偏好：收起态形态（球/桌面宠物）与是否置顶，窗口按最终形态一次成型
   await primePrefs()
 
@@ -75,8 +81,8 @@ app.whenReady().then(async () => {
 
   // --ballshot：只拍收起态 3D 悬浮球（含命中环），迭代 3D 观感时用，十几秒出图
   if (process.argv.includes('--ballshot')) {
-    // 兜底：无论如何 60s 内退出（离线环境下采集可能长时间阻塞）
-    setTimeout(() => app.quit(), 60_000)
+    // 兜底：无论如何退出（离线环境下采集可能长时间阻塞；逐只拍摄需要更久）
+    setTimeout(() => app.quit(), process.env.BD_PETS === '1' ? 240_000 : 60_000)
     const win = createOverlay()
     // 渲染层报错要看得到（模型解析/贴图/着色器问题都在这里暴露）
     win.webContents.on('console-message', (_e, level, message) => {
@@ -198,7 +204,7 @@ app.whenReady().then(async () => {
     }
     // BD_PETS=1：逐只角色各拍一张（核对 3D 素材观感）
     if (process.env.BD_PETS === '1') {
-      const ids = ['mochi', 'shiba', 'penguin', 'fox', 'panda', 'bunny', 'koala', 'tiger']
+      const ids = ['mochi', 'shiba', 'penguin', 'fox', 'panda', 'bunny', 'koala', 'tiger', 'aria', 'ray']
       for (let i = 0; i < ids.length; i++) {
         await win.webContents.executeJavaScript('window.api.expand()', true)
         await new Promise((r) => setTimeout(r, 700))
@@ -212,7 +218,16 @@ app.whenReady().then(async () => {
         await win.webContents.executeJavaScript(back, true)
         await new Promise((r) => setTimeout(r, 400))
         await win.webContents.executeJavaScript(collapse, true)
-        await new Promise((r) => setTimeout(r, 2200))
+        // 真人系要解析 5 个 FBX（模型+4 段动作），软件渲染下比 Q 版慢：
+        // 等到 petReady 才拍，否则拍到"模型还在路上"的空球
+        for (let w = 0; w < 25; w++) {
+          const ready = await win.webContents.executeJavaScript(
+            'window.__bd_ball?.()?.petReady === true',
+            true
+          )
+          if (ready) break
+          await new Promise((r) => setTimeout(r, 400))
+        }
         await shot(`pet-${ids[i]}`)
       }
     }
@@ -945,15 +960,15 @@ async function runUiTest(
   // 设置页宠物分区：撸一把 / 喂食 / 换一只 / 桌面宠物开关
   await exec(footerClick('设置'))
   await sleep(700)
-  r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 8"))
+  r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 10"))
     ? 'ok'
     : 'fail:no-section'
   // 角色缩略图由 3D 素材渲染（异步）：等它们出来
   for (let i = 0; i < 40; i++) {
-    if ((await exec("document.querySelectorAll('.pet-chip img').length === 8")) === true) break
+    if ((await exec("document.querySelectorAll('.pet-chip img').length === 10")) === true) break
     await sleep(400)
   }
-  r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 8")) ? 'ok' : 'fail:no-thumbs'
+  r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 10")) ? 'ok' : 'fail:no-thumbs'
   const clickPetAction = (label: string): Promise<unknown> =>
     exec(
       `[...document.querySelectorAll('.pet-sec .pet-actions .btn-secondary')].find(b=>b.textContent.includes('${label}'))?.click()`

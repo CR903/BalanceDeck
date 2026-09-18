@@ -60,9 +60,11 @@
 - **养成仍在**：亲密度 / 饱食度按小时惰性衰减（亲密度有下限），经验升级；数据只存本机，
   支持导出/导入 JSON 迁移（换机不丢进度）
 
-**3D 素材**：宠物模型来自 **[Kenney「Cube Pets」](https://kenney.nl/assets/cube-pets)**（**CC0 1.0**，
+**3D 素材**：Q 版宠物模型来自 **[Kenney「Cube Pets」](https://kenney.nl/assets/cube-pets)**（**CC0 1.0**，
 公共领域，可商用无需署名），随包内置 8 只：麻薯猫 / 豆柴 / 企鹅仔 / 小狐狸 / 熊猫团子 / 兔兔 / 考拉 / 小老虎。
 模型以 base64 内联进产物并按需分包，不联网、不落地额外文件。
+真人助理（Aria / Ray）来自 **[Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox)**（**MIT**，
+115 个带骨骼真人模型 + 动作库），`npm run fetch:humans` 拉取后随包分发（`resources/human-pets`）。
 
 ### 🧭 菜单栏（macOS）/ 系统托盘（Windows）
 - **左键**：直接显示 / 隐藏悬浮卡片（macOS 不再被右键菜单抢占）
@@ -182,7 +184,8 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 - 所有数据**只在本机**计算与存储；除各家余额 / 用量接口外不发起任何网络请求，无遥测
 - 凭据通过 Electron `safeStorage` 加密后落盘（macOS Keychain / Windows DPAPI）
 - 仓库与示例中不包含任何可用凭据；宠物数据支持导出为本地 JSON，迁移后可随时删除
-- 第三方素材：宠物 3D 模型 © [Kenney](https://kenney.nl)（CC0 1.0，公共领域）
+- 第三方素材：Q 版宠物 3D 模型 © [Kenney](https://kenney.nl)（CC0 1.0，公共领域）；
+  真人模型与动作 © Microsoft Rocketbox（MIT，随包分发，见 `resources/human-pets/*/meta.json`）
 
 ## Roadmap
 

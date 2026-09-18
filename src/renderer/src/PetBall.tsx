@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
-import { petMood, type PetId, type PetState } from '../../shared/pet'
+import { petMood, isHumanPet, type PetId, type PetState } from '../../shared/pet'
 import { fmtPercent, windowPercent, levelOfPercent, dataTime, isStale, type Level } from './format'
 import { Icon } from './components'
 import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } from './pet3d/scene'
@@ -93,6 +93,8 @@ export function PetBall({
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [toast, setToast] = useState('')
+  /** 真人系语音泡泡（打招呼 / 余额播报，比 toast 大、停留更久，最多两行） */
+  const [bubble, setBubble] = useState('')
   /** 测试观测点：命中环（--uitest / --shots 打开，用于核对球体投影与命中判定） */
   const debugRing = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('bddebug')
   const [ringBox, setRingBox] = useState({ x: 0, y: 0, size: 0 })
@@ -108,6 +110,7 @@ export function PetBall({
   const holdTimer = useRef<number | null>(null)
   const petCoolUntil = useRef(0)
   const toastTimer = useRef<number | null>(null)
+  const bubbleTimer = useRef<number | null>(null)
 
   useEffect(() => {
     void window.api.getState().then(setState)
@@ -118,6 +121,7 @@ export function PetBall({
     () => () => {
       if (holdTimer.current !== null) window.clearTimeout(holdTimer.current)
       if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
+      if (bubbleTimer.current !== null) window.clearTimeout(bubbleTimer.current)
     },
     []
   )
@@ -126,6 +130,13 @@ export function PetBall({
     setToast(msg)
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(''), 1600)
+  }
+
+  /** 真人系泡泡：4.2s 后自动消失；新泡泡顶掉旧泡泡 */
+  const showBubble = (msg: string, ms = 4200): void => {
+    setBubble(msg)
+    if (bubbleTimer.current !== null) window.clearTimeout(bubbleTimer.current)
+    bubbleTimer.current = window.setTimeout(() => setBubble(''), ms)
   }
 
   // ─── 3D 场景（挂载一次；宠物切换走 setPet，皮肤变化走 setSkin）──────────────
@@ -162,6 +173,12 @@ export function PetBall({
   // 宠物切换 / 动作 / 心情
   useEffect(() => {
     sceneRef.current?.setPet(pet.id)
+    // 真人系见面打招呼：挥手（场景播 wave）+ 自报家门（泡泡）
+    if (isHumanPet(pet.id)) {
+      sceneRef.current?.setAction('happy', 1700)
+      showBubble(`你好，我是${pet.name}～`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pet.id])
 
   useEffect(() => {
@@ -316,6 +333,17 @@ export function PetBall({
     sceneRef.current?.setPaused(renaming)
   }, [renaming])
 
+  // 真人系余额播报：每 90s 冒一次主指标泡泡（value 已含余额显隐与诚实口径）。
+  // 数据变化会重置计时（新数据值得先播），切走真人系即停。
+  useEffect(() => {
+    if (!isHumanPet(pet.id) || !roam || failed) return
+    if (!s || s.status !== 'ok') return
+    const stale = isStale(s) ? (s.dataQuality === 'cached' ? '（缓存）' : '（估算）') : ''
+    const text = `${label} ${value}${stale}`
+    const t = window.setTimeout(() => showBubble(text), 90_000)
+    return () => window.clearTimeout(t)
+  }, [pet.id, roam, failed, s, value, label])
+
   // ─── 交互 ───────────────────────────────────────────────────────────────────
   const clearHold = (): void => {
     if (holdTimer.current !== null) {
@@ -358,6 +386,12 @@ export function PetBall({
     }
     petCoolUntil.current = now + 5000
     const r = onPet()
+    // 真人系长按 = 挥手回应（wave 由父级 action 驱动），配泡泡不配 toast
+    if (isHumanPet(petRef.current.id)) {
+      if (r.levelUps > 0) showBubble(`升级！Lv.${petRef.current.level + r.levelUps}`)
+      else showBubble('好舒服～')
+      return
+    }
     if (r.levelUps > 0) showToast(`升级！Lv.${pet.level + r.levelUps}`)
     else showToast('好舒服～')
   }
@@ -528,6 +562,11 @@ export function PetBall({
         />
       )}
       {toast && <div className="petball-toast">{toast}</div>}
+      {bubble && (
+        <div className="petball-bubble" style={{ left: center.x, top: center.y - ballR - 34 }} aria-hidden="true">
+          {bubble}
+        </div>
+      )}
       {isStale(s ?? {}) && roam && !failed && (
         <div className="petball-badge" style={{ left: center.x + ballR * 0.6, top: center.y - ballR * 0.6 }} aria-hidden="true">
           <Icon name={s?.dataQuality === 'local' ? 'flask' : 'history'} size={9} />

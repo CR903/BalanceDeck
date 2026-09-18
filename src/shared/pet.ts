@@ -7,10 +7,21 @@
 //   · 成长：经验 → 等级（升级所需经验随等级增长）
 //   · 持久化：encode/decode 为单行 JSON，存 extras.ui:petState；导出/导入即数据迁移
 //
-// 角色全部为原创 Q 版精灵（无版权风险）；素材以 SVG 描述，见 renderer/PetSprites.tsx。
+// 内置 8 只为 CC0 Q 版 3D 素材（见 renderer/pet3d/models.ts）；
+// aria/ray 为 MIT 真人系骨骼模型（Microsoft Rocketbox，见 renderer/pet3d/human.ts）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type PetId = 'mochi' | 'shiba' | 'penguin' | 'fox' | 'panda' | 'bunny' | 'koala' | 'tiger'
+export type PetId =
+  | 'mochi'
+  | 'shiba'
+  | 'penguin'
+  | 'fox'
+  | 'panda'
+  | 'bunny'
+  | 'koala'
+  | 'tiger'
+  | 'aria'
+  | 'ray'
 
 /** 旧版角色 id → 现役角色（早期自绘精灵换成了 CC0 3D 素材，保留用户的养成进度） */
 export const LEGACY_PET_IDS: Record<string, PetId> = {
@@ -36,8 +47,15 @@ export const PETS: PetMeta[] = [
   { id: 'panda', name: '熊猫团子', desc: '抱着竹子就能睡着', trick: '团成球' },
   { id: 'bunny', name: '兔兔', desc: '耳朵会抖的小白兔', trick: '蹦蹦跳跳' },
   { id: 'koala', name: '考拉', desc: '慢半拍的抱树专家', trick: '抱紧不放' },
-  { id: 'tiger', name: '小老虎', desc: '条纹小老虎，其实很温柔', trick: '伸个懒腰' }
+  { id: 'tiger', name: '小老虎', desc: '条纹小老虎，其实很温柔', trick: '伸个懒腰' },
+  { id: 'aria', name: 'Aria', desc: '干练的商务助理，汇报额度从不含糊', trick: '挥手问好' },
+  { id: 'ray', name: 'Ray', desc: '沉稳的商务助理，走路带风', trick: '挥手问好' }
 ]
+
+/** 是否真人系宠物（Rocketbox 骨骼模型，走 human.ts 分支；其余走无骨骼 models.ts 分支） */
+export function isHumanPet(id: PetId): id is 'aria' | 'ray' {
+  return id === 'aria' || id === 'ray'
+}
 
 export function petMeta(id: PetId): PetMeta {
   return PETS.find((p) => p.id === id) ?? PETS[0]

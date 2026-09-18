@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PETS, expNeed, petMeta, petMood, type PetId, type PetState } from '../../shared/pet'
+import { PETS, expNeed, isHumanPet, petMeta, petMood, type PetId, type PetState } from '../../shared/pet'
 import { petThumbnail } from './pet3d/thumbnail'
 import { Icon } from './components'
 import type { PetActionResult } from '../../shared/pet'
@@ -12,7 +12,8 @@ import type { PetActionResult } from '../../shared/pet'
 //   · 成长数据（等级 / 亲密度 / 饱食度）与互动（撸一把 / 喂食）
 //   · 数据迁移（导出 / 导入 JSON）
 //
-// 头像用 2D 矢量精灵（PetSprites）做缩略：设置页是静态场景，没必要起 WebGL。
+// 头像：Q 版走 3D 缩略图（thumbnail.ts 临时渲染一次后缓存），
+// 真人系直接用采集期 preview.png（bd-asset 直显，不占 WebGL 上下文）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface PetSectionProps {
@@ -63,13 +64,14 @@ export function PetSection({
     if (editing) inputRef.current?.select()
   }, [editing])
 
-  // 逐只渲染缩略图（串行：一次只占一个 WebGL 上下文，渲染完即释放）
+  // 逐只渲染缩略图（串行：一次只占一个 WebGL 上下文，渲染完即释放）。
+  // 真人系直接用采集期的 preview.png（bd-asset 协议直显，不占 WebGL 上下文）。
   useEffect(() => {
     let alive = true
     void (async () => {
       for (const p of PETS) {
         try {
-          const url = await petThumbnail(p.id, 128)
+          const url = isHumanPet(p.id) ? `bd-asset://${p.id}/preview.png` : await petThumbnail(p.id, 128)
           if (!alive) return
           setThumbs((prev) => ({ ...prev, [p.id]: url }))
         } catch {

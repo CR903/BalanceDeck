@@ -489,6 +489,16 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - [x] DeepSeek 401 → 支持 Base URL 自定义（中转平台）；401 报错带修复指引；`npm run keystore:debug`（`npx electron scripts/keystore-debug.js`）可查已存 key 掩码
 - [ ] 用户侧待办：opencode 控制台重新生成 API Key 并 `/connect` 重连（解锁官方真值）；DeepSeek key 核实来源（官方 35 位 / 中转短 key + Base URL）
 
+## 2026-09-19 第十九轮：真人助理宠物 Aria / Ray（用户需求）
+
+- 素材：Microsoft Rocketbox（MIT，已用 GitHub API 验证），商务装一女一男；
+  VRoid Hub 无下载入口、VIVERSE 化身不出文件、VRoid 无自动生成，均已验证走不通
+- 管线：`fetch:humans` 采集（aria 15.7MB / ray 15.4MB）→ `bd-asset://` 协议 →
+  `human.ts` 骨骼分支 → mixer 交叉淡化；walker 状态机复用不动
+- 行为：走路（真动画）/ 切换与长按挥手问好 / 90s 余额泡泡；旧 8 只零改动
+- 验证：typecheck ✓ · `npm test` 187 ✓ · uitest 78 项 ✓ · ballshot 10/10 ✓
+- VRoid Hub OAuth 同步 parked（用户以后想用自己的角色再做）
+
 ## 2026-09-06 第四轮修复（用户反馈 + 录屏验证）
 
 - [x] **修复悬浮圆点漂移**：旧逻辑收起锚定右上角、展开锚定左上角，每开合一轮圆点右移 328px 直至出屏。现改为 `dotAnchor` 记录展开前圆点位置、收起时精确还原；所有落点统一夹回工作区，可自愈历史漂移位置

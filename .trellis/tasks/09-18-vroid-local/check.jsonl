@@ -1,0 +1,2 @@
+{"file": "DESIGN.md", "reason": "Verify pet interaction contracts (long-press, menu, hit-test) still hold for taller humanoid framing"}
+{"file": "TASKS.md", "reason": "Pet regression history: sticky-drag, NaN-crash, shadow-box lessons that new branch must not repeat"}

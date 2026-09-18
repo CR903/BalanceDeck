@@ -19,8 +19,8 @@ import colormapUrl from '../assets/pets/colormap.png?inline'
 //   并把朝向转成 +Z（面向镜头），下层动画只关心位姿，不关心素材差异。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** 每只宠物的模型加载器（动态 chunk，按需拉取） */
-const SOURCES: Record<PetId, () => Promise<string>> = {
+/** 每只宠物的模型加载器（动态 chunk，按需拉取；真人系走 human.ts，不在此表） */
+const SOURCES: Partial<Record<PetId, () => Promise<string>>> = {
   mochi: () => import('../assets/pets/animal-cat.glb?inline').then((m) => m.default),
   shiba: () => import('../assets/pets/animal-dog.glb?inline').then((m) => m.default),
   penguin: () => import('../assets/pets/animal-penguin.glb?inline').then((m) => m.default),

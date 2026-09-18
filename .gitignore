@@ -8,3 +8,6 @@ dist/
 *.tsbuildinfo
 __pycache__/
 *.pyc
+
+# Fetched third-party pet assets (MIT, reproducible via npm run fetch:humans)
+resources/
