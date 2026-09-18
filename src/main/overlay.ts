@@ -1,20 +1,21 @@
 import { BrowserWindow, screen, app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { BALL_VIEW, ROAM_VIEW } from '../shared/pet-view'
 
 // 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 3D 桌面宠物球。
 // 位置持久化在 userData/state.json。
 //
-// 收起态不是「56px 小圆点窗口」，而是一块 320×230 的漫游区：
+// 收起态不是「56px 小圆点窗口」，而是一块漫游区（尺寸见 shared/pet-view）：
 //   · 球是唯一的可见物（WebGL 渲染），球以外的像素完全透明；
 //   · 球以外的区域鼠标穿透（光标轮询 + setIgnoreMouseEvents），桌面上点得到下面的窗口；
 //   · 角色在这块区域内自主走动，用户拖动球即拖动窗口（位置持久化）。
 
 const EXPANDED = { width: 384, height: 600 }
 /** 收起态：3D 悬浮球（默认形态；球 + 数值胶囊，窗口贴合球体） */
-const COLLAPSED_BALL = { width: 200, height: 210 }
+const COLLAPSED_BALL = BALL_VIEW
 /** 收起态：3D 桌面宠物（开启后球内角色会在漫游区里走动，需要更大的活动空间） */
-const COLLAPSED_ROAM = { width: 320, height: 230 }
+const COLLAPSED_ROAM = ROAM_VIEW
 
 /** 当前收起态是否为「桌面宠物」形态（由 preferences 决定，见 primePrefs） */
 let petRoam = false
@@ -232,6 +233,24 @@ function clampToWorkArea(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), Math.max(lo, hi))
 }
 
+/**
+ * 把窗口整体收回工作区（与 setCollapsed / resizeCollapsed / watchDisplays 同一口径）。
+ * 按窗口中心挑显示器：拖拽出来的窗口常横跨屏幕边界，按左上角会选错屏。
+ */
+function snapBackToWorkArea(): void {
+  if (!win) return
+  const b = win.getBounds()
+  const wa = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + b.height / 2 }).workArea
+  const nx = Math.round(clampToWorkArea(b.x, wa.x, wa.x + wa.width - b.width))
+  const ny = Math.round(clampToWorkArea(b.y, wa.y, wa.y + wa.height - b.height))
+  if (nx === b.x && ny === b.y) return
+  applyingBounds = true
+  win.setPosition(nx, ny)
+  applyingBounds = false
+  state.x = nx
+  state.y = ny
+}
+
 // 展开前的圆点位置：收起时精确还原到原位，杜绝开合漂移
 let dotAnchor: { x: number; y: number } | null = null
 // 程序化 setBounds 期间为 true：此时触发的 moved 不更新圆点锚点
@@ -304,6 +323,8 @@ export function dragStart(grab?: { x: number; y: number }): void {
       if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) return
       const display = screen.getDisplayNearestPoint(c)
       const wa = display.workArea
+      // 故意比工作区宽松（首提交起就是这样）：贴边拖时不让窗口顶到"看不见的墙"，
+      // 抓取点也能推到画面外。落位由 dragStop 的 snapBackToWorkArea 收回严格区内。
       const nx = Math.min(Math.max(c.x - dragOffset.x, wa.x - 40), wa.x + wa.width - 8)
       const ny = Math.min(Math.max(c.y - dragOffset.y, wa.y - 8), wa.y + wa.height - 40)
       if (!Number.isFinite(nx) || !Number.isFinite(ny)) return
@@ -323,6 +344,9 @@ export function dragStop(): void {
   if (dragTimer) {
     clearInterval(dragTimer)
     dragTimer = null
+    // 拖拽中的宽松夹取只服务于手感：松手后必须回到严格工作区内，
+    // 否则球会停在屏幕外被切掉（R11，与其他路径同一口径）
+    snapBackToWorkArea()
     persist()
   }
   grabPoint = null
@@ -331,7 +355,7 @@ export function dragStop(): void {
 // ═══════════════════════════════════════════════════════════════════════════════
 // 收起态：3D 宠物球的鼠标穿透
 //
-// 窗口是一块 320×230 的透明矩形，只有球的位置应该接收鼠标。渲染层把球的
+// 窗口是一块透明的漫游矩形（尺寸见 shared/pet-view），只有球的位置应该接收鼠标。渲染层把球的
 // 命中框（窗口内 CSS 像素）发过来，这里以光标轮询判断命中：
 //   · 命中 → setIgnoreMouseEvents(false)，球可点/可拖/可右键；
 //   · 未命中 → setIgnoreMouseEvents(true, { forward: true })，事件穿透到桌面。

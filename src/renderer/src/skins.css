@@ -1515,6 +1515,9 @@ textarea {
   align-items: center;
   gap: 1px;
   padding: 3px 9px 4px;
+  /* 半宽上界（70px）：PetBall 的 clampX 按它夹，贴边帧才不会被 .petball 的 overflow 切（R8）。
+     供应商名再长也在 label 处省略，不允许把胶囊撑过这个宽度。 */
+  max-width: 140px;
   border-radius: 11px;
   background: rgba(16, 16, 18, 0.5);
   backdrop-filter: blur(12px) saturate(150%);
@@ -1561,6 +1564,9 @@ textarea {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.01em;
+  max-width: 122px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: rgba(255, 255, 255, 0.72);
 }
 .petball.lvl-warn .petball-value {

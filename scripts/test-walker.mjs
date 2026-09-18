@@ -2,7 +2,8 @@
 // 用法：node scripts/test-walker.mjs
 //
 // 覆盖：idle→walk 切换、朝目标前进、朝向翻转、贴边回头（目标点拉回区内）、
-//       到达/超时回到 idle、漫游区硬边界、交互步态（撸一把/喂食/睡觉）的接管与恢复、
+//       到达/超时回到 idle、漫游区硬边界、漫游区中途变小（夹回边上且不抖动）、
+//       交互步态（撸一把/喂食/睡觉）的接管与恢复、
 //       dt 上限（掉帧/休眠不大跳）、幂等性（不修改入参）。
 
 import { loadTs } from './lib/load-ts.mjs'
@@ -96,6 +97,31 @@ ok(Math.abs(bigStep.x) <= 2.0001, 'dt 被夹到 0.1s（一帧最多走 speed×0.
 const before = { ...moving }
 stepWalker(moving, 0.2, CFG)
 eq(moving, before, 'stepWalker 不修改入参')
+
+// ─── 漫游区变小（视口反算改了 area）：先夹回再走 ─────────────────────────────
+{
+  const outside = { x: 90, z: 40, facing: 1, gait: 'idle', since: 0, tx: 0, tz: 0, waitFor: 5 }
+  const shrunk = stepWalker(outside, 0.016, CFG)
+  eq([shrunk.x, shrunk.z], [50, 10], 'idle 时越界位置被夹回可行区边上')
+
+  const pushOut = { x: 90, z: 40, facing: 1, gait: 'walk', since: 0, tx: 90, tz: 40, waitFor: 0 }
+  let pinned = pushOut
+  for (let i = 0; i < 30; i++) pinned = stepWalker(pinned, 0.05, CFG)
+  eq([pinned.x, pinned.z], [50, 10], '目标在区外时贴着边停住（不来回抖）')
+
+  let walkIn = { ...pinned, gait: 'walk', tx: -40, tz: -8, since: 0 }
+  for (let i = 0; i < 10; i++) walkIn = stepWalker(walkIn, 0.1, CFG)
+  ok(walkIn.x < 50 && walkIn.z < 10, '区内目标立刻能从边上走回来')
+
+  let ro = { x: 0, z: 0, facing: 1, gait: 'idle', since: 0, tx: 0, tz: 0, waitFor: 0.01 }
+  let targetsIn = true
+  for (let i = 0; i < 400; i++) {
+    ro = stepWalker(ro, 0.1, CFG)
+    if (Math.abs(ro.tx) > CFG.area.halfX + 0.0001 || Math.abs(ro.tz) > CFG.area.halfZ + 0.0001) targetsIn = false
+  }
+  ok(targetsIn, '长时间随机走：目标点始终落在可行区内（area 变小也不会选出不可达目标）')
+  ok(Math.abs(ro.x) <= 50.0001 && Math.abs(ro.z) <= 10.0001, '长时间随机走不会走出可行区')
+}
 
 // ─── 默认配置可用 ────────────────────────────────────────────────────────────
 const d = stepWalker(initialWalker(), 0.05)

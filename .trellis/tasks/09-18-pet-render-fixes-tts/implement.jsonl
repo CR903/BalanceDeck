@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "含 Pre-Modification Rule：改任何值前先全仓搜索（halfX/BALL_RADIUS/窗口尺寸被多处消费）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "漫游区边界横跨 renderer→IPC→主进程窗口，改尺寸必须三层同看"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "投影数学只允许有一份（viewfit.sphereNdcHalf），反算必须复用而非另写"}
+{"file": ".trellis/tasks/09-18-pet-render-fixes-tts/research/fbx-material-probe.md", "reason": "发黑根因的实测证据与已排除假设，避免重走弯路"}
+{"file": ".trellis/tasks/09-18-pet-render-fixes-tts/research/verification-harness.md", "reason": "视觉验证门禁的正确用法与失效模式：逐只拍摄必须用 BD_PET_ID，BD_PETS 会拍空帧"}

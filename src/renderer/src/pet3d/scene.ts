@@ -2,9 +2,11 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { PetId, PetMood } from '../../../shared/pet'
 import { isHumanPet } from '../../../shared/pet'
+import { ROAM_VIEW } from '../../../shared/pet-view'
 import { hasPetModel, instantiatePet } from './models'
-import { instantiateHuman, type HumanClip } from './human'
+import { instantiateHuman, HUMAN_YAW, type HumanClip } from './human'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
+import { fitRoamArea, sphereNdcHalf } from './viewfit'
 import {
   DEFAULT_WALKER,
   initialWalker,
@@ -33,16 +35,36 @@ const BALL_CENTER_Y = BALL_RADIUS + 1.5
 /** 相机：把「球 + 球内角色」框进窗口，略俯视以露出球底与阴影 */
 const CAM_DISTANCE = 162
 const CAM_FOV = 35
+/** 相机高出注视点多少（俯角的来源） */
+const CAM_PITCH = 34
 /** 角色在球内的目标高度（世界单位） */
 const PET_HEIGHT = 26
 /** 真人系角色在球内的目标高度（世界单位）：细高体型，比 26 的 Q 版高一截，ballshot 核对 */
 const HUMAN_HEIGHT = 36
+
+const SHELL_EDGE_R = BALL_RADIUS * 1.028
+const BAND_R = BALL_RADIUS * 0.995
+const BAND_TUBE = 1.1
+/**
+ * 反算留白（世界单位）：轮廓球的投影按圆处理，但离画面中心越远真实轮廓越是被拉成横椭圆，
+ * 实测 320×230 贴边时算宽约 4.7%（≈7px 出界）；4 单位刚好吸收掉该误差。
+ */
+const ROAM_FIT_MARGIN = 4
+/**
+ * 纵深预算（R9）：球壳停在 z=0 后宠物可以朝镜头方向走 28 个单位，
+ * 透视缩放跨度 √(34²+(162−28)²) ↔ √(34²+(162+28)²) ≈ 1.40×（≥1.35× 目标）。
+ */
+const ROAM_DEPTH_BUDGET = 28
 
 interface HumanRuntime {
   mixer: THREE.AnimationMixer
   root: THREE.Group
   actions: Record<HumanClip, THREE.AnimationAction>
   cur: HumanClip
+  /** 剪辑自带根位移的抵消（见 human.ts 的 instantiateHuman） */
+  cancelRootMotion: () => void
+  /** 迄今抵消掉的根位移峰值（世界单位）——「素材到底漂不漂」的现场证据 */
+  rootMotion: () => number
 }
 
 export type PetAction = 'idle' | 'happy' | 'eat' | 'sleep'
@@ -84,6 +106,14 @@ export interface Pet3dHandle {
   ballRect: () => { x: number; y: number; width: number; height: number }
   /** 球心投影到窗口 CSS 坐标 */
   ballCenter: () => { x: number; y: number }
+  /** 测试观测点：当前按视口反算出的漫游边界（世界单位）；裁切门禁拿它和 ink box 对照 */
+  roamArea: () => { halfX: number; halfZ: number }
+  /** 测试观测点：漫游状态机的当前位置（世界单位）；与 dump 的世界包围盒对照可测剪辑根位移漂移 */
+  walkerPos: () => { x: number; z: number; gait: string }
+  /** 诊断：把宠物钉到指定世界坐标（BD_PIN_POS 用；越界时被夹进可行区） */
+  setPin: (x: number, z: number) => void
+  /** 测试观测点：真人系素材「剪辑自带根位移」被抵消掉的峰值（世界单位）；非真人系为 null */
+  rootMotion: () => number | null
   /** 测试观测点：从 WebGL 缓冲读出「有像素的范围」与不透明像素占比 */
   measure: () => { box: { x: number; y: number; width: number; height: number }; ratio: number } | null
   /** 测试观测点：宠物素材是否已就位 */
@@ -140,7 +170,7 @@ export function createPet3dScene(
 
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(CAM_FOV, 1, 1, 2000)
-  camera.position.set(0, BALL_CENTER_Y + 34, CAM_DISTANCE)
+  camera.position.set(0, BALL_CENTER_Y + CAM_PITCH, CAM_DISTANCE)
   camera.lookAt(0, BALL_CENTER_Y, 0)
 
   // ─── 环境光照（PBR 质感的关键：没有环境贴图，模型会像塑料片）───────────────
@@ -255,7 +285,7 @@ export function createPet3dScene(
     side: THREE.BackSide,
     depthWrite: false
   })
-  const edgeShell = new THREE.Mesh(track(new THREE.SphereGeometry(BALL_RADIUS * 1.028, 32, 22)), edgeMat)
+  const edgeShell = new THREE.Mesh(track(new THREE.SphereGeometry(SHELL_EDGE_R, 32, 22)), edgeMat)
   edgeShell.renderOrder = 8
   shellGroup.add(edgeShell)
 
@@ -278,7 +308,7 @@ export function createPet3dScene(
     envMapIntensity: 1,
     depthWrite: false
   })
-  const band = new THREE.Mesh(track(new THREE.TorusGeometry(BALL_RADIUS * 0.995, 1.1, 8, 48)), bandMat)
+  const band = new THREE.Mesh(track(new THREE.TorusGeometry(BAND_R, BAND_TUBE, 8, 48)), bandMat)
   band.rotation.set(1.05, 0.35, 0.4)
   band.renderOrder = 9
   shellGroup.add(band)
@@ -290,6 +320,7 @@ export function createPet3dScene(
 
   const RING_R = BALL_RADIUS * 0.86
   const RING_TUBE = 1.9
+  const RING_HALO_TUBE = RING_TUBE * 1.5
   const trackMat = new THREE.MeshBasicMaterial({ color: 0x8a8a94, transparent: true, opacity: 0.42, depthWrite: false })
   const trackRing = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_TUBE * 0.62, 10, 96)), trackMat)
   trackRing.renderOrder = 10
@@ -344,9 +375,12 @@ export function createPet3dScene(
     depthWrite: false,
     side: THREE.BackSide
   })
-  const halo = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_TUBE * 1.5, 8, 80)), haloMat)
+  const halo = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_HALO_TUBE, 8, 80)), haloMat)
   halo.renderOrder = 6
   ringGroup.add(halo)
+
+  /** 反算漫游边界用的轮廓半径：球壳暗边 / 装饰带 / 用量环外沿的最大者（不只 BALL_RADIUS） */
+  const SILHOUETTE_R = Math.max(SHELL_EDGE_R, BAND_R + BAND_TUBE, RING_R + RING_HALO_TUBE)
 
   // ─── 宠物（3D 素材，异步加载 + 程序化位姿动画）──────────────────────────────
   // 角色放在**世界坐标**里（不是球壳的子节点）：球壳以轻微延迟跟随角色移动，
@@ -391,6 +425,8 @@ export function createPet3dScene(
         petHolder = inst.group
         petHolder.visible = roam
         petGroup.add(petHolder)
+        // 按真实包围盒重算漫游区：body 轮廓换了，halfZ/halfX 也跟着收放
+        refitArea()
         const actions = {
           walk: inst.mixer.clipAction(inst.clips.walk),
           idle: inst.mixer.clipAction(inst.clips.idle),
@@ -400,7 +436,14 @@ export function createPet3dScene(
         actions.walk.setLoop(THREE.LoopRepeat, Infinity)
         actions.idle.setLoop(THREE.LoopRepeat, Infinity)
         actions.idle.play()
-        human = { mixer: inst.mixer, root: inst.group, actions, cur: 'idle' }
+        human = {
+          mixer: inst.mixer,
+          root: inst.group,
+          actions,
+          cur: 'idle',
+          cancelRootMotion: inst.cancelRootMotion,
+          rootMotion: inst.rootMotion
+        }
         if (inst.unbound.length > 0) {
           console.warn('[pet3d] 真人动作绑定缺失节点：', inst.unbound.join(','))
         }
@@ -420,6 +463,7 @@ export function createPet3dScene(
       petHolder = anim
       petHolder.visible = roam
       petGroup.add(petHolder)
+      refitArea()
     } catch (e) {
       // 素材加载失败：只留球体，不影响 KPI（再次切换宠物会重试）
       console.error('[pet3d] 宠物模型加载失败：', e)
@@ -428,7 +472,13 @@ export function createPet3dScene(
   void attachPet(petId)
 
   // ─── 状态 ───────────────────────────────────────────────────────────────────
-  const walkerCfg: WalkerConfig = { ...DEFAULT_WALKER, ...(opts.walker ?? {}) }
+  // area 由**本场景自己持有**：resize() 按视口原地改写它（stepWalker 每帧读 cfg.area，天然生效）。
+  // 不复用 DEFAULT_WALKER.area，否则兜底常量会被上一个创建的场景的尺寸污染。
+  const walkerCfg: WalkerConfig = {
+    ...DEFAULT_WALKER,
+    ...(opts.walker ?? {}),
+    area: { ...(opts.walker?.area ?? DEFAULT_WALKER.area) }
+  }
   let walker: WalkerState = initialWalker(walkerCfg)
   let gaitBlend = 0
   let clock = 0
@@ -483,27 +533,69 @@ export function createPet3dScene(
   // ─── 尺寸与投影 ─────────────────────────────────────────────────────────────
   /** 球心投影 → 窗口坐标（命中框用；随球移动每帧更新） */
   const updateBallScreen = (): void => {
-    const w = host.clientWidth || 320
-    const h = host.clientHeight || 230
+    const w = host.clientWidth || ROAM_VIEW.width
+    const h = host.clientHeight || ROAM_VIEW.height
     const ballPos = new THREE.Vector3(shellGroup.position.x, BALL_CENTER_Y, shellGroup.position.z)
     const v = ballPos.clone().project(camera)
     const dist = camera.position.distanceTo(ballPos)
-    const angular = Math.asin(Math.min(0.99, BALL_RADIUS / dist))
-    const halfView = Math.tan((CAM_FOV * Math.PI) / 360)
+    const { ny } = sphereNdcHalf(dist, BALL_RADIUS, CAM_FOV, w / h)
     ballScreen = {
       x: ((v.x + 1) / 2) * w,
       y: ((1 - v.y) / 2) * h,
-      r: (Math.tan(angular) / halfView) * (h / 2) * 0.98
+      r: ny * (h / 2) * 0.98
     }
   }
 
+  /**
+   * 宠物本体的反算轮廓（包围球近似）：attach 后按**实际世界包围盒**测得——
+   * 半径取 bbox 对角线的一半（形状无关的保守上界，也盖住步伐起伏/bob），
+   * 中心高度取包围盒世界 y 中点。未就位时按目标身高 ×0.62 保守估计
+   * （0.62 = aria/ray 实测包围球半径 ÷ 身高，Q 版更矮胖也仍覆盖）。
+   *
+   * 注意 three 的 SkinnedMesh.boundingBox 是**懒算后缓存**的（Box3.expandByObject 只在它为
+   * null 时算一次），所以这里拿到的一直是绑定姿态的盒子：实测 aria 25.2×36×6.3 → r=22.19、
+   * ray 26.6×36×6.9 → r=22.65。绑定态是张臂的 A-pose，比任何行走姿态都宽（行走中最坏 r≈20.9）
+   * → 当保守上界用正合适，而且不会逐帧抖动让边界忽大忽小。
+   */
+  const bodySilhouette = (): { radius: number; centerY: number } => {
+    const feetY = BALL_CENTER_Y - BALL_RADIUS + 7
+    const h = isHumanPet(petId) ? HUMAN_HEIGHT : PET_HEIGHT
+    if (!petHolder) return { radius: h * 0.62, centerY: feetY + h / 2 }
+    const box = new THREE.Box3().setFromObject(petHolder)
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    return { radius: Math.hypot(size.x, size.y, size.z) / 2, centerY: center.y }
+  }
+
+  /** 视口 → 漫游区反算：resize 与「换宠物」后都要重跑（body 轮廓随素材变） */
+  const refitArea = (): void => {
+    const fit = fitRoamArea({
+      fovDeg: CAM_FOV,
+      camY: BALL_CENTER_Y + CAM_PITCH,
+      camZ: CAM_DISTANCE,
+      lookY: BALL_CENTER_Y,
+      viewW: host.clientWidth || ROAM_VIEW.width,
+      viewH: host.clientHeight || ROAM_VIEW.height,
+      // C1：球壳/环/装饰带外沿，恒定停在 z=0（R7）
+      shell: { radius: SILHOUETTE_R, centerY: BALL_CENTER_Y },
+      // C2：宠物本体，在 (±halfX, ±halfZ) 任意组合处完整可见（R9）
+      body: bodySilhouette(),
+      margin: ROAM_FIT_MARGIN,
+      depthBudget: ROAM_DEPTH_BUDGET
+    })
+    walkerCfg.area.halfX = fit.halfX
+    walkerCfg.area.halfZ = fit.halfZ
+  }
+
   const resize = (): void => {
-    const w = host.clientWidth || 320
-    const h = host.clientHeight || 230
+    const w = host.clientWidth || ROAM_VIEW.width
+    const h = host.clientHeight || ROAM_VIEW.height
     renderer.setSize(w, h, false)
     renderer.setPixelRatio(softRenderer ? Math.min(dpr, 1.25) : dpr)
     camera.aspect = w / h
     camera.updateProjectionMatrix()
+    // 漫游边界由视口反算，不再是硬编码常量：窗口尺寸/形态一变就重算
+    refitArea()
     updateBallScreen()
   }
   const ro = new ResizeObserver(resize)
@@ -557,10 +649,11 @@ export function createPet3dScene(
     const px = roam ? walker.x : 0
     const pz = roam ? walker.z : 0
     petGroup.position.set(px, BALL_CENTER_Y - BALL_RADIUS + 7, pz)
+    // R7（D4'）：球壳与用量环**只跟左右、不跟纵深**——球恒定居于 z=0，
+    // 宠物朝镜头方向走出来时球不会跟着变大贴窗（永不裁切），纵深约束改由宠物本体承担。
+    // 注意 ringGroup 必须与 shellGroup 同步停 z 跟随，否则用量环与球壳错位。
     shellGroup.position.x += (px - shellGroup.position.x) * Math.min(1, dt * 6)
-    shellGroup.position.z += (pz - shellGroup.position.z) * Math.min(1, dt * 6)
     ringGroup.position.x = shellGroup.position.x
-    ringGroup.position.z = shellGroup.position.z
 
     // 悬停浮沉：球形态缓慢呼吸，宠物走动时随步伐起伏
     const bob =
@@ -586,11 +679,23 @@ export function createPet3dScene(
         prev.fadeOut(0.25)
         human.cur = want
       }
+      // 剪辑自带根位移：实测 walk 的根骨骼 z 曲线振幅 159.7cm（归一化后 ≈33 世界单位/循环）、
+      // idle ≈12 —— 不抵消的话角色每 1.23s 自己往前滑再被循环边界瞬移回来，位置就不只由 walker 驱动了。
+      human.cancelRootMotion()
+      // R10：朝向跟随行进方向偏航（走向镜头见正面、走远见背面）。
+      // 写 petGroup.rotation.y（绕自身原点转、子节点在局部 0 点）——绝不能写 petHolder，
+      // 那是带 scale.setScalar 的归一化层，DESIGN.md:312-314 记录过被动画覆盖后宠物消失的回归。
+      const wantYaw = Math.atan2(walker.dirX, walker.dirZ) + HUMAN_YAW
+      let dy = wantYaw - petGroup.rotation.y
+      dy = Math.atan2(Math.sin(dy), Math.cos(dy)) // 角差最短路径（转 270° 变转 -90°）
+      petGroup.rotation.y += dy * Math.min(1, dt * 4)
     }
 
     // ─── 角色位姿（素材无骨骼：整体变换表达动作）─────────────────────────────
     // 真人系走 mixer 分支，跳过这里（动作剪辑自带呼吸/摆动）
     if (petHolder && !human) {
+      // 场景跨宠物复用：切回 Q 版要清掉真人系留下的偏航，否则 Q 版被斜着摆
+      petGroup.rotation.y = 0
       const g = gaitBlend
       const mood = stats.mood
       let y = 0
@@ -702,6 +807,16 @@ export function createPet3dScene(
       height: ballScreen.r * 2
     }),
     ballCenter: () => ({ x: ballScreen.x, y: ballScreen.y }),
+    roamArea: () => ({ halfX: walkerCfg.area.halfX, halfZ: walkerCfg.area.halfZ }),
+    walkerPos: () => ({ x: walker.x, z: walker.z, gait: walker.gait }),
+    rootMotion: () => (human ? Math.round(human.rootMotion() * 100) / 100 : null),
+    setPin: (x, z) => {
+      // 诊断用：夹进可行区后钉死在 idle（waitFor 极大 → 短期不再自主走动），
+      // 让 --ballshot 能定点拍最坏位置（角落 / z 两端）
+      const ax = Math.max(-walkerCfg.area.halfX, Math.min(walkerCfg.area.halfX, x))
+      const az = Math.max(-walkerCfg.area.halfZ, Math.min(walkerCfg.area.halfZ, z))
+      walker = { ...walker, x: ax, z: az, gait: 'idle', since: 0, waitFor: 1e6 }
+    },
     petReady: () => petHolder !== null,
     hideIndex: (i, on) => {
       let n = 0

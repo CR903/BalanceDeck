@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "核对是否违反 Pre-Modification Rule（漏改消费点）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 renderer/IPC/main 三层边界口径一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否重复实现了已有投影/格式化逻辑"}
+{"file": ".trellis/tasks/09-18-pet-render-fixes-tts/research/fbx-material-probe.md", "reason": "验证材质修法覆盖实测事实且未回退到已排除的假设"}
+{"file": ".trellis/tasks/09-18-pet-render-fixes-tts/research/verification-harness.md", "reason": "核对声称的验证是否用了对的拍摄路径与判据（win/stage/canvas 一致 + ink box）"}

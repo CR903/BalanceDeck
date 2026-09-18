@@ -101,21 +101,46 @@ app.whenReady().then(async () => {
       }
       await new Promise((r) => setTimeout(r, 1200))
     }
-    // BD_PET=1：开启「桌面宠物」形态后再收起（默认拍球形态）
-    const wantPet = process.env.BD_PET === '1'
+    // BD_PET=1：确保「桌面宠物」形态开启后再收起（默认拍球形态）
+    // BD_PET_ID=<id>：顺带在设置页换成指定角色（只换一只；逐只请用多次调用，见 BD_PETS 的上下文限制）
+    const PET_IDS = ['mochi', 'shiba', 'penguin', 'fox', 'panda', 'bunny', 'koala', 'tiger', 'aria', 'ray']
+    const pickPet = process.env.BD_PET_ID ?? ''
+    const wantPet = process.env.BD_PET === '1' || pickPet !== ''
     const openSettings = `[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()`
     const back = `[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()`
     const collapse = `[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()`
+    // 开关按相邻文本定位（该分区还会继续加开关，下标必然漂移），且只在未开启时点一次：
+    // 它是 toggle，无条件 click 在 ui:pet 已持久化为 '1' 的机器上会反向关掉宠物形态 → 拍到球。
+    const petRow = `[...document.querySelectorAll('.pet-sec .enable-row')].find(r=>r.textContent.includes('桌面宠物'))`
+    const petFormOn = `!!(${petRow})?.querySelector('.switch')?.classList.contains('on')`
+    const petFormEnable = `(()=>{const s=${petRow}?.querySelector('.switch'); if(s&&!s.classList.contains('on'))s.click()})()`
     if (wantPet) {
       await win.webContents.executeJavaScript('window.api.expand()', true)
       await new Promise((r) => setTimeout(r, 800))
       await win.webContents.executeJavaScript(openSettings, true)
       await new Promise((r) => setTimeout(r, 800))
-      await win.webContents.executeJavaScript(
-        "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()",
-        true
-      )
+      await win.webContents.executeJavaScript(petFormEnable, true)
       await new Promise((r) => setTimeout(r, 600))
+      process.stdout.write('petFormOn: ' + String(await win.webContents.executeJavaScript(petFormOn, true)) + '\n')
+      if (pickPet) {
+        const idx = PET_IDS.indexOf(pickPet)
+        if (idx < 0) {
+          process.stdout.write(`BD_PET_ID 不在角色表里：${pickPet}\n`)
+        } else {
+          await win.webContents.executeJavaScript(
+            `document.querySelectorAll('.pet-chip')[${idx}]?.click()`,
+            true
+          )
+          await new Promise((r) => setTimeout(r, 600))
+          const onIdx = await win.webContents.executeJavaScript(
+            `[...document.querySelectorAll('.pet-chip')].findIndex(c=>c.classList.contains('on'))`,
+            true
+          )
+          process.stdout.write(
+            `petChipOn: ${String(onIdx)} (want ${idx}=${pickPet})${onIdx === idx ? '' : '  ⚠ 未切换成功'}\n`
+          )
+        }
+      }
       await win.webContents.executeJavaScript(back, true)
       await new Promise((r) => setTimeout(r, 600))
       await win.webContents.executeJavaScript(collapse, true)
@@ -134,6 +159,45 @@ app.whenReady().then(async () => {
       }
       process.stdout.write(`shot: ${name}\n`)
     }
+    // 宠物形态必须等到模型就位再拍：换角色时场景会重建，固定等待会拍到空画布
+    if (wantPet) {
+      for (let w = 0; w < 25; w++) {
+        const ready = await win.webContents.executeJavaScript(
+          'window.__bd_ball?.()?.petReady === true',
+          true
+        )
+        if (ready) break
+        await new Promise((r) => setTimeout(r, 400))
+      }
+    }
+    // BD_PIN_POS=<x>,<z>：把宠物钉到指定世界坐标再拍（定点核对最坏位置：角落 / z 两端）。
+    // 越界值会被漫游状态机夹进可行区，diag 里的 walker/roamArea 可核对是否真的钉到位。
+    const pinPos = process.env.BD_PIN_POS
+    if (pinPos !== undefined && wantPet) {
+      const [px, pz] = pinPos.split(',').map(Number)
+      if (Number.isFinite(px) && Number.isFinite(pz)) {
+        await win.webContents.executeJavaScript(`window.__bd_pin?.(${px}, ${pz})`, true)
+        process.stdout.write(`pin: (${px}, ${pz})\n`)
+        await new Promise((r) => setTimeout(r, 800)) // 等球壳 x 跟随与偏航平滑收敛
+      } else {
+        process.stdout.write(`BD_PIN_POS 需要 "<x>,<z>"（世界单位），收到：${pinPos}\n`)
+      }
+    }
+    // BD_ONLY=<名字子串>：只留下匹配的物体、其余全隐藏，用来单独量某个物体的 ink box。
+    // 为什么需要：整景的 ink box 被玻璃球壳主导（球壳固定 z=0 → 尺寸恒定），宠物的透视缩放
+    // 在里面只剩几个像素，量不出 R9 的缩放跨度；配 BD_ONLY=<宠物网格名> 才量得到宠物本体。
+    const only = process.env.BD_ONLY
+    if (only !== undefined) {
+      const n = await win.webContents.executeJavaScript(
+        `(()=>{const b=window.__bd_ball?.();if(!b)return -1;let k=0;
+           b.dump.forEach((d,i)=>{if(!d.name.toLowerCase().includes(${JSON.stringify(
+             (only || '').toLowerCase()
+           )})){window.__bd_hide(i,false);k++}});return k})()`,
+        true
+      )
+      process.stdout.write(`only: "${only}"（隐藏 ${String(n)} 个物体）\n`)
+      await new Promise((r) => setTimeout(r, 350))
+    }
     await shot(wantPet ? 'pet' : 'ball', 3)
     process.stdout.write(
       'diag: ' +
@@ -143,6 +207,9 @@ app.whenReady().then(async () => {
                win: [window.innerWidth, window.innerHeight],
                stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
                canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
+               // 覆盖层实际占位（R8）：任一元素越出窗口就是被 .petball 的 overflow:hidden 切了
+               overlay: [...document.querySelectorAll('.petball-caption,.petball-bubble,.petball-badge,.petball-toast,.petball-center-value')]
+                 .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
                ball: window.__bd_ball?.() ?? null
              })`,
             true

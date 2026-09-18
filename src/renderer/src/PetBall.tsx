@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
 import { petMood, isHumanPet, type PetId, type PetState } from '../../shared/pet'
+import { ROAM_VIEW } from '../../shared/pet-view'
 import { fmtPercent, windowPercent, levelOfPercent, dataTime, isStale, type Level } from './format'
 import { Icon } from './components'
 import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } from './pet3d/scene'
@@ -8,7 +9,7 @@ import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } fr
 // ═══════════════════════════════════════════════════════════════════════════════
 // 收起态 = 3D 桌面宠物（悬浮球）
 //
-// 收起后窗口变成一块 300×220 的透明区域（overlay.ts），里面只有一个 WebGL 小球：
+// 收起后窗口变成一块漫游区（尺寸见 shared/pet-view，由 overlay.ts 决定），里面只有一个 WebGL 小球：
 //   · 玻璃球壳 + 环形仪表（KPI）+ 球心的 3D 卡通角色（宠物）
 //   · 角色在球内自主走动（walkers.ts 状态机），鼠标靠近时停下看着你
 //   · 交互：单击展开面板、拖动移动、长按 0.62s 撸一把、右键菜单
@@ -208,19 +209,25 @@ export function PetBall({
     const w = window as unknown as {
       __bd_ball?: () => unknown
       __bd_hide?: (i: number, on: boolean) => void
+      __bd_pin?: (x: number, z: number) => void
     }
     w.__bd_ball = () => ({
       rect: sceneRef.current?.ballRect() ?? null,
       center: sceneRef.current?.ballCenter() ?? null,
+      roamArea: sceneRef.current?.roamArea() ?? null,
+      walker: sceneRef.current?.walkerPos() ?? null,
+      rootMotion: sceneRef.current?.rootMotion() ?? null,
       measure: sceneRef.current?.measure() ?? null,
       petReady: sceneRef.current?.petReady() ?? false,
       dump: sceneRef.current?.dump() ?? [],
       frame: frameRef.current
     })
     w.__bd_hide = (i, on) => sceneRef.current?.hideIndex(i, on)
+    w.__bd_pin = (x, z) => sceneRef.current?.setPin(x, z)
     return () => {
       delete w.__bd_ball
       delete w.__bd_hide
+      delete w.__bd_pin
     }
   }, [ready])
 
@@ -237,13 +244,13 @@ export function PetBall({
     return window.api.onPetCursor?.((over) => setHover(over)) ?? (() => {})
   }, [])
 
-  // 点击穿透：把球的屏幕矩形报给主进程（窗口是 300×220，只有球区域接收鼠标）
+  // 点击穿透：把球的屏幕矩形报给主进程（漫游区里只有球那块区域接收鼠标）
   const reportHit = useCallback(() => {
     const handle = sceneRef.current
     if (!handle) {
       // 2D 圆点：窗口正中一个 60×60 的可点区域
-      const w = hostRef.current?.clientWidth ?? 320
-      const h = hostRef.current?.clientHeight ?? 230
+      const w = hostRef.current?.clientWidth ?? ROAM_VIEW.width
+      const h = hostRef.current?.clientHeight ?? ROAM_VIEW.height
       window.api.setPetHitbox({ x: w / 2 - 30, y: h / 2 - 30, width: 60, height: 60 })
       return
     }
@@ -314,6 +321,16 @@ export function PetBall({
   }, [s, pct, worst, hideBalance])
 
   const label = s?.name ?? ''
+
+  /**
+   * 覆盖层锚点横向夹紧（R8）：球会走到漫游区两侧（反算出的 ±halfX 在 320px 窗口里约 ±110px），
+   * 而 .petball 是 overflow:hidden —— 不夹的话贴边帧会被切成半截。
+   * pad 取该元素 CSS 里保证的半宽上界（caption max-width 140 → 70；bubble max-width 190+padding → 106）。
+   */
+  const clampX = (x: number, pad: number): number => {
+    const w = hostRef.current?.clientWidth ?? ROAM_VIEW.width
+    return Math.min(Math.max(x, pad), w - pad)
+  }
 
   useEffect(() => {
     const frame: BallFrame = {
@@ -539,7 +556,7 @@ export function PetBall({
       {!failed && (
         <div
           className={`petball-caption${roam ? '' : ' sub'}`}
-          style={{ left: center.x, top: center.y + ballR + (roam ? 22 : 18) }}
+          style={{ left: clampX(center.x, 70), top: center.y + ballR + (roam ? 22 : 18) }}
           aria-hidden="true"
         >
           {roam && <span className={`petball-value${value.length > 5 ? ' small' : ''}`}>{value}</span>}
@@ -563,12 +580,22 @@ export function PetBall({
       )}
       {toast && <div className="petball-toast">{toast}</div>}
       {bubble && (
-        <div className="petball-bubble" style={{ left: center.x, top: center.y - ballR - 34 }} aria-hidden="true">
+        // 锚点是泡泡底边（translate(-50%,-100%)）：球上方只剩 ~50px，两行文案高 46px，
+        // 所以上移量最多 4 再按高度兜底，否则第一行被窗口顶切掉（R8）
+        <div
+          className="petball-bubble"
+          style={{ left: clampX(center.x, 95), top: Math.max(46, center.y - ballR - 4) }}
+          aria-hidden="true"
+        >
           {bubble}
         </div>
       )}
       {isStale(s ?? {}) && roam && !failed && (
-        <div className="petball-badge" style={{ left: center.x + ballR * 0.6, top: center.y - ballR * 0.6 }} aria-hidden="true">
+        <div
+          className="petball-badge"
+          style={{ left: clampX(center.x + ballR * 0.6, 8), top: center.y - ballR * 0.6 }}
+          aria-hidden="true"
+        >
           <Icon name={s?.dataQuality === 'local' ? 'flask' : 'history'} size={9} />
         </div>
       )}

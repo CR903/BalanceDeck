@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la ~/ 2>/dev/null | head -50)",
+      "Bash(ls -la ~/.qoder/ 2>/dev/null)",
+      "Read(//Users/apple/.qoder/**)",
+      "Bash(ls -la ~/ | grep -iE 'zsh|bash|profile|p10k|starship|prompt|zlogin|zshenv|zprofile|inputrc')",
+      "Read(//Users/apple/**)",
+      "Bash(grep -rhnE '\\(^|\\\\s\\)\\(export\\\\s+\\)?\\(PS1|PROMPT\\)\\\\s*=' ~/.zshrc ~/.zprofile ~/.zshenv ~/.bashrc ~/.bash_profile ~/.profile ~/.zsh/* 2>/dev/null | head -30; echo \"---PROMPT from live zsh---\"; zsh -i -c 'echo \"PS1=$PS1\"; echo \"PROMPT=$PROMPT\"' 2>/dev/null | tail -5)"
+    ]
+  }
+}
