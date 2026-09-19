@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from 'crypto'
 import type { ProviderAdapter } from './types'
-import { getJson, errSnap, noDataSnap, snap } from './types'
+import { errSnap, identityOf, noDataSnap, officialSnap, readJson } from './engine'
 import type { ProviderSnapshot } from '../../shared/types'
 
 // 通义千问（阿里云百炼）余额：阿里云 BSS OpenAPI QueryAccountBalance（RPC 风格 GET 签名）。
@@ -77,23 +77,23 @@ export const qwenAdapter: ProviderAdapter = {
     const raw = await ctx.getKey(this.id)
     if (!raw) {
       return noDataSnap(
-        { id: this.id, name: this.name },
+        identityOf(this),
         '未配置 AccessKey（格式 AK:SK，建议只读 RAM 子账号；或设 ALIBABA_CLOUD_ACCESS_KEY_ID/SECRET）',
         ctx
       )
     }
     const cred = parseAliCred(raw)
     if (!cred) {
-      return errSnap({ id: this.id, name: this.name }, '凭据格式错误：应为 AccessKeyId:AccessKeySecret（冒号分隔）', ctx)
+      return errSnap(identityOf(this), '凭据格式错误：应为 AccessKeyId:AccessKeySecret（冒号分隔）', ctx)
     }
     try {
-      const { status, body } = await getJson(signBssUrl(cred, 'QueryAccountBalance', '2017-12-14'), { Accept: 'application/json' })
-      if (status !== 200) return errSnap({ id: this.id, name: this.name }, `HTTP ${status}`, ctx)
+      const { status, body } = await readJson(ctx, signBssUrl(cred, 'QueryAccountBalance', '2017-12-14'), { Accept: 'application/json' })
+      if (status !== 200) return errSnap(identityOf(this), `HTTP ${status}`, ctx)
       const rec = body as Record<string, unknown>
       if (rec && typeof rec.Code === 'string' && rec.Code !== 'Success') {
         const msg = typeof rec.Message === 'string' ? rec.Message : ''
         return errSnap(
-          { id: this.id, name: this.name },
+          identityOf(this),
           `BSS ${rec.Code}${msg ? '：' + msg : ''}（需 AliyunBSSReadOnlyAccess 权限）`,
           ctx
         )
@@ -101,15 +101,14 @@ export const qwenAdapter: ProviderAdapter = {
       const found = findAmount(rec?.['Data'] ?? body)
       if (!found) {
         const preview = typeof body === 'string' ? body : JSON.stringify(body).slice(0, 160)
-        return errSnap({ id: this.id, name: this.name }, `响应格式未识别：${preview}`, ctx)
+        return errSnap(identityOf(this), `响应格式未识别：${preview}`, ctx)
       }
-      return snap({
-        id: this.id,
-        name: this.name,
+      return officialSnap({
+        ...identityOf(this),
         windows: [{ name: '账户余额', used: found.amount, unit: 'cny', note: 'BSS 官方接口' }]
       }, ctx)
     } catch (e) {
-      return errSnap({ id: this.id, name: this.name }, `请求失败: ${(e as Error).message}`, ctx)
+      return errSnap(identityOf(this), `请求失败: ${(e as Error).message}`, ctx)
     }
   }
 }

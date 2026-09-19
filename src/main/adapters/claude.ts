@@ -2,7 +2,7 @@ import { join } from 'path'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
-import { errSnap, noDataSnap, snap } from './types'
+import { errSnap, identityOf, localSnap, noDataSnap } from './engine'
 import { planWindows, planModelRows, parseLimits } from './plan-utils'
 import type { PlanLimits, PlanPoint } from './plan-utils'
 import type { ProviderModelRow, ProviderSnapshot } from '../../shared/types'
@@ -185,11 +185,11 @@ export const claudeAdapter: ProviderAdapter = {
     const nowMs = ctx.now.getTime()
     const stats = loadAll()
     if (!stats || stats.allPts.length === 0) {
-      return noDataSnap({ id: this.id, name: this.name }, '未找到 ~/.claude 会话转录（未安装或从未使用）', ctx)
+      return noDataSnap(identityOf(this), '未找到 ~/.claude 会话转录（未安装或从未使用）', ctx)
     }
     if (stats.pts.length === 0) {
       return errSnap(
-        { id: this.id, name: this.name },
+        identityOf(this),
         '转录中无 claude-* 模型用量（可能全部经 router 走第三方模型），无法估算订阅额度',
         ctx
       )
@@ -206,10 +206,11 @@ export const claudeAdapter: ProviderAdapter = {
       '本机转录估算（限额为社区预设，可在设置调整）',
       `30天模型花费 Top: ${top.map((m) => `${m.model} $${m.cost >= 100 ? m.cost.toFixed(0) : m.cost.toFixed(2)}`).join(' · ')}`
     ]
-    return snap(
+    // 来路是 local：Claude 没有官方额度接口，percent 由本机转录 + 社区预设限额推算
+    // （ADR-0002：必须是铸造的必填输入，不能靠「省略即 official」混过去）
+    return localSnap(
       {
-        id: this.id,
-        name: this.name,
+        ...identityOf(this),
         plan: 'Pro/Max（估算）',
         windows,
         models,

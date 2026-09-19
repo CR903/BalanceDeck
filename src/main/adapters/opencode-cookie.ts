@@ -13,7 +13,7 @@
 //   data-slot="reset-time"    → "Resets in 2 hours 29 minutes" / "重置于 2 小时 29 分钟"
 
 import type { ProviderWindow } from '../../shared/types'
-import { markNetResult, assertNetAvailable } from '../net'
+import type { CollectContext } from './types'
 
 export type UsageWindowKind = 'rolling' | 'weekly' | 'monthly'
 
@@ -280,6 +280,7 @@ export interface CookieFetchResult {
  * 页面在 cookie 失效时 302 到登录页，登录页解析为空 → 抛 'cookie 已过期或无效'。
  */
 export async function fetchUsageViaCookie(
+  ctx: CollectContext,
   cookie: string,
   workspaceID: string,
   baseUrl = 'https://opencode.ai',
@@ -290,19 +291,13 @@ export async function fetchUsageViaCookie(
   if (!workspaceID.trim()) throw new Error('未配置 Workspace ID')
 
   const url = `${baseUrl.replace(/\/+$/, '')}/workspace/${encodeURIComponent(workspaceID.trim())}/go`
-  assertNetAvailable()
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { Cookie: normalized, Accept: 'text/html' },
-      signal: ctrl.signal
-    })
+    // 出网、超时与可达性记账都由注入的能力负责（生产实现见 src/main/request.ts）——
+    // 这里曾经自己 fetch 并直接 import ../net，那条依赖让整个 opencode 家族无法被单测加载。
+    const res = await ctx.request({ url, headers: { Cookie: normalized, Accept: 'text/html' }, timeoutMs })
     // 拿到响应即说明网络可达（4xx/5xx 属于凭据/服务问题，不算离线）
-    markNetResult(true)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const html = await res.text()
+    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`)
+    const html = res.text
     const windows = parseUsageHtml(html)
     const raw = parseUsagePayload(html)
     if (!windows.rolling && !windows.weekly && !windows.monthly && !raw.rolling && !raw.weekly && !raw.monthly) {
@@ -310,14 +305,8 @@ export async function fetchUsageViaCookie(
     }
     return { windows, raw, fetchedAt: Date.now() }
   } catch (e) {
-    if ((e as Error).name === 'AbortError') {
-      markNetResult(false, e)
-      throw new Error(`请求超时（${timeoutMs}ms）`)
-    }
-    markNetResult(false, e)
+    if ((e as Error).name === 'AbortError') throw new Error(`请求超时（${timeoutMs}ms）`)
     throw e
-  } finally {
-    clearTimeout(timer)
   }
 }
 

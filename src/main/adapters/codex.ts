@@ -2,8 +2,8 @@ import { join } from 'path'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
-import { errSnap, noDataSnap, snap } from './types'
-import type { ProviderWindow, ProviderSnapshot } from '../../shared/types'
+import { errSnap, identityOf, noDataSnap, snap } from './engine'
+import type { DataQuality, ProviderWindow, ProviderSnapshot } from '../../shared/types'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Codex 同步策略（统一模型）
@@ -194,7 +194,7 @@ export const codexAdapter: ProviderAdapter = {
     const files: string[] = []
     listRollouts(join(codexHome(), 'sessions'), files)
     if (files.length === 0) {
-      return noDataSnap({ id: this.id, name: this.name }, '未找到 ~/.codex/sessions 会话记录（未安装或从未使用）', ctx)
+      return noDataSnap(identityOf(this), '未找到 ~/.codex/sessions 会话记录（未安装或从未使用）', ctx)
     }
     // 只解析最近修改的 5 个会话
     const recent = files
@@ -220,6 +220,8 @@ export const codexAdapter: ProviderAdapter = {
 
     let windows: ProviderWindow[]
     let source: string
+    /** 来路（ADR-0002）：服务端真值 = official；本机 token 统计 = local */
+    let quality: DataQuality
 
     if (rl?.primary && typeof rl.primary.used_percent === 'number') {
       // 服务端真值路径：percent 作为精度层，token 用量从本地补充
@@ -234,18 +236,20 @@ export const codexAdapter: ProviderAdapter = {
       const week = windows.find((w) => w.name === '本周')
       if (week) week.used = sumSince(deltas, nowMs - 7 * 86400_000)
       source = '服务端真值'
+      quality = 'official'
     } else if (deltas.length > 0) {
       // 本地 token 估算兜底
       windows = buildLocalWindows(deltas, nowMs)
       source = '本机估算'
+      quality = 'local'
     } else {
-      return errSnap({ id: this.id, name: this.name }, '会话记录中无用量数据；' + ENDPOINT_HINT, ctx)
+      return errSnap(identityOf(this), '会话记录中无用量数据；' + ENDPOINT_HINT, ctx)
     }
 
     return snap(
+      quality,
       {
-        id: this.id,
-        name: this.name,
+        ...identityOf(this),
         plan: rl?.primary ? 'ChatGPT 订阅' : undefined,
         windows,
         source,

@@ -1,5 +1,25 @@
 import type { ProviderSnapshot, ProviderWindow, ProviderKind, Unit } from '../../shared/types'
-import { markNetResult, assertNetAvailable } from '../net'
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 采集接缝的**声明**部分：协议实现者能看到与必须提供的东西。
+//
+// 这个模块刻意不 import electron，也不 import net.ts —— 出网是注入的能力
+// （见下面的 CollectRequest / CollectContext.request）。共享实现放在 ./engine。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** 一次出网请求（引擎与各适配器只描述「要什么」，怎么做由上下文决定） */
+export interface CollectRequest {
+  url: string
+  headers: Record<string, string>
+  /** 超时毫秒；缺省 12s */
+  timeoutMs?: number
+}
+
+/** 出网结果：只保证原始文本，JSON 解析是引擎的便利（见 engine.readJson） */
+export interface CollectResponse {
+  status: number
+  text: string
+}
 
 export interface CollectContext {
   now: Date
@@ -8,6 +28,11 @@ export interface CollectContext {
   getExtra(key: string): Promise<string | null>
   /** 回写凭据（仅用于自愈场景，如 cookie 被服务端轮换后静默更新） */
   setKey?(providerId: string, value: string): Promise<void>
+  /**
+   * 出网能力。生产实现见 src/main/request.ts（fetch + 超时 + 可达性记账），
+   * 测试注入桩，因此适配器可以在纯 node 里跑完整链路。
+   */
+  request(req: CollectRequest): Promise<CollectResponse>
 }
 
 export interface ProviderAdapter {
@@ -20,69 +45,6 @@ export interface ProviderAdapter {
   /** 供应商图标 id（内置预设 id / 协议 id），卡片与托盘据此显示 logo */
   mark?: string
   collect(ctx: CollectContext): Promise<ProviderSnapshot>
-}
-
-export function snap(
-  base: Pick<ProviderSnapshot, 'id' | 'name'> & Partial<ProviderSnapshot>,
-  ctx: CollectContext
-): ProviderSnapshot {
-  const at = ctx.now.toISOString()
-  return {
-    status: 'ok',
-    windows: [],
-    // kind/builtin 由 collectAll 按适配器元数据覆盖，这里的默认值仅满足类型
-    kind: 'balance',
-    builtin: true,
-    updatedAt: at,
-    // 默认视为官方数据；降级路径（本机估算/缓存）需显式覆盖并给出原因
-    dataQuality: 'official',
-    dataAt: at,
-    ...base
-  }
-}
-
-export function errSnap(
-  base: Pick<ProviderSnapshot, 'id' | 'name'>,
-  message: string,
-  ctx: CollectContext
-): ProviderSnapshot {
-  return snap({ ...base, status: 'error', detail: message, failureReason: message }, ctx)
-}
-
-export function noDataSnap(
-  base: Pick<ProviderSnapshot, 'id' | 'name'>,
-  detail: string,
-  ctx: CollectContext
-): ProviderSnapshot {
-  return snap({ ...base, status: 'nodata', detail }, ctx)
-}
-
-/** 带 fetch 超时的 GET，统一 JSON 解析（同时向网络探测器反馈可达性） */
-export async function getJson(
-  url: string,
-  headers: Record<string, string>,
-  timeoutMs = 12000
-): Promise<{ status: number; body: unknown }> {
-  assertNetAvailable()
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  try {
-    const res = await fetch(url, { headers, signal: ctrl.signal })
-    markNetResult(true)
-    const text = await res.text()
-    let body: unknown = null
-    try {
-      body = JSON.parse(text)
-    } catch {
-      body = text.slice(0, 200)
-    }
-    return { status: res.status, body }
-  } catch (e) {
-    markNetResult(false, e)
-    throw e
-  } finally {
-    clearTimeout(timer)
-  }
 }
 
 export function fmtMoney(v: number, unit: Unit): string {

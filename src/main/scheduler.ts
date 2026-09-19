@@ -1,8 +1,9 @@
 import { buildAdapters, collectAll } from './adapters'
 import { getKey, getExtra, setKey } from './keystore'
 import { envValueFor, envExtraFor } from './scanner'
-import { listProviders } from './providers'
+import { listInstances, listProviders } from './providers'
 import { isOffline } from './net'
+import { request } from './request'
 import { applyCachePolicy } from '../shared/quality'
 import type { AppState, ProviderSnapshot } from '../shared/types'
 
@@ -57,12 +58,14 @@ async function collect(announce = false): Promise<void> {
       push?.({ snapshots: lastSnapshots, lastSync, scanning: true, offline: isOffline() })
     }
     const now = new Date()
-    const adapters = await buildAdapters()
+    const adapters = buildAdapters(await listInstances())
     const fresh = await collectAll(adapters, {
       now,
       getKey: async (id) => (await getKey(id)) ?? envValueFor(id),
       getExtra: async (k) => (await getExtra(k)) ?? envExtraFor(k),
-      setKey: async (id, v) => setKey(id, v)
+      setKey: async (id, v) => setKey(id, v),
+      // 出网能力：生产实现（fetch + 超时 + 可达性记账）。测试给它桩，适配器即可单测。
+      request
     })
 
     // 被禁用/删除的供应商从展示中移除；顺序按注册表（= 用户拖拽排序）

@@ -2,7 +2,7 @@ import { join } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
-import { getJson, errSnap, noDataSnap, snap } from './types'
+import { errSnap, identityOf, noDataSnap, officialSnap, readJson } from './engine'
 import type { ProviderWindow, ProviderSnapshot } from '../../shared/types'
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -94,13 +94,13 @@ export const copilotAdapter: ProviderAdapter = {
     const cred = readCopilotToken()
     if (!cred) {
       return noDataSnap(
-        { id: this.id, name: this.name },
+        identityOf(this),
         '未找到 Copilot 凭据（在 VS Code 登录 Copilot 后自动发现）',
         ctx
       )
     }
     try {
-      const { status, body } = await getJson(
+      const { status, body } = await readJson(ctx, 
         USER_ENDPOINT,
         {
           Authorization: `token ${cred.token}`,
@@ -113,17 +113,17 @@ export const copilotAdapter: ProviderAdapter = {
       )
       if (status === 401 || status === 403) {
         return errSnap(
-          { id: this.id, name: this.name },
+          identityOf(this),
           '凭据失效（HTTP ' + status + '）：在 VS Code 中重新登录 Copilot 即可',
           ctx
         )
       }
-      if (status !== 200) return errSnap({ id: this.id, name: this.name }, `HTTP ${status}`, ctx)
+      if (status !== 200) return errSnap(identityOf(this), `HTTP ${status}`, ctx)
       const u = body as CopilotUser
       const snapshots = u.quota_snapshots
       if (!snapshots) {
         const preview = typeof body === 'string' ? body : JSON.stringify(body).slice(0, 160)
-        return errSnap({ id: this.id, name: this.name }, `响应格式未识别：${preview}`, ctx)
+        return errSnap(identityOf(this), `响应格式未识别：${preview}`, ctx)
       }
       const windows: ProviderWindow[] = []
       const resetAt = fmtDateReset(u.quota_reset_date, ctx.now.getTime())
@@ -150,10 +150,9 @@ export const copilotAdapter: ProviderAdapter = {
       if (windows.length === 0) {
         windows.push({ name: '配额', used: 0, unit: 'token', note: '当前套餐不限量或无配额数据' })
       }
-      return snap(
+      return officialSnap(
         {
-          id: this.id,
-          name: this.name,
+          ...identityOf(this),
           plan: u.copilot_plan,
           windows,
           source: '官方接口',
@@ -162,7 +161,7 @@ export const copilotAdapter: ProviderAdapter = {
         ctx
       )
     } catch (e) {
-      return errSnap({ id: this.id, name: this.name }, `请求失败: ${(e as Error).message}`, ctx)
+      return errSnap(identityOf(this), `请求失败: ${(e as Error).message}`, ctx)
     }
   }
 }

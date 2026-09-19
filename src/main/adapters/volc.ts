@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'crypto'
 import type { ProviderAdapter } from './types'
-import { getJson, errSnap, noDataSnap, snap } from './types'
+import { errSnap, identityOf, noDataSnap, officialSnap, readJson } from './engine'
 import type { ProviderSnapshot } from '../../shared/types'
 
 // 火山引擎账户余额：费用中心 OpenAPI QueryBalanceAccount。
@@ -77,21 +77,21 @@ export const volcAdapter: ProviderAdapter = {
   async collect(ctx): Promise<ProviderSnapshot> {
     const raw = await ctx.getKey(this.id)
     if (!raw) {
-      return noDataSnap({ id: this.id, name: this.name }, '未配置 AccessKey（格式 AK:SK，或设 VOLCENGINE_ACCESS_KEY/SECRET_KEY）', ctx)
+      return noDataSnap(identityOf(this), '未配置 AccessKey（格式 AK:SK，或设 VOLCENGINE_ACCESS_KEY/SECRET_KEY）', ctx)
     }
     const cred = parseVolcCred(raw)
     if (!cred) {
-      return errSnap({ id: this.id, name: this.name }, '凭据格式错误：应为 AccessKeyId:SecretAccessKey（冒号分隔）', ctx)
+      return errSnap(identityOf(this), '凭据格式错误：应为 AccessKeyId:SecretAccessKey（冒号分隔）', ctx)
     }
     try {
-      const { status, body } = await getJson(signVolcUrl(cred, 'QueryBalanceAccount', '2022-01-01'), { Accept: 'application/json' })
-      if (status !== 200) return errSnap({ id: this.id, name: this.name }, `HTTP ${status}`, ctx)
+      const { status, body } = await readJson(ctx, signVolcUrl(cred, 'QueryBalanceAccount', '2022-01-01'), { Accept: 'application/json' })
+      if (status !== 200) return errSnap(identityOf(this), `HTTP ${status}`, ctx)
       const rec = body as Record<string, unknown>
       const meta = rec?.['ResponseMetadata'] as Record<string, unknown> | undefined
       if (meta && meta['Error']) {
         const err = meta['Error'] as Record<string, unknown>
         return errSnap(
-          { id: this.id, name: this.name },
+          identityOf(this),
           `API ${String(err['Code'] ?? '')}：${String(err['Message'] ?? '未知错误')}（需费用中心只读权限）`,
           ctx
         )
@@ -99,15 +99,14 @@ export const volcAdapter: ProviderAdapter = {
       const found = findAmount(rec?.['Result'] ?? rec?.['Data'] ?? body)
       if (!found) {
         const preview = typeof body === 'string' ? body : JSON.stringify(body).slice(0, 160)
-        return errSnap({ id: this.id, name: this.name }, `响应格式未识别：${preview}`, ctx)
+        return errSnap(identityOf(this), `响应格式未识别：${preview}`, ctx)
       }
-      return snap({
-        id: this.id,
-        name: this.name,
+      return officialSnap({
+        ...identityOf(this),
         windows: [{ name: '账户余额', used: found.amount, unit: 'cny', note: 'Billing 官方接口' }]
       }, ctx)
     } catch (e) {
-      return errSnap({ id: this.id, name: this.name }, `请求失败: ${(e as Error).message}`, ctx)
+      return errSnap(identityOf(this), `请求失败: ${(e as Error).message}`, ctx)
     }
   }
 }

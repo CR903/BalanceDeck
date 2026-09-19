@@ -1,5 +1,6 @@
 import type { ProviderAdapter } from './types'
-import { getJson, errSnap, noDataSnap, snap, balanceWindow } from './types'
+import { errSnap, identityOf, noDataSnap, officialSnap, readJson } from './engine'
+import { balanceWindow } from './types'
 import type { ProviderWindow, ProviderSnapshot } from '../../shared/types'
 
 // MiniMax 余额查询：
@@ -38,27 +39,27 @@ export const minimaxAdapter: ProviderAdapter = {
 
   async collect(ctx): Promise<ProviderSnapshot> {
     const key = await ctx.getKey(this.id)
-    if (!key) return noDataSnap({ id: this.id, name: this.name }, '未配置 API Key（可在设置中填写或设 MINIMAX_API_KEY）', ctx)
+    if (!key) return noDataSnap(identityOf(this), '未配置 API Key（可在设置中填写或设 MINIMAX_API_KEY）', ctx)
     const base = (await ctx.getExtra('baseUrl:minimax'))?.replace(/\/+$/, '') || 'https://api.minimaxi.com'
     const headers = { Authorization: `Bearer ${key}`, Accept: 'application/json' }
     const fallback = async (msg: string): Promise<ProviderSnapshot> => {
       const groupId = await ctx.getExtra('minimaxGroupId')
-      if (!groupId) return errSnap({ id: this.id, name: this.name }, msg, ctx)
+      if (!groupId) return errSnap(identityOf(this), msg, ctx)
       try {
-        const { status, body } = await getJson(`${base}/v1/query_balance?group=${encodeURIComponent(groupId)}`, headers)
-        if (status !== 200) return errSnap({ id: this.id, name: this.name }, `${msg}；旧接口 HTTP ${status}`, ctx)
+        const { status, body } = await readJson(ctx, `${base}/v1/query_balance?group=${encodeURIComponent(groupId)}`, headers)
+        if (status !== 200) return errSnap(identityOf(this), `${msg}；旧接口 HTTP ${status}`, ctx)
         const be = baseErr(body)
-        if (be) return errSnap({ id: this.id, name: this.name }, `${msg}；旧接口: ${be}`, ctx)
+        if (be) return errSnap(identityOf(this), `${msg}；旧接口: ${be}`, ctx)
         const money = firstNumber(body, ['money', 'balance', 'total_balance'])
-        if (money === null) return errSnap({ id: this.id, name: this.name }, `${msg}；旧接口响应格式未识别`, ctx)
+        if (money === null) return errSnap(identityOf(this), `${msg}；旧接口响应格式未识别`, ctx)
         const windows: ProviderWindow[] = [balanceWindow(money, 'cny', '旧接口 query_balance')]
-        return snap({ id: this.id, name: this.name, windows }, ctx)
+        return officialSnap({ ...identityOf(this), windows }, ctx)
       } catch (e) {
-        return errSnap({ id: this.id, name: this.name }, `${msg}；旧接口请求失败: ${(e as Error).message}`, ctx)
+        return errSnap(identityOf(this), `${msg}；旧接口请求失败: ${(e as Error).message}`, ctx)
       }
     }
     try {
-      const { status, body } = await getJson(`${base}/v1/token_plan/remains`, headers)
+      const { status, body } = await readJson(ctx, `${base}/v1/token_plan/remains`, headers)
       if (status === 200) {
         const be = baseErr(body)
         if (!be) {
@@ -74,13 +75,13 @@ export const minimaxAdapter: ProviderAdapter = {
                 note: `剩余 ${remain}`
               }
             ]
-            return snap({ id: this.id, name: this.name, plan: 'Token Plan', windows }, ctx)
+            return officialSnap({ ...identityOf(this), plan: 'Token Plan', windows }, ctx)
           }
           const money = firstNumber(body, ['money', 'balance'])
-          if (money !== null) return snap({ id: this.id, name: this.name, windows: [balanceWindow(money, 'cny')] }, ctx)
+          if (money !== null) return officialSnap({ ...identityOf(this), windows: [balanceWindow(money, 'cny')] }, ctx)
         }
       } else if (status === 401) {
-        return errSnap({ id: this.id, name: this.name }, '鉴权失败（401）：API Key 无效', ctx)
+        return errSnap(identityOf(this), '鉴权失败（401）：API Key 无效', ctx)
       }
       return fallback('Token Plan 接口无可用数据')
     } catch (e) {

@@ -2,7 +2,8 @@ import { join } from 'path'
 import { existsSync, readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
-import { getJson, snap, errSnap, noDataSnap, fmtMoney } from './types'
+import { errSnap, identityOf, localSnap, noDataSnap, officialSnap, readJson } from './engine'
+import { fmtMoney } from './types'
 import type { ProviderSnapshot, ProviderWindow, ProviderModelRow } from '../../shared/types'
 import {
   fetchUsageViaCookie,
@@ -663,7 +664,7 @@ export const opencodeAdapter: ProviderAdapter = {
       const idx = (activeIdx + attempt) % keys.length
       const entry = keys[idx]
       try {
-        const { status, body } = await getJson(USAGE_ENDPOINT, { Authorization: `Bearer ${entry.key}`, Accept: 'application/json' })
+        const { status, body } = await readJson(ctx, USAGE_ENDPOINT, { Authorization: `Bearer ${entry.key}`, Accept: 'application/json' })
         if (status === 200) {
           const u = (body as { usage?: ApiUsage }).usage
           if (u) {
@@ -690,7 +691,7 @@ export const opencodeAdapter: ProviderAdapter = {
     let consoleDetails: ConsoleDetails | null = null
     if (cookieCred) {
       try {
-        const r = await fetchUsageViaCookie(cookieCred.cookie, cookieCred.workspaceId)
+        const r = await fetchUsageViaCookie(ctx, cookieCred.cookie, cookieCred.workspaceId)
         cookie = { windows: r.windows, raw: r.raw }
         // 每模型明细（隐藏窗口驱动，5 分钟缓存，非阻塞：本轮用缓存，后台刷新）
         try {
@@ -707,7 +708,7 @@ export const opencodeAdapter: ProviderAdapter = {
           const { readLiveCookie } = await import('../opencode-auth')
           const live = await readLiveCookie(cookieCred.workspaceId)
           if (live && live !== cookieCred.cookie) {
-            const r = await fetchUsageViaCookie(live, cookieCred.workspaceId)
+            const r = await fetchUsageViaCookie(ctx, live, cookieCred.workspaceId)
             cookie = { windows: r.windows, raw: r.raw }
             cookieError = ''
             if (ctx.setKey) await ctx.setKey('opencodeCookie', live)
@@ -738,10 +739,9 @@ export const opencodeAdapter: ProviderAdapter = {
       const parts: string[] = []
       if (cookie) parts.push('控制台（精确）')
       if (apiUsage) parts.push(`API · ${apiTag}`)
-      return snap(
+      return officialSnap(
         {
-          id: this.id,
-          name: this.name,
+          ...identityOf(this),
           plan: 'Go 套餐',
           windows,
           models: monthlyModels ?? (local ? modelRows(local) : undefined),
@@ -760,7 +760,7 @@ export const opencodeAdapter: ProviderAdapter = {
       const reason = keys.length
         ? `官方 API 无响应且本机无用量记录（${apiError || '网络不可达'}）`
         : '未找到 opencode 凭据与用量记录（未安装或从未使用）'
-      return noDataSnap({ id: this.id, name: this.name }, reason, ctx)
+      return noDataSnap(identityOf(this), reason, ctx)
     }
     const reason = apiError || cookieError || '官方接口不可达'
     const detailBits = [
@@ -770,16 +770,15 @@ export const opencodeAdapter: ProviderAdapter = {
     ]
     const top = [...local.byModel.entries()].sort((a, b) => b[1].cost - a[1].cost).slice(0, 3)
     if (top.length) detailBits.push(`30天模型花费 Top: ${top.map(([m, v]) => `${m} ${fmtMoney(v.cost, 'usd')}`).join(' · ')}`)
-    return snap(
+    return localSnap(
       {
-        id: this.id,
-        name: this.name,
+        ...identityOf(this),
         plan: 'Go 套餐',
         windows: localWindows(local, nowMs),
         models: modelRows(local),
         source: '本机统计',
-        // 诚实标注：口径不同（本机份额 ≠ 官方账户额度），UI 必须显式提示
-        dataQuality: 'local',
+        // 诚实标注：口径不同（本机份额 ≠ 官方账户额度），UI 必须显式提示。
+        // 来路由 localSnap 盖章（ADR-0002：可信度是铸造的必填输入，不再写进字段）
         failureReason: `官方数据不可用（${reason}）`,
         degradedReason: `官方数据不可用（${reason}）· 当前为本机估算，与官方百分比口径不同`,
         detail: detailBits.join(' · ')
