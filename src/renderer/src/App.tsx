@@ -55,9 +55,6 @@ type View = 'card' | 'detail' | 'settings'
 
 export default function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
-  /** 最新状态的可读引用：定时器 effect 的依赖里没有 state，闭包直读会拿到旧值 */
-  const stateRef = useRef(state)
-  stateRef.current = state
   const [view, setView] = useState<View>('card')
   const [openId, setOpenId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
@@ -65,6 +62,14 @@ export default function App(): React.JSX.Element {
   const [skinCss, setSkinCss] = useState<string | null>(null)
   /** 主面板余额显隐（ui:hideBalance）——隐私偏好，跨收起态共享 */
   const [hideBalance, setHideBalance] = useState(false)
+
+  /**
+   * 播报上下文：定时器 effect 只依赖「开关 + 间隔」，其余值一律从 ref 读。
+   * 为什么必须如此：依赖数组里一旦带上 collapsed / view，每次收/展面板、切视图
+   * 都会重跑 effect 并「立即触发一次」—— 间隔设成 1 分钟就会感觉被播报了好几次。
+   */
+  const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false })
+  speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance }
 
   // ─── 宠物（状态由 App 统一持有：悬浮球、右键菜单、设置页共用同一份成长数据）──
   const [pet, setPet] = useState<PetState>(() => defaultPetState())
@@ -322,14 +327,18 @@ export default function App(): React.JSX.Element {
   /** 播报焦点供应商：文案复用 shared/tray-text 的纯函数（与托盘同一口径，不再手写一份） */
   const speakBalance = (): void => {
     if (!voiceOn) return
-    if (collapsed || view !== 'card') return // 展开面板时不播报
-    // 从 ref 取最新状态（见 stateRef 的说明）
-    const snapshot = stateRef.current.snapshots.find((s) => s.status === 'ok')
+    const ctx = speakCtxRef.current
+    // 只在收起态播报：面板开着时屏幕上已经看得见，念出来是打扰
+    // （原实现写的是 `if (collapsed || view !== 'card') return`，与它自己的注释
+    //   「展开面板时不播报」正好相反 —— 结果是开着面板才播、收成球反而不播）
+    if (!ctx.collapsed) return
+
+    const snapshot = ctx.snapshots.find((s) => s.status === 'ok')
     if (!snapshot) return
 
     const name = snapshot.name || snapshot.id
     // 隐藏余额时不能把金额读出来（界面上是 ••••），只播用量；连用量都没有就如实说明
-    if (hideBalance && !snapshot.windows.some((w) => w.percent != null)) {
+    if (ctx.hideBalance && !snapshot.windows.some((w) => w.percent != null)) {
       say(`${name}，余额已隐藏`)
       return
     }
@@ -356,7 +365,7 @@ export default function App(): React.JSX.Element {
     // 立即触发一次
     speakBalance()
 
-    // 设置自重排定时器（依赖 voiceOn && voiceEvery）
+    // 自重排定时器：只有开关或间隔变化才会走到这里
     voiceTimerRef.current = window.setInterval(() => {
       speakBalance()
     }, voiceEvery * 60 * 1000)
@@ -367,7 +376,7 @@ export default function App(): React.JSX.Element {
         voiceTimerRef.current = null
       }
     }
-  }, [voiceOn, voiceEvery, collapsed, view])
+  }, [voiceOn, voiceEvery])
 
   useEffect(() => {
     void window.api.getState().then(setState)
