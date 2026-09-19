@@ -1099,6 +1099,9 @@ textarea {
   background: var(--border);
   color: var(--fg);
 }
+.mini-btn.muted {
+  opacity: 0.45;
+}
 .mini-btn.danger {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);

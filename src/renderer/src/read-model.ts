@@ -75,6 +75,18 @@ export function severityRank(s: ProviderSnapshot): number {
 }
 
 /**
+ * 该播报哪一个供应商：卡片顺序里第一个状态正常、且没被静音的。
+ * muted 传「不要播报的 id」而不是「允许播报的 id」—— 这样默认空列表就等于全部允许，
+ * 老用户没有这个偏好时行为与从前一致，而「只关掉其中一个」也表达得出来。
+ */
+export function speakableSnapshot(
+  snapshots: ProviderSnapshot[],
+  muted: readonly string[] = []
+): ProviderSnapshot | undefined {
+  return snapshots.find((s) => s.status === 'ok' && !muted.includes(s.id))
+}
+
+/**
  * 收起态悬浮球的等级：状态优先（error=危险 / 非 ok=静音），
  * 否则看它当前显示的那个窗口 —— 与 snapshotLevel 的差别在于**没有百分比时**：
  * 球显示不出百分比就应该是灰的（muted），而不是按「取最大百分比」判成 ok。

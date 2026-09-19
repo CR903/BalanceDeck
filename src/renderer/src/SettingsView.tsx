@@ -67,7 +67,9 @@ function ProviderRow({
   onDraft,
   onSave,
   onToggle,
-  onRemove
+  onRemove,
+  muted,
+  onToggleVoice
 }: {
   p: ProviderInfo
   editing: boolean
@@ -84,6 +86,9 @@ function ProviderRow({
   onSave: () => void
   onToggle: () => void
   onRemove: () => void
+  /** 该供应商是否已静音（不参与语音播报） */
+  muted: boolean
+  onToggleVoice: () => void
 }): React.JSX.Element {
   const [confirmRemove, setConfirmRemove] = useState(false)
   return (
@@ -100,6 +105,14 @@ function ProviderRow({
           </span>
           {p.builtin ? <span className="tag-builtin">内置</span> : <span className="tag-custom">自定义</span>}
           <span className="prow-actions">
+            <button
+              type="button"
+              className={'mini-btn' + (muted ? ' muted' : '')}
+              onClick={onToggleVoice}
+              title={muted ? '已静音：不参与语音播报（点击恢复）' : '参与语音播报（点击静音）'}
+            >
+              <Icon name={muted ? 'volumeOff' : 'volume'} size={13} />
+            </button>
             <button type="button" className="mini-btn" onClick={onStartEdit} title="编辑">
               <Icon name="edit" size={13} />
               编辑
@@ -265,12 +278,17 @@ function ProviderRow({
 export function SettingsView({
   onBack,
   onDataChanged,
+  voiceMuted,
+  onToggleVoice,
   alwaysTop,
   onToggleAlwaysTop,
   ...petProps
 }: {
   onBack: () => void
   onDataChanged: () => void
+  /** 已静音的供应商 id（不参与语音播报） */
+  voiceMuted: string[]
+  onToggleVoice: (id: string) => void
   /** 悬浮球是否总在最前（ui:alwaysOnTop） */
   alwaysTop: boolean
   onToggleAlwaysTop: (on: boolean) => void
@@ -512,6 +530,8 @@ export function SettingsView({
                 onSave={() => void saveEdit(p.id)}
                 onToggle={() => void toggle(p)}
                 onRemove={() => void remove(p)}
+                muted={voiceMuted.includes(p.id)}
+                onToggleVoice={() => onToggleVoice(p.id)}
               />
             ))}
           </div>

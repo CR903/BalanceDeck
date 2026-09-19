@@ -71,6 +71,8 @@ type IconName =
   | 'wifiOff'
   | 'eye'
   | 'eyeOff'
+  | 'volume'
+  | 'volumeOff'
   | 'heart'
   | 'download'
   | 'upload'
@@ -187,6 +189,20 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
       <circle cx="12" cy="12" r="2.6" />
+    </>
+  ),
+  volume: (
+    <>
+      <path d="M11 5 6 9H3v6h3l5 4V5z" />
+      <path d="M15.4 8.6a5 5 0 0 1 0 6.8" />
+      <path d="M18.4 5.8a9 9 0 0 1 0 12.4" />
+    </>
+  ),
+  volumeOff: (
+    <>
+      <path d="M11 5 6 9H3v6h3l5 4V5z" />
+      <path d="m16 9.5 5 5" />
+      <path d="m21 9.5-5 5" />
     </>
   ),
   eyeOff: (

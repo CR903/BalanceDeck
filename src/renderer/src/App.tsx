@@ -24,6 +24,7 @@ import {
 import type { PetMenuModel } from '../../shared/types'
 import { stopVoice } from './voice'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
+import { speakableSnapshot } from './read-model'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -63,13 +64,6 @@ export default function App(): React.JSX.Element {
   /** 主面板余额显隐（ui:hideBalance）——隐私偏好，跨收起态共享 */
   const [hideBalance, setHideBalance] = useState(false)
 
-  /**
-   * 播报上下文：定时器 effect 只依赖「开关 + 间隔」，其余值一律从 ref 读。
-   * 为什么必须如此：依赖数组里一旦带上 collapsed / view，每次收/展面板、切视图
-   * 都会重跑 effect 并「立即触发一次」—— 间隔设成 1 分钟就会感觉被播报了好几次。
-   */
-  const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false })
-  speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance }
 
   // ─── 宠物（状态由 App 统一持有：悬浮球、右键菜单、设置页共用同一份成长数据）──
   const [pet, setPet] = useState<PetState>(() => defaultPetState())
@@ -85,6 +79,16 @@ export default function App(): React.JSX.Element {
   const [voiceOn, setVoiceOn] = useState(false)
   /** 语音播报间隔（分钟，ui:voiceEvery，默认 60，档位 1/3/5/10/15/30/60） */
   const [voiceEvery, setVoiceEvery] = useState(60)
+  /** 不播报的供应商 id（ui:voiceMuted，默认空 = 全部播报） */
+  const [voiceMuted, setVoiceMuted] = useState<string[]>([])
+
+  /**
+   * 播报上下文：定时器 effect 只依赖「开关 + 间隔」，其余值一律从 ref 读。
+   * 为什么必须如此：依赖数组里一旦带上 collapsed / view，每次收/展面板、切视图
+   * 都会重跑 effect 并「立即触发一次」—— 间隔设成 1 分钟就会感觉被播报了好几次。
+   */
+  const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false, muted: voiceMuted })
+  speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance, muted: voiceMuted }
   const voiceTimerRef = useRef<number | null>(null)
   /** 宠物动作状态：'entering'/'idle'/'exiting' */
   const [petAnimState, setPetAnimState] = useState<'entering' | 'idle' | 'exiting'>('idle')
@@ -208,6 +212,13 @@ export default function App(): React.JSX.Element {
     setVoiceOn(on)
     void window.api.setExtras({ 'ui:voiceOn': on ? '1' : '0' })
   }
+  /** 某个供应商要不要播报（写进 ui:voiceMuted 的「不播报」列表） */
+  const toggleVoiceFor = (id: string): void => {
+    const next = voiceMuted.includes(id) ? voiceMuted.filter((x) => x !== id) : [...voiceMuted, id]
+    setVoiceMuted(next)
+    void window.api.setExtras({ 'ui:voiceMuted': JSON.stringify(next) })
+  }
+
   /** 语音播报间隔（分钟） */
   const setVoiceEveryInterval = (minutes: number): void => {
     setVoiceEvery(minutes)
@@ -278,13 +289,19 @@ export default function App(): React.JSX.Element {
   }
 
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery']).then((e) => {
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 3D 悬浮球；只有用户显式开启（'1'）才是 3D 桌面宠物
       setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
       setPetRing(e['ui:petRing'] !== '0')
       setVoiceOn(e['ui:voiceOn'] === '1')
+      try {
+        const muted = JSON.parse(e['ui:voiceMuted'] || '[]') as unknown
+        setVoiceMuted(Array.isArray(muted) ? muted.filter((x): x is string => typeof x === 'string') : [])
+      } catch {
+        setVoiceMuted([])
+      }
       const every = parseInt(e['ui:voiceEvery'] || '60', 10)
       // 支持档位：1/3/5/10/15/30/60 分钟
       if (every >= 1 && [1, 3, 5, 10, 15, 30, 60].includes(every)) {
@@ -333,7 +350,7 @@ export default function App(): React.JSX.Element {
     //   「展开面板时不播报」正好相反 —— 结果是开着面板才播、收成球反而不播）
     if (!ctx.collapsed) return
 
-    const snapshot = ctx.snapshots.find((s) => s.status === 'ok')
+    const snapshot = speakableSnapshot(ctx.snapshots, ctx.muted)
     if (!snapshot) return
 
     const name = snapshot.name || snapshot.id
@@ -459,6 +476,8 @@ export default function App(): React.JSX.Element {
           <SettingsView
             onBack={() => setView('card')}
             onDataChanged={() => void window.api.refreshNow()}
+            voiceMuted={voiceMuted}
+            onToggleVoice={toggleVoiceFor}
             pet={pet}
             petOn={petOn}
             onPet={petNow}
