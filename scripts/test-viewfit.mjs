@@ -1,6 +1,11 @@
 // pet3d/viewfit.ts 的视口反算测试（纯函数，node 直接跑）
 // 用法：node scripts/test-viewfit.mjs
 //
+// ⚠ 现状：收起态的两种形态**都不走动**（人物装满竖版画布后横向只剩 ±3 世界单位可动，
+// 见 scene.ts 头注释），所以 scene.ts 只用 viewfit 的 sphereNdcHalf（命中区投影），
+// fitRoamArea 目前没有产品消费者 —— 这套断言护的是「要走动时必须成立的可行区数学」，
+// 走动能力留给后续形态（随机动作 / 进出场）。删除或复活它都是独立决定。
+//
 // 覆盖（步骤 3 起为两条约束的契约）：
 //   C1 球壳（固定 z=0）在 (±halfX, 0) 不越界；C2 宠物在四角 (±halfX, ±halfZ) 与
 //   z 两端 (0, ±halfZ) 不越界（viewfit 口径 + three 实际投影双重复算）、
@@ -96,9 +101,11 @@ const sceneSrc = readFileSync(resolve('src/renderer/src/pet3d/scene.ts'), 'utf-8
 // R7（D4'）：球壳与用量环只跟 x、不跟 z —— 写回 z 跟随即回归
 ok(!/shellGroup\.position\.z\s*[-+]?=/.test(sceneSrc), 'R7：shellGroup 不再跟随 z')
 ok(!/ringGroup\.position\.z\s*[-+]?=/.test(sceneSrc), 'R7：ringGroup 不再跟随 z（与壳保持同步）')
-// R10：偏航写 petGroup（绕自身原点），不写归一化层 petHolder
-ok(/petGroup\.rotation\.y \+=/.test(sceneSrc), 'R10：偏航写在 petGroup')
-ok(!/petHolder\.rotation.*\.y\s*[-+]?=[^=]/.test(sceneSrc.replace(/petHolder\.rotation\.set\(/g, '')), 'R10：不写 petHolder 的 yaw（归一化层）')
+// 朝向：模型固有朝向修正只在建场景时写一次，而且写在 petGroup 那层 —— petHolder 是带
+// 归一化 scale 的层，写它会随动画被覆盖（DESIGN.md:312-314 有「宠物消失」的回归记录）。
+// 走动下线后没有逐帧偏航，这条守卫改为「只写一次、写对层」。
+ok(/petGroup\.rotation\.y = HUMAN_YAW/.test(sceneSrc), '朝向：HUMAN_YAW 写在 petGroup 上（一次）')
+ok(!/petGroup\.rotation\.y \+=/.test(sceneSrc), '朝向：没有逐帧偏航（走动已下线）')
 // 禁止手工缩放（走近变大必须来自透视本身）
 ok(!/petHolder\.scale\.setScalar\(/.test(sceneSrc), 'R9：没有对 petHolder 的归一化层加手工缩放')
 // 位置只由 walker 驱动：剪辑自带的根位移（Bip01 的 position 曲线，实测 walk ≈33 世界单位/循环）
@@ -108,7 +115,7 @@ ok(/human\.cancelRootMotion\(\)/.test(sceneSrc), 'R9：抵消剪辑自带根位�
 // ─── 2. 反算结果回代：球在 (±halfX, 0)、宠物在四角与 z 两端，全部不越界 ────────
 // expect：'fits' = 视口装得下轮廓，必须不越界；'floor' = 装不下，下限保护接管（允许略微出界）
 const SIZES = [
-  ['320×230（当前宠物形态）', 320, 230, 'fits'],
+  ['320×230（历史人物形态窗口，现为 320×440）', 320, 230, 'fits'],
   ['460×340（已作废的加高方案，仅留作 aspect 对照）', 460, 340, 'fits'],
   ['200×210（球形态）', 200, 210, 'fits'],
   ['800×120（极端宽扁 aspect）', 800, 120, 'fits'],

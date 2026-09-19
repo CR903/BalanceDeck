@@ -42,7 +42,7 @@ export async function runUiTest(
     }
   }
   const bounds = (): Electron.Rectangle => win.getBounds()
-  /** 收起态的窗口是 320×230 漫游区，球在正中：点击 = 点命中层中心 */
+  /** 收起态窗口很小（球 200×210 / 人物 320×440），主体就在正中：点击 = 点命中层中心 */
   const ballCenterJs = `(()=>{
     const c=document.querySelector('.petball'); if(!c) return null
     const rc=c.getBoundingClientRect()
@@ -441,10 +441,10 @@ export async function runUiTest(
   await petSwitch()
   r.petToggleSaved = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
 
-  // ── 桌面宠物形态：窗口是漫游区（320×230），角色素材就位，穿透生效 ──
+  // ── 个性人物形态：窗口是竖版（320×440），人物素材就位，穿透生效 ──
   await gotoView('collapse')
-  r.petBallOn = (await exec("document.querySelector('.petball')?.dataset.roam === '1'")) ? 'ok' : 'fail:roam-off'
-  r.petRoamWindow = bounds().width === 320 && bounds().height === 230 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  r.petBallOn = (await exec("document.querySelector('.petball')?.dataset.figure === '1'")) ? 'ok' : 'fail:figure-off'
+  r.petFigureWindow = bounds().width === 320 && bounds().height === 440 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
   r.pet3dCanvas = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
   for (let i = 0; i < 30; i++) {
     if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) break
@@ -455,6 +455,20 @@ export async function runUiTest(
   r.petCenterValue = (await exec("!!document.querySelector('.petball-center-value')"))
     ? 'fail:should-be-caption'
     : 'ok'
+  // 人物形态的可见集：球壳/暗边/高光（Sphere）、装饰带与用量环（Torus）、进度弧（Tube）
+  // 都必须不可见 —— 「不要球形、不要进度条」的回归护栏（dump 的 visible 已含父级可见性）
+  const figDump = (await exec('window.__bd_ball?.()?.dump ?? []')) as
+    | { type: string; visible: boolean }[]
+    | null
+  const ballBits = (figDump ?? []).filter((m) => m.visible && /Sphere|Torus|Tube/.test(m.type))
+  r.petFigureOnly = ballBits.length === 0 ? 'ok' : `fail:${ballBits.map((m) => m.type).join(',')}`
+  // 人物要占满竖版窗口（「脸得看得清」的诉求）：命中区与真实 ink box 双口径
+  r.petFigureBig = String(
+    await exec(`(()=>{const b=window.__bd_ball?.(); if(!b) return 'no-handle'
+      const r=b.rect, ink=b.measure?.box
+      return (r && ink && r.width>=200 && r.height>=270 && ink.width>=110 && ink.height>=250)
+        ? 'ok' : 'fail:rect='+JSON.stringify(r&&[Math.round(r.width),Math.round(r.height)])+' ink='+JSON.stringify(ink&&[Math.round(ink.width),Math.round(ink.height)])})()`)
+  )
 
   // 置顶开关（默认开；关掉后主进程不再置顶；再开回来）
   const topDefault = (await exec('window.api.debugPetState()')) as { alwaysOnTop: boolean } | null
@@ -464,7 +478,7 @@ export async function runUiTest(
   const topOn = (await exec('window.api.debugSetTop(true)')) as { alwaysOnTop: boolean } | null
   r.petTopOn = topOn?.alwaysOnTop === true ? 'ok' : 'fail:cannot-restore'
 
-  // 穿透机制：主进程轮询在跑（roaming）+ 渲染层已上报命中框（hitbox 非空）
+  // 穿透机制：主进程光标轮询在跑（roaming = watchTimer 非空）+ 渲染层已上报命中区（hitbox 非空）
   const watch = petIgnoreState()
   const hb = petHitboxDebug()
   r.petPierce = watch.roaming && hb && hb.width > 20 ? 'ok' : `fail:roaming=${watch.roaming},hb=${JSON.stringify(hb)}`
@@ -478,7 +492,9 @@ export async function runUiTest(
     watch,
     hb: hb && { w: Math.round(hb.width), h: Math.round(hb.height) },
     rect: ball && { w: Math.round(ball.rect.width), h: Math.round(ball.rect.height) },
-    ink: ball && { w: ball.measure.box.width, h: ball.measure.box.height }
+    ink: ball && { w: ball.measure.box.width, h: ball.measure.box.height },
+    // 软化/卡顿现场证据：帧率与最长一帧间隔
+    perf: (ball as { perf?: unknown } | null)?.perf ?? null
   })
 
   // 长按撸一把：亲密度上升、播放开心动作，且**不展开面板**
@@ -534,6 +550,8 @@ export async function runUiTest(
   await sleep(600)
   r.petNoStickyDrag = consumeDragFired() ? 'fail:drag-started' : 'ok'
   r.petStillCollapsed = bounds().width === 320 ? 'ok' : `fail:${bounds().width}`
+  // 人物形态下窗口高度也必须保持竖版（长按/右键都不许把窗口改回横向）
+  r.petFigureHeightKept = bounds().height === 440 ? 'ok' : `fail:${bounds().height}`
 
   // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
   await exec(`(()=>{
@@ -550,7 +568,7 @@ export async function runUiTest(
   await petSwitch()
   r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
   await gotoView('collapse')
-  r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.roam === '0'")) ? 'ok' : 'fail:roam-on'
+  r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.figure === '0'")) ? 'ok' : 'fail:figure-on'
   r.petBallWindow = bounds().width === 200 && bounds().height === 210 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
   r.petBall3d =
     (await exec("!!document.querySelector('.pet3d-canvas')")) &&

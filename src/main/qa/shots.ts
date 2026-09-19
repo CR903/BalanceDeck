@@ -93,11 +93,11 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('.advanced')?.scrollIntoView({block:'center'})")
   await sleep(500)
   await shoot('6-settings-advanced')
-  // ─── 收起态：3D 悬浮球（默认形态）／桌面宠物（可选形态）─────────────────────
+  // ─── 收起态：3D 悬浮球（默认形态）／个性人物（可选形态）─────────────────────
   const openSettings = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()"
   const backBtn = "[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()"
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
-  /** 点「桌面宠物」开关（.pet-sec 里第 1 个开关） */
+  /** 点「个性人物」开关（.pet-sec 里第 1 个开关；文案变了这里要跟着改） */
   const petToggle = "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()"
   const longPress = (down: boolean): string => `(()=>{
     const b=document.querySelector('.petball-hit'); if(!b) return
@@ -112,7 +112,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(openSettings)
   await sleep(700)
   await exec("document.querySelector('.pet-sec')?.scrollIntoView({block:'center'})")
-  await sleep(4500) // 等 8 张 3D 缩略图渲染完（软渲染器上要几秒）
+  await sleep(4500) // 等角色缩略图渲染完（软渲染器上要几秒）
   await shoot('4b-settings-pet')
   await exec(backBtn)
   await sleep(500)
@@ -128,7 +128,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
     await shoot(`5c-ball-${id}`)
   }
 
-  // ② 桌面宠物形态：球内角色会走动 + 长按撸一把 + 右键菜单
+  // ② 个性人物形态：人物独立站立 + 长按撸一把 + 右键菜单
   await exec('window.api.expand()')
   await sleep(700)
   await exec(openSettings)
@@ -155,7 +155,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
   await sleep(500)
 
-  // 逐只角色各拍一张（3D 素材观感）
+  // 逐位角色各拍一张（3D 素材观感）
   const species = ['aria', 'ray']
   for (let i = 0; i < species.length; i++) {
     await exec('window.api.expand()')
@@ -167,11 +167,22 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
     await exec(backBtn)
     await sleep(400)
     await exec(collapseBtn)
-    await sleep(1800)
+    // ⚠ 必须等到 petReady：收起会重建场景，未缓存过的角色要解析 5 个 FBX
+    //   （软渲染器上远超固定等待），拍早了就是一张只有脚下阴影的空画布。
+    let ready = false
+    for (let w = 0; w < 25; w++) {
+      if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) {
+        ready = true
+        break
+      }
+      await sleep(400)
+    }
+    if (!ready) console.log(`[shots] ${species[i]} 未就位（拍到的可能是空画布）`)
+    await sleep(900) // 模型就位后再等一拍，让 idle 剪辑进入循环
     await shoot(`5f-pet-${species[i]}`)
   }
 
-  // 还原：关掉桌面宠物（默认球形态），回到卡片视图
+  // 还原：关掉个性人物（默认球形态），回到卡片视图
   await exec('window.api.expand()')
   await sleep(700)
   await exec(openSettings)

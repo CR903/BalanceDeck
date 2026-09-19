@@ -31,7 +31,7 @@ export async function runBallshot(): Promise<void> {
       }
       await new Promise((r) => setTimeout(r, 1200))
     }
-    // BD_PET=1：确保「桌面宠物」形态开启后再收起（默认拍球形态）
+    // BD_PET=1：确保「个性人物」形态开启后再收起（默认拍球形态）
     // BD_PET_ID=<id>：顺带在设置页换成指定角色（只换一只；逐只请用多次调用，见 BD_PETS 的上下文限制）
     const PET_IDS = ['aria', 'ray']
     const pickPet = process.env.BD_PET_ID ?? ''
@@ -40,8 +40,9 @@ export async function runBallshot(): Promise<void> {
     const back = `[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()`
     const collapse = `[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()`
     // 开关按相邻文本定位（该分区还会继续加开关，下标必然漂移），且只在未开启时点一次：
-    // 它是 toggle，无条件 click 在 ui:pet 已持久化为 '1' 的机器上会反向关掉宠物形态 → 拍到球。
-    const petRow = `[...document.querySelectorAll('.pet-sec .enable-row')].find(r=>r.textContent.includes('桌面宠物'))`
+    // 它是 toggle，无条件 click 在 ui:pet 已持久化为 '1' 的机器上会反向关掉人物形态 → 拍到球。
+    // ⚠ 文案改过一次（桌面宠物 → 个性人物），这里必须跟着改：匹配不到就永远拍球形态。
+    const petRow = `[...document.querySelectorAll('.pet-sec .enable-row')].find(r=>r.textContent.includes('个性人物'))`
     const petFormOn = `(() => { const r=${petRow}; return !!(r && r.querySelector('.switch') && r.querySelector('.switch').classList.contains('on')) })()`
     const petFormEnable = `(()=>{const r=${petRow}; const s=r?.querySelector('.switch'); if(s&&!s.classList.contains('on')){s.click(); console.log('宠物开关已打开')}else{console.log('开关状态:',s?.classList.contains('on')?'已开':'未找到')}})()`
     if (wantPet) {
@@ -101,22 +102,8 @@ export async function runBallshot(): Promise<void> {
         await new Promise((r) => setTimeout(r, 400))
       }
     }
-    // BD_PIN_POS=<x>,<z>：把宠物钉到指定世界坐标再拍（定点核对最坏位置：角落 / z 两端）。
-    // 越界值会被漫游状态机夹进可行区，diag 里的 walker/roamArea 可核对是否真的钉到位。
-    const pinPos = process.env.BD_PIN_POS
-    if (pinPos !== undefined && wantPet) {
-      const [px, pz] = pinPos.split(',').map(Number)
-      if (Number.isFinite(px) && Number.isFinite(pz)) {
-        await win.webContents.executeJavaScript(`window.__bd_pin?.(${px}, ${pz})`, true)
-        process.stdout.write(`pin: (${px}, ${pz})\n`)
-        await new Promise((r) => setTimeout(r, 800)) // 等球壳 x 跟随与偏航平滑收敛
-      } else {
-        process.stdout.write(`BD_PIN_POS 需要 "<x>,<z>"（世界单位），收到：${pinPos}\n`)
-      }
-    }
     // BD_ONLY=<名字子串>：只留下匹配的物体、其余全隐藏，用来单独量某个物体的 ink box。
-    // 为什么需要：整景的 ink box 被玻璃球壳主导（球壳固定 z=0 → 尺寸恒定），宠物的透视缩放
-    // 在里面只剩几个像素，量不出 R9 的缩放跨度；配 BD_ONLY=<宠物网格名> 才量得到宠物本体。
+    // 为什么需要：球形态的整景 ink box 被玻璃球壳主导，配 BD_ONLY=<人物网格名> 才量得到人物本体。
     const only = process.env.BD_ONLY
     if (only !== undefined) {
       const n = await win.webContents.executeJavaScript(
@@ -148,7 +135,7 @@ export async function runBallshot(): Promise<void> {
         ) +
         '\n'
     )
-    // BD_TOGGLE=1：快速验证「桌面宠物」开关与形态切换
+    // BD_TOGGLE=1：快速验证「个性人物」开关与形态切换
     if (process.env.BD_TOGGLE === '1') {
       await win.webContents.executeJavaScript('window.api.expand()', true)
       await new Promise((r) => setTimeout(r, 800))
