@@ -409,16 +409,11 @@ export function PetBall({
     clearHold()
     if (wasMoved || cancel) onDragEnd()
     else if (!wasLong && !renaming) {
-      // 点击展开时触发动画（如果当前是 idle 状态）
+      // 点击 = 立即展开。挥手动画**不阻塞**：等 1.5s 动画播完再展开，既是体验问题
+      // （点一下要等一秒半），也会让 UI 断言在 700ms 的等待窗口里读不到展开后的窗口。
       const scene = (window as any).__bd_pet_scene__
-      if (scene && scene.playAnim) {
-        // 先播放 wave 进场动画，然后展开
-        scene.playAnim('wave', 1.5).then(() => {
-          onExpand()
-        })
-      } else {
-        onExpand()
-      }
+      void scene?.playAnim?.('wave', 1.5)?.catch?.(() => {})
+      onExpand()
     }
   }
 

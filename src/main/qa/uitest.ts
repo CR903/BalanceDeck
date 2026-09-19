@@ -499,7 +499,18 @@ export async function runUiTest(
     stillCollapsedAfterHold && affAfter > affBefore
       ? 'ok'
       : `fail:${stillCollapsedAfterHold ? '' : 'expanded'}:${affBefore}->${affAfter}`
-  r.petToast = (await exec("!!document.querySelector('.petball-toast')")) ? 'ok' : 'fail:no-toast'
+  // 成功反馈走气泡（数字人形态）；冷却期的"让我缓一下…"才走 toast —— 两条路径分别断言
+  r.petBubble = (await exec("!!document.querySelector('.petball-bubble')")) ? 'ok' : 'fail:no-bubble'
+  await exec(`(async()=>{
+    const b=document.querySelector('.petball-hit'); if(!b) return
+    const rc=b.getBoundingClientRect()
+    const o={clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,pointerId:32,bubbles:true,pointerType:'mouse',button:0,buttons:1}
+    b.dispatchEvent(new PointerEvent('pointerdown',o))
+    await new Promise(r=>setTimeout(r,780))
+    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
+  })()`)
+  await sleep(300)
+  r.petCooldownToast = (await exec("!!document.querySelector('.petball-toast')")) ? 'ok' : 'fail:no-toast'
 
   // 回归：右键（含菜单被点开后关闭）不得让宠物进入"黏住光标"的假拖拽状态
   //   —— 现象是菜单关掉后移动鼠标，窗口跟着光标乱跑，直到再点一次宠物才释放
