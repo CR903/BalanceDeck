@@ -1,5 +1,5 @@
 import type { ProviderKind, ProviderInfo, ProviderInstance, CatalogEntry } from '../shared/types'
-import { envExtraFor, envValueFor } from './scanner'
+import { envExtraFor, envValueFor, hasEnvCredential } from './scanner'
 import type { Store } from './store'
 import {
   SELECTABLE_PROTOCOLS,
@@ -47,7 +47,6 @@ export interface BuiltinPreset {
   localCredential?: boolean
   /** 仅可添加一次（本机文件型数据源，重复无意义） */
   singleton?: boolean
-  envKeys?: string[]
   /** 额外凭据探测（本机文件 / 工具数据库等非环境变量来源） */
   probeCredential?: () => Promise<boolean> | boolean
 }
@@ -98,8 +97,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     kind: 'balance',
     protocol: 'deepseek',
     defaultBaseUrl: 'https://api.deepseek.com',
-    keyHint: 'sk-…（35 位）',
-    envKeys: ['DEEPSEEK_API_KEY']
+    keyHint: 'sk-…（35 位）'
   },
   {
     id: 'kimi',
@@ -107,8 +105,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     kind: 'balance',
     protocol: 'moonshot',
     defaultBaseUrl: 'https://api.moonshot.cn',
-    keyHint: 'sk-…',
-    envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY']
+    keyHint: 'sk-…'
   },
   {
     id: 'zhipu',
@@ -116,8 +113,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     kind: 'balance',
     protocol: 'zhipu',
     defaultBaseUrl: 'https://open.bigmodel.cn',
-    keyHint: 'id.secret',
-    envKeys: ['ZHIPUAI_API_KEY', 'ZHIPU_API_KEY']
+    keyHint: 'id.secret'
   },
   {
     id: 'siliconflow',
@@ -125,8 +121,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     kind: 'balance',
     protocol: 'siliconflow',
     defaultBaseUrl: 'https://api.siliconflow.cn',
-    keyHint: 'sk-…',
-    envKeys: ['SILICONFLOW_API_KEY']
+    keyHint: 'sk-…'
   },
   {
     id: 'minimax',
@@ -134,8 +129,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     kind: 'token',
     protocol: 'minimax',
     defaultBaseUrl: 'https://api.minimaxi.com',
-    keyHint: 'sk-…',
-    envKeys: ['MINIMAX_API_KEY']
+    keyHint: 'sk-…'
   },
   {
     id: 'qwen',
@@ -242,7 +236,7 @@ async function migrateLegacy(): Promise<ProviderInstance[]> {
     if (enabledFlag === '0') continue
 
     const saved = await db().getKey(p.id)
-    const fromEnv = (p.envKeys ?? []).some((n) => !!process.env[n])
+    const fromEnv = hasEnvCredential(p.id)
     let fromProbe = false
     if (!saved && !fromEnv && p.probeCredential) {
       try {
@@ -366,7 +360,7 @@ export async function instanceInfo(inst: ProviderInstance): Promise<ProviderInfo
   let credentialSource: ProviderInfo['credentialSource'] = 'none'
   const saved = await db().getKey(inst.id)
   if (saved) credentialSource = 'saved'
-  else if (preset?.envKeys?.some((n) => !!process.env[n])) credentialSource = 'env'
+  else if (hasEnvCredential(inst.presetId)) credentialSource = 'env'
   else if (preset?.localCredential) credentialSource = 'file'
   else if (preset?.probeCredential) {
     try {

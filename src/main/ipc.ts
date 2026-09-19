@@ -347,9 +347,4 @@ export function registerIpc(): void {
       return petWindowState()
     })
   }
-
-  // 渲染进程申请打开设置视图时，确保窗口处于展开态（由 renderer 直接切视图）
-  ipcMain.on('settings:openView', () => {
-    getOverlay()?.webContents.send('ui:open-settings')
-  })
 }

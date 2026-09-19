@@ -23,6 +23,7 @@ import {
 } from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
 import { stopVoice } from './voice'
+import { providerSummary, qualitySuffix } from '../../shared/tray-text'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -54,6 +55,9 @@ type View = 'card' | 'detail' | 'settings'
 
 export default function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
+  /** 最新状态的可读引用：定时器 effect 的依赖里没有 state，闭包直读会拿到旧值 */
+  const stateRef = useRef(state)
+  stateRef.current = state
   const [view, setView] = useState<View>('card')
   const [openId, setOpenId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
@@ -308,37 +312,30 @@ export default function App(): React.JSX.Element {
     void window.api.setExtras({ 'ui:hideBalance': next ? '1' : '' })
   }
 
-  /** 播报焦点供应商的余额与用量 */
+  /** 动态 import 语音模块并朗读；失败只记一条日志，不影响界面 */
+  const say = (text: string): void => {
+    import('./voice')
+      .then(({ speak }) => speak(text))
+      .catch(() => console.warn('[voice] 无法导入 speak 函数'))
+  }
+
+  /** 播报焦点供应商：文案复用 shared/tray-text 的纯函数（与托盘同一口径，不再手写一份） */
   const speakBalance = (): void => {
     if (!voiceOn) return
     if (collapsed || view !== 'card') return // 展开面板时不播报
-    
-    const state = window.__bd_state__?.()
-    if (!state || !state.snapshots || state.snapshots.length === 0) return // 无数据时不播报
-    
-    // 找到第一个状态正常的供应商
-    const snapshot = state.snapshots.find((s: ProviderSnapshot) => s.status === 'ok')
+    // 从 ref 取最新状态（见 stateRef 的说明）
+    const snapshot = stateRef.current.snapshots.find((s) => s.status === 'ok')
     if (!snapshot) return
-    
-    // 构建播报文案
-    let text = `${snapshot.providerId}，`
-    if (!hideBalance && snapshot.balance !== null) {
-      const amount = Math.round(snapshot.balance / 100)
-      text += `余额${amount}元，`
+
+    const name = snapshot.name || snapshot.id
+    // 隐藏余额时不能把金额读出来（界面上是 ••••），只播用量；连用量都没有就如实说明
+    if (hideBalance && !snapshot.windows.some((w) => w.percent != null)) {
+      say(`${name}，余额已隐藏`)
+      return
     }
-    const usage = snapshot.percent
-    if (usage !== null) {
-      text += `用量${Math.round(usage)}%`
-      if (snapshot.cache === 'stale') text += '（缓存）'
-      else if (snapshot.cache === 'estimation') text += '（估算）'
-    }
-    
-    // 导入 speak 函数
-    import('./voice').then(({ speak }) => {
-      speak(text)
-    }).catch(() => {
-      console.warn('[voice] 无法导入 speak 函数')
-    })
+    const summary = providerSummary(snapshot)
+    if (!summary) return
+    say(`${name}，${summary}${qualitySuffix(snapshot)}`)
   }
 
   /** 语音播报定时器 */
@@ -376,10 +373,6 @@ export default function App(): React.JSX.Element {
     void window.api.getState().then(setState)
     const off1 = window.api.onState(setState)
     const off2 = window.api.onCollapsed(setCollapsed)
-    // 挂载全局状态访问器（供语音播报等模块使用）
-    if (typeof window !== 'undefined') {
-      ;(window as Window).__bd_state__ = () => state
-    }
     const apply = (id: string): void => {
       setSkinId(id)
       if (id.startsWith('ext:')) void window.api.getSkinCss(id).then(setSkinCss)
@@ -387,12 +380,10 @@ export default function App(): React.JSX.Element {
     }
     void window.api.currentSkin().then(apply)
     const off3 = window.api.onSkin(apply)
-    const off4 = window.api.onSettingsChanged?.(() => setView('settings')) ?? (() => {})
     return () => {
       off1()
       off2()
       off3()
-      off4()
     }
   }, [])
 

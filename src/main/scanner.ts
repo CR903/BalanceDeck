@@ -73,6 +73,15 @@ export function envValueFor(providerId: string): string | null {
   return null
 }
 
+/**
+ * 环境变量里是否有这家供应商的凭据（含 AK:SK 成对判定）。
+ * 这是**唯一**的答案来源：预设不再各自维护一份 envKeys（那两张表曾经不一致 ——
+ * qwen/volc 的 AK/SK 只存在于本模块，于是设置页显示「未配置」而采集时却能拿到凭据）。
+ */
+export function hasEnvCredential(providerId: string): boolean {
+  return envValueFor(providerId) !== null
+}
+
 export function envExtraFor(key: string): string | null {
   for (const n of EXTRA_ENV[key] ?? []) {
     if (process.env[n]) return process.env[n] as string
