@@ -202,7 +202,7 @@ export function PetSection({
 
         <div className="enable-row">
           <span>
-            桌面宠物
+            个性人物
             <em className="tag env">收起态</em>
           </span>
           <button

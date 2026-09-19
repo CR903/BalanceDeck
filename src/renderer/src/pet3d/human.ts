@@ -190,12 +190,7 @@ export interface HumanInstance {
   dispose: () => void
 }
 
-/**
- * 模型固有朝向修正：Max 系 FBX 转 Y-up 后若背对镜头，把该值改成 Math.PI 验证。
- * 刻意作为**常量偏移**导出给 scene.ts 的 heading 使用（而非在这里写进实例旋转）：
- * 真人系已改为跟随行进方向偏航（R10），两处各转一次会互相打架。
- */
-export const HUMAN_YAW = 0
+export { HUMAN_YAW } from './rig'
 
 export async function instantiateHuman(id: HumanPetId, targetHeight: number): Promise<HumanInstance> {
   const template = await loadHumanTemplate(id)

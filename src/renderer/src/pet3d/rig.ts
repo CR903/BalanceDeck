@@ -48,3 +48,11 @@ export const ROAM_FIT_MARGIN = 4
  * 透视缩放跨度 √(34²+(162−28)²) ↔ √(34²+(162+28)²) ≈ 1.40×（≥1.35× 目标）。
  */
 export const ROAM_DEPTH_BUDGET = 28
+
+/**
+ * 模型固有朝向修正：Max 系 FBX 转 Y-up 后若背对镜头，把该值改成 Math.PI 验证。
+ * 刻意作为**常量偏移**给 scene.ts 的 heading 使用（而非写进实例旋转）：真人系已改为
+ * 跟随行进方向偏航，两处各转一次会互相打架。原先放在 human.ts —— 但 scene.ts 每帧要用它，
+ * 放那里会把 FBXLoader/SkeletonUtils 一起拖进主包（懒加载人物模块的主要动机）。
+ */
+export const HUMAN_YAW = 0

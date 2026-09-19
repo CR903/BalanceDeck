@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { PetId, PetMood } from '../../../shared/pet'
 import { ROAM_VIEW } from '../../../shared/pet-view'
-import { instantiateHuman, HUMAN_YAW, type HumanClip } from './human'
+import type { HumanClip } from './human'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
 import { fitRoamArea, sphereNdcHalf } from './viewfit'
 import {
@@ -15,6 +15,7 @@ import {
   CAM_PITCH,
   CAM_Y,
   HUMAN_HEIGHT,
+  HUMAN_YAW,
   RING_HALO_TUBE,
   RING_R,
   RING_TUBE,
@@ -401,6 +402,9 @@ export function createPet3dScene(
     const token = ++loadToken
     try {
         // 真人系：骨骼模型 + mixer，失败只留球体（与 legacy 同样的兜底姿态）
+        // 动态导入：human.ts 静态依赖 FBXLoader + SkeletonUtils（约 200KB），
+        // 只有真的要用数字人形态时才值得付这个下载/解析成本（默认形态是悬浮球）。
+        const { instantiateHuman } = await import('./human')
         const inst = await instantiateHuman(want, HUMAN_HEIGHT)
         if (token !== loadToken) {
           inst.dispose()
