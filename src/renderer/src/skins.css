@@ -1690,12 +1690,12 @@ textarea {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 
-/* 命中环（仅 --uitest / --shots 的 ?bddebug 下显示）：核对球体投影与命中判定 */
+/* 命中区（仅 --uitest / --shots 的 ?bddebug 下显示）：核对主体投影与命中判定。
+   坐标是**左上角**（渲染层给的就是 hitRect 本身），圆角由内联样式按形态给
+   —— 球形态画圆核对投影，人物形态画方框核对包围盒。 */
 .petball-debugring {
   position: absolute;
-  transform: translate(-50%, -50%);
   border: 1px dashed rgba(255, 0, 128, 0.9);
-  border-radius: 50%;
   pointer-events: none;
 }
 

@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
-import { petMood, type PetId, type PetState } from '../../shared/pet'
-import { ROAM_VIEW } from '../../shared/pet-view'
+import { type PetId, type PetState } from '../../shared/pet'
+import { FIGURE_VIEW } from '../../shared/pet-view'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
 import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } from './pet3d/scene'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态 = 3D 桌面宠物（悬浮球）
+// 收起态 = 3D 悬浮物，两种形态（见 shared/pet-view 与 pet3d/rig.ts 的 FORMS）
 //
-// 收起后窗口变成一块漫游区（尺寸见 shared/pet-view，由 overlay.ts 决定），里面只有一个 WebGL 小球：
-//   · 玻璃球壳 + 环形仪表（KPI）+ 球心的 3D 卡通角色（宠物）
-//   · 角色在球内自主走动（walkers.ts 状态机），鼠标靠近时停下看着你
-//   · 交互：单击展开面板、拖动移动、长按 0.62s 撸一把、右键菜单
-//   · 球以外的窗口区域全部鼠标穿透（主进程轮询光标 + setIgnoreMouseEvents）
+//   · 球形态（默认）：玻璃球 + 环形仪表 + 球心读数，窗口 200×210 贴合球体；
+//   · 个性人物：**只有人物**独立站在窗口中央（无球壳、无用量环），窗口 320×440 竖版，
+//     读数走窗口下方的胶囊。
+//
+// 共同点：鼠标穿透（主进程按 scene 上报的命中区轮询）、单击展开、拖动移动、长按撸一把、右键菜单。
 //
 // 设计依据见 DESIGN.md「收起态：3D 桌面宠物」。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface PetBallProps {
   pet: PetState
-  /** 是否作为 3D 桌面宠物（关闭 = 静止的 2D 圆点，省电/省显存） */
-  roam: boolean
+  /** 收起态是否为「个性人物」形态（关闭 = 默认的悬浮球，省显存/不加载角色素材） */
+  figure: boolean
   onExpand: () => void
   onDragStart: (grab: { x: number; y: number }) => void
   onDragEnd: () => void
@@ -35,13 +35,13 @@ export interface PetBallProps {
   /** 由 App 触发的动作（设置页/菜单里点撸一把、喂食） */
   action: PetAction
   actionSeq: number
-  /** 是否显示用量环（ui:petRing，右键菜单可关） */
+  /** 是否显示用量环（ui:petRing，右键菜单可关；球形态可见，人物形态本就没有环） */
   showRing?: boolean
 }
 
 export function PetBall({
   pet,
-  roam,
+  figure,
   onExpand,
   onDragStart,
   onDragEnd,
@@ -68,10 +68,16 @@ export function PetBall({
   const [bubble, setBubble] = useState('')
   /** 测试观测点：命中环（--uitest / --shots 打开，用于核对球体投影与命中判定） */
   const debugRing = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('bddebug')
-  const [ringBox, setRingBox] = useState({ x: 0, y: 0, size: 0 })
-  /** 球在窗口内的投影中心（DOM 遮罩对准球心；随宠物走动更新） */
-  const [center, setCenter] = useState({ x: 160, y: 115 })
-  const [ballR, setBallR] = useState(60)
+  const [ringBox, setRingBox] = useState({ x: 0, y: 0, w: 0, h: 0 })
+  /** 命中区中心（DOM 覆盖层对准它；两种形态都由 scene 按投影给出） */
+  const [center, setCenter] = useState({ x: 100, y: 105 })
+  /** 命中区半宽/半高：覆盖层按它上下避开主体（球 = 半径，人物 = 半身高） */
+  const [half, setHalf] = useState({ w: 90, h: 95 })
+  /**
+   * 窗口像素尺寸：胶囊锚点要按它夹在窗内 —— 人物形态下主体几乎占满窗口，
+   * 覆盖层一律贴窗口边（不是贴主体）才不会溢出被 overflow 切掉。
+   */
+  const [viewSize, setViewSize] = useState({ w: FIGURE_VIEW.width, h: FIGURE_VIEW.height })
   /** 光标是否悬停在球上（主进程轮询回传）：悬停时停步，避免「抓不到」 */
   const [hover, setHover] = useState(false)
   const petRef = useRef(pet)
@@ -114,10 +120,10 @@ export function PetBall({
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    // 两种形态都要建场景：球形态不加载角色，宠物形态才放角色（见 setRoam / scene.ts）
+    // 形态决定机位与窗口（见 shared/pet-view 与 pet3d/rig.ts 的 FORMS）；球形态不加载角色素材
     let handle: Pet3dHandle | null = null
     try {
-      handle = createPet3dScene(host, petRef.current.id, { roam })
+      handle = createPet3dScene(host, petRef.current.id, { form: figure ? 'figure' : 'ball' })
     } catch (e) {
       // WebGL 不可用（老显卡/驱动异常）→ 退回 2D 圆点，功能不丢
       setFailed(true)
@@ -127,36 +133,26 @@ export function PetBall({
     sceneRef.current = handle
     setReady(true)
     frameRef.current && handle.setFrame(frameRef.current)
-    handle.setStats({ mood: petMood(petRef.current), affection: petRef.current.affection, fullness: petRef.current.fullness })
     return () => {
       handle?.dispose()
       sceneRef.current = null
       setReady(false)
     }
-    // 形态切换需要重算相机构图与窗口尺寸，直接重建场景最省心（球/宠物切换走 handle 增量更新）
+    // 形态切换要换机位与窗口尺寸，直接重建场景最省心（换角色走 handle 的 setPet）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roam])
+  }, [figure])
 
   useEffect(() => {
     if (ready && frameRef.current) sceneRef.current?.setFrame(frameRef.current)
   }, [ready, hideBalance])
 
-  // 宠物切换 / 动作 / 心情
+  // 角色切换：见面打招呼（挥手 + 自报家门）
   useEffect(() => {
     sceneRef.current?.setPet(pet.id)
-    // 见面打招呼：挥手（场景播 wave）+ 自报家门（泡泡）
     sceneRef.current?.setAction('happy', 1700)
     showBubble(`你好，我是${pet.name}～`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pet.id])
-
-  useEffect(() => {
-    sceneRef.current?.setStats({
-      mood: petMood(pet),
-      affection: pet.affection,
-      fullness: pet.fullness
-    })
-  }, [pet.affection, pet.fullness, pet.level, pet.id, pet.name])
 
   useEffect(() => {
     if (!actionSeq) return
@@ -169,7 +165,7 @@ export function PetBall({
     return () => window.clearTimeout(t)
   }, [pet.id, ready])
 
-  // 测试钩子：让 --uitest / --shots 能读到球的真实像素范围与命中框
+  // 测试钩子：让 --uitest / --shots 能读到真实像素范围与命中区
   useEffect(() => {
     // ⚠️ 返回值必须是「可结构化克隆」的纯数据：里面塞函数会让 executeJavaScript
     //    的结果无法回传（报 An object could not be cloned）。调试用的操作型钩子
@@ -177,25 +173,21 @@ export function PetBall({
     const w = window as unknown as {
       __bd_ball?: () => unknown
       __bd_hide?: (i: number, on: boolean) => void
-      __bd_pin?: (x: number, z: number) => void
     }
     w.__bd_ball = () => ({
-      rect: sceneRef.current?.ballRect() ?? null,
-      center: sceneRef.current?.ballCenter() ?? null,
-      roamArea: sceneRef.current?.roamArea() ?? null,
-      walker: sceneRef.current?.walkerPos() ?? null,
+      rect: sceneRef.current?.hitRect() ?? null,
+      center: sceneRef.current?.hitCenter() ?? null,
       rootMotion: sceneRef.current?.rootMotion() ?? null,
+      perf: sceneRef.current?.perf() ?? null,
       measure: sceneRef.current?.measure() ?? null,
       petReady: sceneRef.current?.petReady() ?? false,
       dump: sceneRef.current?.dump() ?? [],
       frame: frameRef.current
     })
     w.__bd_hide = (i, on) => sceneRef.current?.hideIndex(i, on)
-    w.__bd_pin = (x, z) => sceneRef.current?.setPin(x, z)
     return () => {
       delete w.__bd_ball
       delete w.__bd_hide
-      delete w.__bd_pin
     }
   }, [ready])
 
@@ -207,22 +199,22 @@ export function PetBall({
     return () => obs.disconnect()
   }, [])
 
-  // 鼠标在球上时停步（主进程轮询回传）
+  // 鼠标停在主体上时通知场景（主进程轮询回传，用于 hover 反馈）
   useEffect(() => {
     return window.api.onPetCursor?.((over) => setHover(over)) ?? (() => {})
   }, [])
 
-  // 点击穿透：把球的屏幕矩形报给主进程（漫游区里只有球那块区域接收鼠标）
+  // 点击穿透：把主体的屏幕矩形报给主进程（窗口里只有那一块接收鼠标）
   const reportHit = useCallback(() => {
     const handle = sceneRef.current
     if (!handle) {
       // 2D 圆点：窗口正中一个 60×60 的可点区域
-      const w = hostRef.current?.clientWidth ?? ROAM_VIEW.width
-      const h = hostRef.current?.clientHeight ?? ROAM_VIEW.height
+      const w = hostRef.current?.clientWidth ?? FIGURE_VIEW.width
+      const h = hostRef.current?.clientHeight ?? FIGURE_VIEW.height
       window.api.setPetHitbox({ x: w / 2 - 30, y: h / 2 - 30, width: 60, height: 60 })
       return
     }
-    const r = handle.ballRect()
+    const r = handle.hitRect()
     const pad = 6
     window.api.setPetHitbox({
       x: r.x - pad,
@@ -234,21 +226,30 @@ export function PetBall({
 
   useEffect(() => {
     reportHit()
-    // 球在漫游区内会移动 → 命中框需要持续刷新（90ms 与主进程光标轮询同频）
+    // 命中区随视口（scene 的 ResizeObserver）变化 → 持续刷新（90ms 与主进程光标轮询同频）。
+    // 同一个矩形同时喂给覆盖层锚点：中心 + 半宽/半高，一处口径。
     const t = window.setInterval(() => {
       reportHit()
       const h = sceneRef.current
       if (!h) return
-      const c = h.ballCenter()
+      const r = h.hitRect()
+      const c = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
       setCenter((prev) => (Math.abs(prev.x - c.x) < 0.5 && Math.abs(prev.y - c.y) < 0.5 ? prev : c))
-      setBallR((prev) => (Math.abs(prev - h.ballRect().width / 2) < 0.5 ? prev : h.ballRect().width / 2))
-      if (debugRing) {
-        const r = h.ballRect()
-        setRingBox({ x: r.x + r.width / 2, y: r.y + r.height / 2, size: r.width })
+      setHalf((prev) =>
+        Math.abs(prev.w - r.width / 2) < 0.5 && Math.abs(prev.h - r.height / 2) < 0.5
+          ? prev
+          : { w: r.width / 2, h: r.height / 2 }
+      )
+      const host = hostRef.current
+      if (host) {
+        const w = host.clientWidth
+        const h = host.clientHeight
+        setViewSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
       }
+      if (debugRing) setRingBox({ x: r.x, y: r.y, w: r.width, h: r.height })
     }, 90)
     return () => window.clearInterval(t)
-  }, [ready, roam, reportHit, debugRing])
+  }, [ready, figure, reportHit, debugRing])
 
   // ─── 轮播 ───────────────────────────────────────────────────────────────────
   const snaps = useMemo(() => [...state.snapshots].sort((a, b) => severityRank(a) - severityRank(b)), [state.snapshots])
@@ -279,12 +280,12 @@ export function PetBall({
   const label = s?.name ?? ''
 
   /**
-   * 覆盖层锚点横向夹紧（R8）：球会走到漫游区两侧（反算出的 ±halfX 在 320px 窗口里约 ±110px），
-   * 而 .petball 是 overflow:hidden —— 不夹的话贴边帧会被切成半截。
+   * 覆盖层锚点横向夹紧（R8）：主体可能投影到窗口两侧，而 .petball 是 overflow:hidden ——
+   * 不夹的话贴边帧会被切成半截。
    * pad 取该元素 CSS 里保证的半宽上界（caption max-width 140 → 70；bubble max-width 190+padding → 106）。
    */
   const clampX = (x: number, pad: number): number => {
-    const w = hostRef.current?.clientWidth ?? ROAM_VIEW.width
+    const w = hostRef.current?.clientWidth ?? FIGURE_VIEW.width
     return Math.min(Math.max(x, pad), w - pad)
   }
 
@@ -306,16 +307,16 @@ export function PetBall({
     sceneRef.current?.setPaused(renaming)
   }, [renaming])
 
-  // 真人系余额播报：每 90s 冒一次主指标泡泡（value 已含余额显隐与诚实口径）。
-  // 数据变化会重置计时（新数据值得先播），切走真人系即停。
+  // 余额播报：每 90s 冒一次主指标泡泡（value 已含余额显隐与诚实口径）。
+  // 数据变化会重置计时（新数据值得先播），球形态（没有人可以说话）即停。
   useEffect(() => {
-    if (!roam || failed) return
+    if (!figure || failed) return
     if (!s || s.status !== 'ok') return
     const stale = isStale(s) ? (s.dataQuality === 'cached' ? '（缓存）' : '（估算）') : ''
     const text = `${label} ${value}${stale}`
     const t = window.setTimeout(() => showBubble(text), 90_000)
     return () => window.clearTimeout(t)
-  }, [pet.id, roam, failed, s, value, label])
+  }, [pet.id, figure, failed, s, value, label])
 
   // ─── 交互 ───────────────────────────────────────────────────────────────────
   const clearHold = (): void => {
@@ -451,11 +452,11 @@ export function PetBall({
     <div
       className={`petball lvl-${lvl}${hover ? ' hover' : ''}${failed ? ' no3d' : ''}`}
       data-pet={pet.id}
-      data-roam={roam ? '1' : '0'}
+      data-figure={figure ? '1' : '0'}
     >
       <div className="petball-stage" ref={hostRef} />
 
-      {/* 球以外的窗口区域不接收鼠标：命中层只覆盖球的投影范围 */}
+      {/* 主体以外的窗口区域不接收鼠标：命中层只覆盖 scene 上报的那块投影范围 */}
       <div
         className="petball-hit"
         ref={hitRef}
@@ -500,8 +501,8 @@ export function PetBall({
       )}
 
       {/* 球心数值（DOM 而非 WebGL 文字：透明窗口下更清晰，且随皮肤换色） */}
-      {/* 数值：球形态放回环心（宠物形态环心被角色占用 → 移到球下方胶囊） */}
-      {!failed && !roam && (
+      {/* 数值：球形态放回环心；人物形态环心被人物占着 → 只走下方胶囊 */}
+      {!failed && !figure && (
         <div
           className={`petball-center-value${value.length > 5 ? ' small' : ''}`}
           style={{ left: center.x, top: center.y }}
@@ -512,11 +513,15 @@ export function PetBall({
       )}
       {!failed && (
         <div
-          className={`petball-caption${roam ? '' : ' sub'}`}
-          style={{ left: clampX(center.x, 70), top: center.y + ballR + (roam ? 22 : 18) }}
+          className={`petball-caption${figure ? '' : ' sub'}`}
+          style={{
+            left: clampX(center.x, 70),
+            // 人物形态：贴窗口底边（主体几乎占满窗口，按半身高推会溢出被切）
+            top: figure ? viewSize.h - 40 : center.y + half.h + 18
+          }}
           aria-hidden="true"
         >
-          {roam && <span className={`petball-value${value.length > 5 ? ' small' : ''}`}>{value}</span>}
+          {figure && <span className={`petball-value${value.length > 5 ? ' small' : ''}`}>{value}</span>}
           {label && <span className="petball-label">{label}</span>}
           {count > 1 && (
             <span className="petball-dots">
@@ -528,29 +533,37 @@ export function PetBall({
         </div>
       )}
 
-      {debugRing && ringBox.size > 0 && (
+      {debugRing && ringBox.w > 0 && (
         <div
           className="petball-debugring"
-          style={{ left: ringBox.x, top: ringBox.y, width: ringBox.size, height: ringBox.size }}
+          style={{
+            left: ringBox.x,
+            top: ringBox.y,
+            width: ringBox.w,
+            height: ringBox.h,
+            // 球形态画圆核对投影，人物形态画方框核对包围盒
+            borderRadius: figure ? 10 : '50%'
+          }}
           aria-hidden="true"
         />
       )}
       {toast && <div className="petball-toast">{toast}</div>}
       {bubble && (
-        // 锚点是泡泡底边（translate(-50%,-100%)）：球上方只剩 ~50px，两行文案高 46px，
+        // 锚点是泡泡底边（translate(-50%,-100%)）：主体上方留白有限，两行文案高 46px，
         // 所以上移量最多 4 再按高度兜底，否则第一行被窗口顶切掉（R8）
         <div
           className="petball-bubble"
-          style={{ left: clampX(center.x, 95), top: Math.max(46, center.y - ballR - 4) }}
+          style={{ left: clampX(center.x, 95), top: Math.max(46, center.y - half.h - 4) }}
           aria-hidden="true"
         >
           {bubble}
         </div>
       )}
-      {isStale(s ?? {}) && roam && !failed && (
+      {isStale(s ?? {}) && figure && !failed && (
+        // 角标贴主体右上（人物形态落在肩侧、球形态落在球缘）
         <div
           className="petball-badge"
-          style={{ left: clampX(center.x + ballR * 0.6, 8), top: center.y - ballR * 0.6 }}
+          style={{ left: clampX(center.x + half.w * 0.62, 8), top: center.y - half.h * 0.62 }}
           aria-hidden="true"
         >
           <Icon name={s?.dataQuality === 'local' ? 'flask' : 'history'} size={9} />
