@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PETS, expNeed, isHumanPet, petMeta, petMood, type PetId, type PetState } from '../../shared/pet'
-import { petThumbnail } from './pet3d/thumbnail'
+import { PETS, expNeed, petMeta, petMood, type PetId, type PetState } from '../../shared/pet'
 import { Icon } from './components'
 import type { PetActionResult } from '../../shared/pet'
 
@@ -75,13 +74,13 @@ export function PetSection({
   }, [editing])
 
   // 逐只渲染缩略图（串行：一次只占一个 WebGL 上下文，渲染完即释放）。
-  // 真人系直接用采集期的 preview.png（bd-asset 协议直显，不占 WebGL 上下文）。
+  // 缩略图用采集期的 preview.png（bd-asset 协议直显，不占 WebGL 上下文）。
   useEffect(() => {
     let alive = true
     void (async () => {
       for (const p of PETS) {
         try {
-          const url = isHumanPet(p.id) ? `bd-asset://${p.id}/preview.png` : await petThumbnail(p.id, 128)
+          const url = `bd-asset://${p.id}/preview.png`
           if (!alive) return
           setThumbs((prev) => ({ ...prev, [p.id]: url }))
         } catch {

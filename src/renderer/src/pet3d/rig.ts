@@ -23,8 +23,6 @@ export const CAM_PITCH = 34
 /** 相机高度（= 注视点 + 俯角） */
 export const CAM_Y = BALL_CENTER_Y + CAM_PITCH
 
-/** 角色在球内的目标高度（世界单位） */
-export const PET_HEIGHT = 26
 /** 真人系角色在球内的目标高度（世界单位）：细高体型，比 Q 版高一截，ballshot 核对 */
 export const HUMAN_HEIGHT = 36
 

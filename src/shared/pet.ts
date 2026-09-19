@@ -7,26 +7,28 @@
 //   · 成长：经验 → 等级（升级所需经验随等级增长）
 //   · 持久化：encode/decode 为单行 JSON，存 extras.ui:petState；导出/导入即数据迁移
 //
-// 内置 8 只为 CC0 Q 版 3D 素材（见 renderer/pet3d/models.ts）；
-// aria/ray 为 MIT 真人系骨骼模型（Microsoft Rocketbox，见 renderer/pet3d/human.ts）。
+// 角色是**数字人**：MIT 真人系骨骼模型（Microsoft Rocketbox，见 renderer/pet3d/human.ts）。
+// 原 8 只 CC0 Q 版动物（Kenney Cube Pets）已下线 —— 用户要求只保留真人助理，
+// 旧角色的养成进度由 LEGACY_PET_IDS 迁到现役角色，不丢数据。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type PetId =
-  | 'mochi'
-  | 'shiba'
-  | 'penguin'
-  | 'fox'
-  | 'panda'
-  | 'bunny'
-  | 'koala'
-  | 'tiger'
-  | 'aria'
-  | 'ray'
+export type PetId = 'aria' | 'ray'
 
-/** 旧版角色 id → 现役角色（早期自绘精灵换成了 CC0 3D 素材，保留用户的养成进度） */
+/**
+ * 旧版角色 id → 现役角色：保住用户的养成进度（等级/亲密度不清零）。
+ * 含早期自绘精灵（dino/slime）与已下线的 8 只 Q 版动物。
+ */
 export const LEGACY_PET_IDS: Record<string, PetId> = {
-  dino: 'fox',
-  slime: 'bunny'
+  dino: 'aria',
+  slime: 'aria',
+  mochi: 'aria',
+  shiba: 'aria',
+  penguin: 'aria',
+  fox: 'aria',
+  panda: 'aria',
+  bunny: 'aria',
+  koala: 'aria',
+  tiger: 'aria'
 }
 
 export interface PetMeta {
@@ -40,22 +42,9 @@ export interface PetMeta {
 }
 
 export const PETS: PetMeta[] = [
-  { id: 'mochi', name: '麻薯猫', desc: '软乎乎的方块猫，最爱蹭屏幕', trick: '歪头蹭蹭' },
-  { id: 'shiba', name: '豆柴', desc: '热情的小柴犬，一叫就摇尾巴', trick: '原地转圈' },
-  { id: 'penguin', name: '企鹅仔', desc: '肚子圆滚滚的打工企鹅', trick: '拍拍小翅膀' },
-  { id: 'fox', name: '小狐狸', desc: '机灵的橘狐狸，走路带风', trick: '竖耳张望' },
-  { id: 'panda', name: '熊猫团子', desc: '抱着竹子就能睡着', trick: '团成球' },
-  { id: 'bunny', name: '兔兔', desc: '耳朵会抖的小白兔', trick: '蹦蹦跳跳' },
-  { id: 'koala', name: '考拉', desc: '慢半拍的抱树专家', trick: '抱紧不放' },
-  { id: 'tiger', name: '小老虎', desc: '条纹小老虎，其实很温柔', trick: '伸个懒腰' },
   { id: 'aria', name: 'Aria', desc: '干练的商务助理，汇报额度从不含糊', trick: '挥手问好' },
   { id: 'ray', name: 'Ray', desc: '沉稳的商务助理，走路带风', trick: '挥手问好' }
 ]
-
-/** 是否真人系宠物（Rocketbox 骨骼模型，走 human.ts 分支；其余走无骨骼 models.ts 分支） */
-export function isHumanPet(id: PetId): id is 'aria' | 'ray' {
-  return id === 'aria' || id === 'ray'
-}
 
 export function petMeta(id: PetId): PetMeta {
   return PETS.find((p) => p.id === id) ?? PETS[0]
@@ -107,7 +96,7 @@ export function expNeed(level: number): number {
   return 30 + Math.max(1, level) * 20
 }
 
-export function defaultPetState(id: PetId = 'mochi', now = Date.now()): PetState {
+export function defaultPetState(id: PetId = 'aria', now = Date.now()): PetState {
   return {
     version: 1,
     id,

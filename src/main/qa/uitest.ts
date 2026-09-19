@@ -23,7 +23,24 @@ export async function runUiTest(
   const autostartDir = join(app.getPath('temp'), 'balancedeck-uitest-autostart')
   process.env.BALANCEDECK_AUTOSTART_DIR = autostartDir
   const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
-  const exec = (js: string): Promise<unknown> => win.webContents.executeJavaScript(js, true)
+  /**
+   * 执行渲染层脚本。**失败不抛**：页面脚本抛错时 executeJavaScript 会 reject，
+   * 若让它冒泡，整轮断言就永远打不出结果（表现为"卡死"，实际只是某一条挂了）。
+   * 这里把错误记下来、返回 null，让调用方的断言自然变成 fail:xxx。
+   */
+  const execErrors: string[] = []
+  const exec = async (js: string): Promise<unknown> => {
+    try {
+      return await win.webContents.executeJavaScript(js, true)
+    } catch (e) {
+      // 连**是哪段脚本**一起记下来：否则只剩一句 "Script failed to execute"，
+      // 根本定位不到是哪一步（这次就为此白等过一轮 20 分钟）
+      const msg = `${String(e).split('\n')[0].slice(0, 80)} ← ${js.replace(/\s+/g, ' ').slice(0, 90)}`
+      execErrors.push(msg)
+      if (process.env.BD_TRACE === '1') process.stdout.write(`[uitest] exec 失败: ${msg}\n`)
+      return null
+    }
+  }
   const bounds = (): Electron.Rectangle => win.getBounds()
   /** 收起态的窗口是 320×230 漫游区，球在正中：点击 = 点命中层中心 */
   const ballCenterJs = `(()=>{
@@ -245,9 +262,11 @@ export async function runUiTest(
   // 还原默认（避免影响后续轮次）
   await exec(`(()=>{
     const sel=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='10'))
+    if(!sel) return 'no-select'   // 没有就别硬调原生 setter：对 undefined 调 .call 会抛 Illegal invocation
     const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
     setter.call(sel,'60')
     sel.dispatchEvent(new Event('change',{bubbles:true}))
+    return 'restored'
   })()`)
   await sleep(600)
   r.settingsSave = consoleErrors.length === 0 ? 'ok' : `console-errors:${consoleErrors.length}`
@@ -358,15 +377,15 @@ export async function runUiTest(
   // 设置页宠物分区：撸一把 / 喂食 / 换一只 / 桌面宠物开关
   await exec(footerClick('设置'))
   await sleep(700)
-  r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 10"))
+  r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 2"))
     ? 'ok'
     : 'fail:no-section'
   // 角色缩略图由 3D 素材渲染（异步）：等它们出来
   for (let i = 0; i < 40; i++) {
-    if ((await exec("document.querySelectorAll('.pet-chip img').length === 10")) === true) break
+    if ((await exec("document.querySelectorAll('.pet-chip img').length === 2")) === true) break
     await sleep(400)
   }
-  r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 10")) ? 'ok' : 'fail:no-thumbs'
+  r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 2")) ? 'ok' : 'fail:no-thumbs'
   const clickPetAction = (label: string): Promise<unknown> =>
     exec(
       `[...document.querySelectorAll('.pet-sec .pet-actions .btn-secondary')].find(b=>b.textContent.includes('${label}'))?.click()`
@@ -762,6 +781,7 @@ export async function runUiTest(
   }
 
   r.consoleErrors = consoleErrors.length === 0 ? 'none' : consoleErrors.join(' | ').slice(0, 300)
+  r.execErrors = execErrors.length === 0 ? 'none' : execErrors.join(' | ').slice(0, 300)
   return r
 }
 

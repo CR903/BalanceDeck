@@ -156,13 +156,13 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await sleep(500)
 
   // 逐只角色各拍一张（3D 素材观感）
-  const species = ['shiba', 'penguin', 'fox', 'panda']
+  const species = ['aria', 'ray']
   for (let i = 0; i < species.length; i++) {
     await exec('window.api.expand()')
     await sleep(700)
     await exec(openSettings)
     await sleep(700)
-    await exec(`document.querySelectorAll('.pet-chip')[${[1, 2, 3, 4][i]}]?.click()`)
+    await exec(`document.querySelectorAll('.pet-chip')[${[0, 1][i]}]?.click()`)
     await sleep(500)
     await exec(backBtn)
     await sleep(400)

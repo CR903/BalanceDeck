@@ -1,9 +1,7 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { PetId, PetMood } from '../../../shared/pet'
-import { isHumanPet } from '../../../shared/pet'
 import { ROAM_VIEW } from '../../../shared/pet-view'
-import { hasPetModel, instantiatePet } from './models'
 import { instantiateHuman, HUMAN_YAW, type HumanClip } from './human'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
 import { fitRoamArea, sphereNdcHalf } from './viewfit'
@@ -17,7 +15,6 @@ import {
   CAM_PITCH,
   CAM_Y,
   HUMAN_HEIGHT,
-  PET_HEIGHT,
   RING_HALO_TUBE,
   RING_R,
   RING_TUBE,
@@ -403,7 +400,6 @@ export function createPet3dScene(
   const attachPet = async (want: PetId): Promise<void> => {
     const token = ++loadToken
     try {
-      if (isHumanPet(want)) {
         // 真人系：骨骼模型 + mixer，失败只留球体（与 legacy 同样的兜底姿态）
         const inst = await instantiateHuman(want, HUMAN_HEIGHT)
         if (token !== loadToken) {
@@ -437,22 +433,6 @@ export function createPet3dScene(
           console.warn('[pet3d] 真人动作绑定缺失节点：', inst.unbound.join(','))
         }
         return
-      }
-      if (!hasPetModel(want)) return
-      const inst = await instantiatePet(want, PET_HEIGHT)
-      if (token !== loadToken) {
-        inst.dispose()
-        return
-      }
-      disposeCurrentPet()
-      // 动画层与归一化层分离：inst.group 自带「缩放/居中」变换，
-      // 动画只动外层容器，不会把归一化缩放覆盖掉（曾因此把模型缩回原始尺寸而看不见）
-      const anim = new THREE.Group()
-      anim.add(inst.group)
-      petHolder = anim
-      petHolder.visible = roam
-      petGroup.add(petHolder)
-      refitArea()
     } catch (e) {
       // 素材加载失败：只留球体，不影响 KPI（再次切换宠物会重试）
       console.error('[pet3d] 宠物模型加载失败：', e)
@@ -548,7 +528,7 @@ export function createPet3dScene(
    */
   const bodySilhouette = (): { radius: number; centerY: number } => {
     const feetY = BALL_CENTER_Y - BALL_RADIUS + 7
-    const h = isHumanPet(petId) ? HUMAN_HEIGHT : PET_HEIGHT
+    const h = HUMAN_HEIGHT
     if (!petHolder) return { radius: h * 0.62, centerY: feetY + h / 2 }
     const box = new THREE.Box3().setFromObject(petHolder)
     const size = box.getSize(new THREE.Vector3())
@@ -809,21 +789,26 @@ export function createPet3dScene(
     petReady: () => petHolder !== null,
     /** 播放宠物动画（供 App.tsx 调用） */
     playAnim: async (animName: HumanClip, durationSec: number): Promise<void> => {
-      if (!human) return
+      // 抓住当前实例：await 期间模型可能被销毁或换掉（human 会被置 null），
+      // 之后再解引用就会抛 "Cannot read properties of null (reading 'actions')"，
+      // 而且是 unhandled rejection（调用方是 fire-and-forget 的动效）。
+      const inst = human
+      if (!inst) return
       // 停止当前所有动作
-      human.actions.idle.stop()
-      human.actions.walk.stop()
+      inst.actions.idle.stop()
+      inst.actions.walk.stop()
       // 播放指定动作
-      const action = human.actions[animName]
+      const action = inst.actions[animName]
       action.reset()
       action.clampWhenFinished = true
       action.play()
       action.setLoop(THREE.LoopOnce, 1)
       // 等待动画播放完成
       await new Promise((resolve) => setTimeout(resolve, durationSec * 1000))
-      // 回到 idle
-      human.actions.idle.reset()
-      human.actions.idle.play()
+      // 回到 idle —— 先确认实例还在（被换掉就什么都不做）
+      if (inst !== human) return
+      inst.actions.idle.reset()
+      inst.actions.idle.play()
     },
     hideIndex: (i, on) => {
       let n = 0

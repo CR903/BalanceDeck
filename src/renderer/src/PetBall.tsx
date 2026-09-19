@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
-import { petMood, isHumanPet, type PetId, type PetState } from '../../shared/pet'
+import { petMood, type PetId, type PetState } from '../../shared/pet'
 import { ROAM_VIEW } from '../../shared/pet-view'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
@@ -144,11 +144,9 @@ export function PetBall({
   // 宠物切换 / 动作 / 心情
   useEffect(() => {
     sceneRef.current?.setPet(pet.id)
-    // 真人系见面打招呼：挥手（场景播 wave）+ 自报家门（泡泡）
-    if (isHumanPet(pet.id)) {
-      sceneRef.current?.setAction('happy', 1700)
-      showBubble(`你好，我是${pet.name}～`)
-    }
+    // 见面打招呼：挥手（场景播 wave）+ 自报家门（泡泡）
+    sceneRef.current?.setAction('happy', 1700)
+    showBubble(`你好，我是${pet.name}～`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pet.id])
 
@@ -311,7 +309,7 @@ export function PetBall({
   // 真人系余额播报：每 90s 冒一次主指标泡泡（value 已含余额显隐与诚实口径）。
   // 数据变化会重置计时（新数据值得先播），切走真人系即停。
   useEffect(() => {
-    if (!isHumanPet(pet.id) || !roam || failed) return
+    if (!roam || failed) return
     if (!s || s.status !== 'ok') return
     const stale = isStale(s) ? (s.dataQuality === 'cached' ? '（缓存）' : '（估算）') : ''
     const text = `${label} ${value}${stale}`
@@ -361,14 +359,9 @@ export function PetBall({
     }
     petCoolUntil.current = now + 5000
     const r = onPet()
-    // 真人系长按 = 挥手回应（wave 由父级 action 驱动），配泡泡不配 toast
-    if (isHumanPet(petRef.current.id)) {
-      if (r.levelUps > 0) showBubble(`升级！Lv.${petRef.current.level + r.levelUps}`)
-      else showBubble('好舒服～')
-      return
-    }
-    if (r.levelUps > 0) showToast(`升级！Lv.${pet.level + r.levelUps}`)
-    else showToast('好舒服～')
+    // 长按 = 挥手回应（wave 由父级 action 驱动），配泡泡不配 toast
+    if (r.levelUps > 0) showBubble(`升级！Lv.${petRef.current.level + r.levelUps}`)
+    else showBubble('好舒服～')
   }
 
   const onPointerDown = (e: React.PointerEvent): void => {

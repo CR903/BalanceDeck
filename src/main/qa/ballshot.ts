@@ -33,7 +33,7 @@ export async function runBallshot(): Promise<void> {
     }
     // BD_PET=1：确保「桌面宠物」形态开启后再收起（默认拍球形态）
     // BD_PET_ID=<id>：顺带在设置页换成指定角色（只换一只；逐只请用多次调用，见 BD_PETS 的上下文限制）
-    const PET_IDS = ['mochi', 'shiba', 'penguin', 'fox', 'panda', 'bunny', 'koala', 'tiger', 'aria', 'ray']
+    const PET_IDS = ['aria', 'ray']
     const pickPet = process.env.BD_PET_ID ?? ''
     const wantPet = process.env.BD_PET === '1' || pickPet !== ''
     const openSettings = `[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()`
@@ -202,7 +202,7 @@ export async function runBallshot(): Promise<void> {
     }
     // BD_PETS=1：逐只角色各拍一张（核对 3D 素材观感）
     if (process.env.BD_PETS === '1') {
-      const ids = ['mochi', 'shiba', 'penguin', 'fox', 'panda', 'bunny', 'koala', 'tiger', 'aria', 'ray']
+      const ids = ['aria', 'ray']
       for (let i = 0; i < ids.length; i++) {
         await win.webContents.executeJavaScript('window.api.expand()', true)
         await new Promise((r) => setTimeout(r, 700))
