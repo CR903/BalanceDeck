@@ -6,7 +6,7 @@ import {
   dragStop,
   setPetHitbox,
   petIgnoreState,
-  setPetMode,
+  setPetFigure,
   setAlwaysOnTopPref,
   petWindowState
 } from './overlay'
@@ -309,8 +309,8 @@ export function registerIpc(): void {
     })
   })
 
-  // 收起态形态：球（默认） ↔ 桌面宠物（球内角色可走动，窗口更大）
-  ipcMain.on('pet:mode', (_e, roam: unknown) => setPetMode(roam === true))
+  // 收起态形态：球（默认） ↔ 个性人物（人物独立站着，窗口更大）
+  ipcMain.on('pet:mode', (_e, figure: unknown) => setPetFigure(figure === true))
 
   // 总在最前：关闭后窗口不再悬浮于其它窗口之上
   ipcMain.on('ui:always-on-top', (_e, on: unknown) => setAlwaysOnTopPref(on !== false))

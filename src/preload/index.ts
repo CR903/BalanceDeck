@@ -76,27 +76,28 @@ const api = {
   exportPet: (payload: string): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:export', payload),
   importPet: (): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:import'),
 
-  // ─── 悬浮球（3D 桌面宠物）──────────────────────────────────────────────────
+  // ─── 收起态 3D 悬浮物（球 / 个性人物）──────────────────────────────────────
   /** 右键菜单：把菜单模型交给主进程弹原生菜单，回传选中项 id（未选中返回 null） */
   petMenu: (model: PetMenuModel): Promise<string | null> => ipcRenderer.invoke('pet:menu', model),
-  /** 收起态形态：true = 3D 桌面宠物（漫游区），false = 3D 悬浮球 */
-  setPetMode: (roam: boolean): void => ipcRenderer.send('pet:mode', roam === true),
+  /** 收起态形态：true = 个性人物（人物独立站着），false = 3D 悬浮球 */
+  setPetFigure: (figure: boolean): void => ipcRenderer.send('pet:mode', figure === true),
   /** 总在最前开关 */
   setAlwaysOnTop: (on: boolean): void => ipcRenderer.send('ui:always-on-top', on !== false),
-  /** 命中框（窗口内 CSS 像素）：球以外的区域由主进程设为鼠标穿透 */
+  /** 命中框（窗口内 CSS 像素）：主体以外的区域由主进程设为鼠标穿透 */
   setPetHitbox: (rect: PetHitbox): void => ipcRenderer.send('pet:hitbox', rect),
-  /** 测试观测点：穿透/漫游状态（仅测试模式注册） */
+  /** 测试观测点：穿透/光标轮询状态（仅测试模式注册） */
   debugPetState: (): Promise<{
     ignore: boolean
     collapsed: boolean
+    /** 光标轮询是否在跑（= 收起态） */
     roaming: boolean
     shadow: boolean
-    roam: boolean
+    figure: boolean
     alwaysOnTop: boolean
   }> =>
     ipcRenderer.invoke('debug:pet-state'),
   /** 测试观测点：设置置顶（仅测试模式注册） */
-  debugSetTop: (on: boolean): Promise<{ roam: boolean; alwaysOnTop: boolean }> =>
+  debugSetTop: (on: boolean): Promise<{ figure: boolean; alwaysOnTop: boolean }> =>
     ipcRenderer.invoke('debug:set-top', on),
   /** 光标是否悬停在球上（主进程轮询回传） */
   onPetCursor: (cb: (over: boolean) => void): (() => void) => {

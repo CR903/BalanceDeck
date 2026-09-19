@@ -1,30 +1,30 @@
 import { BrowserWindow, screen, app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { BALL_VIEW, ROAM_VIEW } from '../shared/pet-view'
+import { BALL_VIEW, FIGURE_VIEW } from '../shared/pet-view'
 
-// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 3D 桌面宠物球。
+// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 3D 悬浮球／个性人物。
 // 位置持久化在 userData/state.json。
 //
-// 收起态不是「56px 小圆点窗口」，而是一块漫游区（尺寸见 shared/pet-view）：
-//   · 球是唯一的可见物（WebGL 渲染），球以外的像素完全透明；
-//   · 球以外的区域鼠标穿透（光标轮询 + setIgnoreMouseEvents），桌面上点得到下面的窗口；
-//   · 角色在这块区域内自主走动，用户拖动球即拖动窗口（位置持久化）。
+// 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view，窗口尺寸与机位同源）：
+//   · 只有主体可见（WebGL 渲染），其余像素完全透明；
+//   · 主体以外的区域鼠标穿透（光标轮询 + setIgnoreMouseEvents），桌面上点得到下面的窗口；
+//   · 用户拖动主体即拖动窗口（位置持久化）。
 
 const EXPANDED = { width: 384, height: 600 }
 /** 收起态：3D 悬浮球（默认形态；球 + 数值胶囊，窗口贴合球体） */
 const COLLAPSED_BALL = BALL_VIEW
-/** 收起态：3D 桌面宠物（开启后球内角色会在漫游区里走动，需要更大的活动空间） */
-const COLLAPSED_ROAM = ROAM_VIEW
+/** 收起态：个性人物（人物独立站着，竖版窗口才装得下全身并把脸放大） */
+const COLLAPSED_FIGURE = FIGURE_VIEW
 
-/** 当前收起态是否为「桌面宠物」形态（由 preferences 决定，见 primePrefs） */
-let petRoam = false
+/** 当前收起态是否为「个性人物」形态（由 preferences 决定，见 primePrefs） */
+let petFigure = false
 /** 是否总在最前（可关闭；关闭后不再悬浮于其他窗口之上） */
 let alwaysOnTop = true
 
-/** 收起态目标尺寸：球形态 / 桌面宠物形态 */
+/** 收起态目标尺寸：球形态 / 个性人物形态 */
 function collapsedTarget(): { width: number; height: number } {
-  return petRoam ? COLLAPSED_ROAM : COLLAPSED_BALL
+  return petFigure ? COLLAPSED_FIGURE : COLLAPSED_BALL
 }
 
 /**
@@ -35,7 +35,7 @@ export async function primePrefs(): Promise<void> {
   try {
     const { getExtra } = await import('./keystore')
     const pet = await getExtra('ui:pet')
-    petRoam = pet === '1'
+    petFigure = pet === '1'
     const top = await getExtra('ui:alwaysOnTop')
     alwaysOnTop = top !== '0'
   } catch {
@@ -43,10 +43,10 @@ export async function primePrefs(): Promise<void> {
   }
 }
 
-/** 切换收起态形态（渲染层在「桌面宠物」开关变化时调用） */
-export function setPetMode(roam: boolean): void {
-  if (roam === petRoam) return
-  petRoam = roam
+/** 切换收起态形态（渲染层在「个性人物」开关变化时调用） */
+export function setPetFigure(figure: boolean): void {
+  if (figure === petFigure) return
+  petFigure = figure
   if (win && state.collapsed) resizeCollapsed()
 }
 
@@ -63,8 +63,8 @@ function applyAlwaysOnTop(): void {
 }
 
 /** 测试观测点：当前形态与置顶状态 */
-export function petWindowState(): { roam: boolean; alwaysOnTop: boolean } {
-  return { roam: petRoam, alwaysOnTop }
+export function petWindowState(): { figure: boolean; alwaysOnTop: boolean } {
+  return { figure: petFigure, alwaysOnTop }
 }
 
 /** 收起态异步缩放到当前形态的目标尺寸 */
@@ -353,11 +353,11 @@ export function dragStop(): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态：3D 宠物球的鼠标穿透
+// 收起态 3D 主体的鼠标穿透
 //
-// 窗口是一块透明的漫游矩形（尺寸见 shared/pet-view），只有球的位置应该接收鼠标。渲染层把球的
-// 命中框（窗口内 CSS 像素）发过来，这里以光标轮询判断命中：
-//   · 命中 → setIgnoreMouseEvents(false)，球可点/可拖/可右键；
+// 窗口是一块透明小窗（尺寸见 shared/pet-view），只有主体的位置应该接收鼠标。渲染层把主体
+// 的命中区（窗口内 CSS 像素）发过来，这里以光标轮询判断命中：
+//   · 命中 → setIgnoreMouseEvents(false)，主体可点/可拖/可右键；
 //   · 未命中 → setIgnoreMouseEvents(true, { forward: true })，事件穿透到桌面。
 // 轮询只在「收起态」运行，展开面板时立即停止（卡片本身要完整接收鼠标）。
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -375,7 +375,7 @@ export function setPetHitbox(rect: { x: number; y: number; width: number; height
 }
 
 /** 命中判定：窗口内 CSS 像素坐标 → 屏幕坐标（窗口无边框，加上窗口位置即可） */
-function cursorInsideBall(cursor: Electron.Point, b: Electron.Rectangle): boolean {
+function cursorInsideHit(cursor: Electron.Point, b: Electron.Rectangle): boolean {
   if (!hitbox) return false
   // Electron 的 getBounds / 光标点与渲染层 CSS 像素同为 DIP，直接相减即可
   const x = cursor.x - b.x
@@ -390,7 +390,7 @@ function tickCursorWatch(): void {
     const b = win.getBounds()
     const cursor = screen.getCursorScreenPoint()
     if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) return
-    const over = cursorInsideBall(cursor, b)
+    const over = cursorInsideHit(cursor, b)
     if (over !== cursorOver) {
       cursorOver = over
       win.webContents.send('pet:cursor', over)

@@ -69,9 +69,9 @@ export default function App(): React.JSX.Element {
   const [pet, setPet] = useState<PetState>(() => defaultPetState())
   const petRef = useRef(pet)
   petRef.current = pet
-  /** 收起态是否作为 3D 桌面宠物（ui:pet）：关闭后收起态退回 2D 圆点 */
+  /** 收起态形态（ui:pet）：true = 个性人物（人物独立站着），false = 默认的悬浮球 */
   const [petOn, setPetOn] = useState(true)
-  /** 悬浮球是否显示用量环（ui:petRing） */
+  /** 悬浮球是否显示用量环（ui:petRing；个性人物形态本就没有环） */
   const [petRing, setPetRing] = useState(true)
   /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
   const [alwaysTop, setAlwaysTop] = useState(true)
@@ -151,7 +151,7 @@ export default function App(): React.JSX.Element {
     setPet(s)
     persistPet(s)
   }
-  /** 收起态是否显示 3D 桌面宠物（关闭 = 退回 2D 圆点） */
+  /** 收起态是否显示个性人物（关闭 = 悬浮球） */
   const togglePetBall = (on: boolean): void => {
     setPetOn(on)
     void window.api.setExtras({ 'ui:pet': on ? '1' : '0' })
@@ -291,7 +291,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
-      // 默认是 3D 悬浮球；只有用户显式开启（'1'）才是 3D 桌面宠物
+      // 默认是 3D 悬浮球；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
       setPetRing(e['ui:petRing'] !== '0')
@@ -312,9 +312,9 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
-  // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 桌面宠物（更大漫游区）
+  // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 个性人物（竖版窗口）
   useEffect(() => {
-    window.api.setPetMode(petOn)
+    window.api.setPetFigure(petOn)
     // petOn 变化时触发动画
     if (petOn) {
       // 延迟一点播放进场动画，等场景初始化完成
@@ -460,7 +460,7 @@ export default function App(): React.JSX.Element {
         {collapsed ? (
           <PetBall
             pet={pet}
-            roam={petOn}
+            figure={petOn}
             hideBalance={hideBalance}
             action={petAction}
             actionSeq={actionSeq}

@@ -7,7 +7,7 @@ import type { PetActionResult } from '../../shared/pet'
 // 设置页「宠物」分区
 //
 // 面板不再常驻宠物卡（主面板只放 KPI），宠物的一切管理都收在这里：
-//   · 改名 / 换一只 / 桌面宠物开关（收起态是否以 3D 宠物形态出现）
+//   · 改名 / 换一只 / 个性人物开关（收起态是否以人物形态出现）
 //   · 成长数据（等级 / 亲密度 / 饱食度）与互动（撸一把 / 喂食）
 //   · 数据迁移（导出 / 导入 JSON）
 //
@@ -18,7 +18,7 @@ import type { PetActionResult } from '../../shared/pet'
 export interface PetSectionProps {
   pet: PetState
   petOn: boolean
-  /** 悬浮球是否显示用量环 */
+  /** 悬浮球是否显示用量环（个性人物形态没有环，此项只影响球形态） */
   petRing: boolean
   /** 语音播报开关 */
   voiceOn: boolean
@@ -208,7 +208,7 @@ export function PetSection({
           <button
             type="button"
             className={'switch' + (petOn ? ' on' : '')}
-            title={petOn ? '关闭后收起态只有悬浮球' : '开启后球里住着一只 3D 宠物'}
+            title={petOn ? '关闭后收起态只有悬浮球' : '开启后收起态是这个人，站在桌面上'}
             onClick={() => onTogglePetBall(!petOn)}
           >
             <span className="knob" />
@@ -216,8 +216,8 @@ export function PetSection({
         </div>
         <div className="settings-note">
           {petOn
-            ? '开启中：收起后球里住着这只宠物，它会在球内走动、发呆、打盹；单击展开、拖动移动、长按撸一把、右键菜单。'
-            : '关闭中：收起后是 3D 悬浮球（只有玻璃球与用量环，不加载角色模型）。'}
+            ? '开启中：收起后是这个人站在桌面上（无球壳、无进度环），读数显示在脚下；单击展开、拖动移动、长按撸一把、右键菜单。'
+            : '关闭中：收起后是 3D 悬浮球（玻璃球 + 用量环，不加载人物素材）。'}
         </div>
 
         <div className="enable-row">
@@ -225,7 +225,7 @@ export function PetSection({
           <button
             type="button"
             className={'switch' + (petRing ? ' on' : '')}
-            title={petRing ? '关闭后只剩宠物，不显示 KPI' : '开启后在球上显示用量环'}
+            title={petRing ? '关闭后球上不显示 KPI 环' : '开启后在球上显示用量环（个性人物形态没有环）'}
             onClick={() => onTogglePetRing(!petRing)}
           >
             <span className="knob" />
