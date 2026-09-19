@@ -15,6 +15,11 @@ import { resolve } from 'node:path'
 import * as THREE from 'three'
 import { loadTs } from './lib/load-ts.mjs'
 
+const rig = await loadTs('src/renderer/src/pet3d/rig.ts')
+// 后面「轮廓跨幅」一节直接用这两个常量（值来自 rig，仍是单一来源）
+const BALL_RADIUS = rig.BALL_RADIUS
+const BALL_CENTER_Y = rig.BALL_CENTER_Y
+
 const { MIN_HALF_X, MIN_HALF_Z, fitRoamArea, projectSphere, sphereNdcHalf } = await loadTs(
   'src/renderer/src/pet3d/viewfit.ts'
 )
@@ -37,24 +42,23 @@ function ok(cond, label) {
 }
 
 // ─── 机位与轮廓常量（与 scene.ts 一致；下面第 1 组断言核对没有漂移）────────────
-const BALL_RADIUS = 28
-const BALL_CENTER_Y = BALL_RADIUS + 1.5
-const SHELL = { radius: Math.max(BALL_RADIUS * 1.028, BALL_RADIUS * 0.995 + 1.1, BALL_RADIUS * 0.86 + 1.9 * 1.5), centerY: BALL_CENTER_Y }
+// 机位与轮廓常量从 rig.ts 取 —— 与 scene.ts 同一个来源，漂移在结构上不可能发生
+// （此前这里手抄一份常量、再用正则读 scene.ts 源码核对，那 14 条断言已随本次收口删除）
+const SHELL = { radius: rig.SILHOUETTE_R, centerY: rig.BALL_CENTER_Y }
+const SCENE = {
+  fovDeg: rig.CAM_FOV,
+  camY: rig.CAM_Y,
+  camZ: rig.CAM_DISTANCE,
+  lookY: rig.BALL_CENTER_Y,
+  margin: rig.ROAM_FIT_MARGIN,
+  depthBudget: rig.ROAM_DEPTH_BUDGET
+}
 /**
- * 宠物轮廓：与运行时 bodySilhouette() 同口径 —— 归一化后**实际世界包围盒**的对角线/2 + y 中点。
- * 实测（node 复刻 instantiateHuman 的克隆+归一化，36 世界单位身高）：
- *   aria 25.2×36×6.3 → r=22.19   ray 26.6×36×6.9 → r=22.65（取较大者）
- * 中心 y：脚点 8.5 + 身高一半 ≈ 26.5（运行时 dump 实测 27）。改素材/改身高后要重测，别手调。
+ * 宠物本体的轮廓是**实测值**（随素材而变）：node 里复刻 instantiateHuman 的克隆+归一化后
+ * 量出的世界包围盒对角线/2 与 y 中点。实测 aria 25.2×36×6.3 → r=22.19、ray 26.6×36×6.9 → r=22.65。
+ * **改素材或改身高后必须重测，别手调**（场景侧同一口径见 scene.ts 的 bodySilhouette）。
  */
 const BODY = { radius: 22.65, centerY: 26.5 }
-const SCENE = {
-  fovDeg: 35,
-  camY: BALL_CENTER_Y + 34, // BALL_CENTER_Y + CAM_PITCH
-  camZ: 162,
-  lookY: BALL_CENTER_Y, // 相机注视点 = 球心高度
-  margin: 4,
-  depthBudget: 28
-}
 const view = (viewW, viewH) => ({
   ...SCENE,
   viewW,
@@ -85,22 +89,10 @@ function ndcBox(v, s, x, z) {
 }
 
 // ─── 1. 机位常量与 scene.ts 同源 ─────────────────────────────────────────────
+// 常量本身不再在这里核对：rig.ts 是唯一来源，scene.ts 与 viewfit 都 import 它。
+// 下面保留的是**源码形状**守卫 —— 护的是「故意不这么做」的行为约束（见各条注释）。
 const sceneSrc = readFileSync(resolve('src/renderer/src/pet3d/scene.ts'), 'utf-8')
-const literal = (re, label) => ok(re.test(sceneSrc), `scene.ts 常量未漂移：${label}`)
-literal(/const BALL_RADIUS = 28\b/, 'BALL_RADIUS 28')
-literal(/const CAM_FOV = 35\b/, 'CAM_FOV 35')
-literal(/const CAM_DISTANCE = 162\b/, 'CAM_DISTANCE 162')
-literal(/const CAM_PITCH = 34\b/, 'CAM_PITCH 34')
-literal(/const BALL_CENTER_Y = BALL_RADIUS \+ 1\.5\b/, 'BALL_CENTER_Y')
-literal(/const SHELL_EDGE_R = BALL_RADIUS \* 1\.028\b/, 'SHELL_EDGE_R 1.028')
-literal(/const BAND_R = BALL_RADIUS \* 0\.995\b/, 'BAND_R 0.995')
-literal(/const BAND_TUBE = 1\.1\b/, 'BAND_TUBE 1.1')
-literal(/const RING_R = BALL_RADIUS \* 0\.86\b/, 'RING_R 0.86')
-literal(/const RING_TUBE = 1\.9\b/, 'RING_TUBE 1.9')
-literal(/const RING_HALO_TUBE = RING_TUBE \* 1\.5\b/, 'RING_HALO_TUBE')
-literal(/const ROAM_FIT_MARGIN = 4\b/, 'ROAM_FIT_MARGIN 4')
-literal(/const ROAM_DEPTH_BUDGET = 28\b/, 'ROAM_DEPTH_BUDGET 28（R9 目标 halfZ≈28）')
-literal(/const HUMAN_HEIGHT = 36\b/, 'HUMAN_HEIGHT 36')
+
 // R7（D4'）：球壳与用量环只跟 x、不跟 z —— 写回 z 跟随即回归
 ok(!/shellGroup\.position\.z\s*[-+]?=/.test(sceneSrc), 'R7：shellGroup 不再跟随 z')
 ok(!/ringGroup\.position\.z\s*[-+]?=/.test(sceneSrc), 'R7：ringGroup 不再跟随 z（与壳保持同步）')

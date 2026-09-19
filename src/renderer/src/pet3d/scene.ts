@@ -8,6 +8,25 @@ import { instantiateHuman, HUMAN_YAW, type HumanClip } from './human'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
 import { fitRoamArea, sphereNdcHalf } from './viewfit'
 import {
+  BALL_CENTER_Y,
+  BALL_RADIUS,
+  BAND_R,
+  BAND_TUBE,
+  CAM_DISTANCE,
+  CAM_FOV,
+  CAM_PITCH,
+  CAM_Y,
+  HUMAN_HEIGHT,
+  PET_HEIGHT,
+  RING_HALO_TUBE,
+  RING_R,
+  RING_TUBE,
+  ROAM_DEPTH_BUDGET,
+  ROAM_FIT_MARGIN,
+  SHELL_EDGE_R,
+  SILHOUETTE_R
+} from './rig'
+import {
   DEFAULT_WALKER,
   initialWalker,
   setWalkerAction,
@@ -30,31 +49,7 @@ import {
 // 单位：球外径 56（球心 y = BALL_CENTER_Y），角色脚踩球内底面。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const BALL_RADIUS = 28
-const BALL_CENTER_Y = BALL_RADIUS + 1.5
-/** 相机：把「球 + 球内角色」框进窗口，略俯视以露出球底与阴影 */
-const CAM_DISTANCE = 162
-const CAM_FOV = 35
-/** 相机高出注视点多少（俯角的来源） */
-const CAM_PITCH = 34
-/** 角色在球内的目标高度（世界单位） */
-const PET_HEIGHT = 26
-/** 真人系角色在球内的目标高度（世界单位）：细高体型，比 26 的 Q 版高一截，ballshot 核对 */
-const HUMAN_HEIGHT = 36
-
-const SHELL_EDGE_R = BALL_RADIUS * 1.028
-const BAND_R = BALL_RADIUS * 0.995
-const BAND_TUBE = 1.1
-/**
- * 反算留白（世界单位）：轮廓球的投影按圆处理，但离画面中心越远真实轮廓越是被拉成横椭圆，
- * 实测 320×230 贴边时算宽约 4.7%（≈7px 出界）；4 单位刚好吸收掉该误差。
- */
-const ROAM_FIT_MARGIN = 4
-/**
- * 纵深预算（R9）：球壳停在 z=0 后宠物可以朝镜头方向走 28 个单位，
- * 透视缩放跨度 √(34²+(162−28)²) ↔ √(34²+(162+28)²) ≈ 1.40×（≥1.35× 目标）。
- */
-const ROAM_DEPTH_BUDGET = 28
+// 机位/轮廓常量见 ./rig —— 单一来源，viewfit 与单测都从那里取
 
 interface HumanRuntime {
   mixer: THREE.AnimationMixer
@@ -319,10 +314,6 @@ export function createPet3dScene(
   const ringGroup = new THREE.Group()
   ringGroup.position.set(0, BALL_CENTER_Y, 0)
   scene.add(ringGroup)
-
-  const RING_R = BALL_RADIUS * 0.86
-  const RING_TUBE = 1.9
-  const RING_HALO_TUBE = RING_TUBE * 1.5
   const trackMat = new THREE.MeshBasicMaterial({ color: 0x8a8a94, transparent: true, opacity: 0.42, depthWrite: false })
   const trackRing = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_TUBE * 0.62, 10, 96)), trackMat)
   trackRing.renderOrder = 10
@@ -380,10 +371,6 @@ export function createPet3dScene(
   const halo = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_HALO_TUBE, 8, 80)), haloMat)
   halo.renderOrder = 6
   ringGroup.add(halo)
-
-  /** 反算漫游边界用的轮廓半径：球壳暗边 / 装饰带 / 用量环外沿的最大者（不只 BALL_RADIUS） */
-  const SILHOUETTE_R = Math.max(SHELL_EDGE_R, BAND_R + BAND_TUBE, RING_R + RING_HALO_TUBE)
-
   // ─── 宠物（3D 素材，异步加载 + 程序化位姿动画）──────────────────────────────
   // 角色放在**世界坐标**里（不是球壳的子节点）：球壳以轻微延迟跟随角色移动，
   // 若把角色挂在球壳下再按世界坐标赋值，位置会被叠加两次（角色跑到球外）。
@@ -573,7 +560,7 @@ export function createPet3dScene(
   const refitArea = (): void => {
     const fit = fitRoamArea({
       fovDeg: CAM_FOV,
-      camY: BALL_CENTER_Y + CAM_PITCH,
+      camY: CAM_Y,
       camZ: CAM_DISTANCE,
       lookY: BALL_CENTER_Y,
       viewW: host.clientWidth || ROAM_VIEW.width,
