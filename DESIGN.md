@@ -49,13 +49,14 @@
 │  CardView     主页卡片网格（点击进详情）          │
 │  DetailView   单供应商用量统计（窗口/剩余/tokens/模型）│
 │  SettingsView 供应商增删改 + 外观 + 频率 + 系统    │
-│  PetBall 收起态 3D 悬浮球（桌面宠物）           │
+│  PetBall 收起态 3D 悬浮物（球／个性人物）        │
 │  SkinEngine   皮肤包加载（CSS 变量 + 令牌覆盖）    │
 └───────────────────────────────────────────────┘
 ```
 
 - 悬浮窗：`BrowserWindow{ frame:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, resizable:false }`，拖动区用 `-webkit-app-region: drag`。
-- 收起态：折叠为 56×56 小圆点（显示轮播指标），点击展开。
+- 收起态：折叠成一块小窗（球形态 200×210 贴合球体／个性人物 320×440 竖版），
+  主体以外的区域鼠标穿透，点击展开。
 - 托盘：macOS 用 template 模板图标（**随主供应商切换 logo**），标题平铺展示该供应商的全部时限窗口（`5H 5% W 52.9% M 68.5%`）；**左键直接切换悬浮窗显隐，右键弹菜单**（macOS 上禁用 `setContextMenu`，否则左键会被菜单抢占）；Windows 托盘 hover tooltip 显示汇总。
 
 ### 3.2 数据可信度（诚实原则，2026-09-13 加入）
@@ -253,77 +254,88 @@ GLM Coding Plan、Kimi 会员等多数**无公开余额 API**。策略：能走�
 - 窗口阴影用 `hasShadow: true`（macOS 跟随内容 alpha 形状，即圆角/圆形本身）。
 - 自检：`python3 scripts/png-alpha.py <shot.png>` 可查四角 RGBA 的 alpha 是否为 0。
 
-**收起态：3D 悬浮球（默认）/ 3D 桌面宠物（可选）**（2026-09-15 两轮重做，均来自用户反馈）
+**收起态：3D 悬浮球（默认）/ 个性人物（可选）**（2026-09-15 两轮重做 + 2026-09-19 人物形态重做）
 
 第一轮反馈：① 圆点「有黑色边框、立体效果没做出来，只有毛玻璃皮肤有效果」；② 面板里的宠物模块不要了，
 「整个悬浮圆球变成 3D 立体精灵，像桌宠一样时不时走动」。
 第二轮反馈：① 悬浮球**默认回到 3D 圆球形态**，开启桌面宠物才是宠物形态；② 需要**置顶开关**；
 ③ 桌面宠物外面有个**四方形框**，且宠物不够真实（建议上网找 3D 素材）；④ 点击悬浮球弹了错误框。
 
-**形态与窗口**（`overlay.ts`）：
+第三轮反馈（2026-09-19）：「球形把人都框在球体里面，不要球形，悬浮的就是这个人物，不要进度条，
+这样人就可以大点高点，现在面部表情都看不清楚」。
+
+**形态与窗口**（窗口尺寸 `shared/pet-view.ts`，机位 `pet3d/rig.ts` 的 `FORMS` —— 两者同源）：
 
 | 形态 | 触发 | 收起态窗口 | 内容 |
 | --- | --- | --- | --- |
 | 3D 悬浮球（默认） | `ui:pet` 未设置 / `'0'` | 200×210（贴合球体） | 玻璃球 + 环形仪表 + 环心百分比 |
-| 3D 桌面宠物 | `ui:pet = '1'`（设置页开关） | 320×230（漫游区） | 球内站着 3D 角色，会自主走动 |
+| 个性人物 | `ui:pet = '1'`（设置页开关） | 320×440（竖版） | **只有人物**站在窗口中央，无球壳、无用量环；读数走脚下胶囊 |
 
+- 形态表 `FORMS` 是「机位 + 球体装饰可见性 + 脚下阴影直径」的唯一来源：球形态框住整颗球
+  （camZ 162、俯角 34°），人物形态几乎平视（camZ ≈ 83.1、俯角 12°）、注视人物中点。
+  人物形态的距离由「人物占窗口高度 68%」反算（`FIGURE_FILL`）：320×440 下人物约 296px 高、
+  头部约 40px —— 是球内形态（约 81px）的 3.7 倍，脸才看得清，同时脚下还留得下读数胶囊。
+  上限由头顶的两行泡泡（46px）决定：再高一档（0.76）泡泡顶边就会被窗口切掉。
+- **人物形态不做自主走动**：人物占满竖版画布后横向只剩 ±3 个世界单位可动 —— 既看不出「在走」，
+  又必然裁掉张臂的肩膀。走动能力（`walker.ts`/`fitRoamArea`）连同单测保留，等后续形态
+  （随机动作 / 进出场）复活；当前两种形态都是静止取景，只保留悬停浮沉（±0.6 单位）。
+- 命中区（点击穿透）也按形态算：球形态 = 球的投影（`sphereNdcHalf`），人物形态 = 人物包围盒
+  八角的投影外接矩形（约 224×313px）；覆盖层锚点也取这块矩形，但**人物形态的胶囊贴窗口底边** ——
+  主体几乎占满窗口，按半身高往下推会溢出被 `overflow:hidden` 切掉。
 - 窗口尺寸由主进程按形态决定（`collapsedTarget()`），启动时用 `primePrefs()` 先读偏好再建窗口，
-  避免"先小后大"闪一下；开关切换时 `setPetMode()` 直接缩放当前窗口。
+  避免"先小后大"闪一下；开关切换时 `setPetFigure()` 直接缩放当前窗口。
+- **球形态不加载人物素材**：默认形态既不下载 human 分包（`import('./human')`）也不解析 FBX；
+  开启「个性人物」时 PetBall 按新形态重建场景，那时才加载（用户诉求：「默认是悬浮球，
+  开启个性人物则再加载 3D 人物」）。
 - **总在最前可关**：`ui:alwaysOnTop`（默认开）。`setAlwaysOnTop(on, 'floating')` 或 `'normal'`；
   球上的右键菜单与设置页「系统」都能切。
 - **不要方框阴影**：收起态 `hasShadow = false`。透明窗口 + GPU 合成（WebGL）内容时，
   macOS 会按**窗口矩形**投一层阴影，实机表现就是「宠物外面套了个四方形框」；
   展开态（圆角卡片）仍然保留原生阴影。立体感由场景内的接触阴影/软阴影贴图负责。
 - **渲染质量**：ACES Filmic 色调映射 + `RoomEnvironment` 环境光照（PBR 材质的质感关键）+
-  `PCFSoftShadowMap` 实时软阴影（角色投在球内底面上）+ 玻璃球壳的菲涅尔亮边与高光游走；
+  `PCFSoftShadowMap` 实时软阴影（角色投在地面上）+ 玻璃球壳的菲涅尔亮边与高光游走；
   软渲染器（SwiftShader/llvmpipe）自动降采样并关闭阴影（此时隐藏阴影承接面，否则会渲染出一块深色圆盘）。
 - **逐皮肤立体**：3D 场景不消费 CSS，但所有颜色都从 `document` 上的 CSS 变量读取
   （`pet3d/tokens.ts: readSkinTokens`）：壳体取 `--bg-solid`、环色取 `--ok/--warn/--danger`、
   底托取 `--track`、暗边取 `--fg`，**新增皮肤零代码**生效。
 
-**3D 素材管线**（`pet3d/models.ts`）：
+**3D 素材管线**（`pet3d/human.ts`，2026-09-19 起只有数字人一条路径）：
 
-- 素材：**[Kenney「Cube Pets 2.0」](https://kenney.nl/assets/cube-pets)，CC0 1.0**（公共领域，
-  可商用、无需署名；本项目仍在 README 署名致谢）。内置 8 只：猫 / 柴犬 / 企鹅 / 狐狸 / 熊猫 / 兔 / 考拉 / 虎。
-  早期自绘的程序化角色（`rig.ts`）已删除——用户要的是"更真实"，专业素材明显更好。
-- 打包：`electron.vite.config.ts` 的 `glbInline()` 插件把 `*.glb?inline` 转成 base64 data URL 模块
-  （Vite 自带的 `?inline` 对二进制会按字符串内联，Rollup 直接解析报错），每个模型是独立 chunk，
-  首屏只加载当前那只。**不用 fetch**：打包后渲染层是 `file://` 页面，取本地 .glb 会被 Chromium 拦掉。
-- 贴图：Cube Pets 的调色板是**外链**的 `Textures/colormap.png`，从 data URL 加载时相对路径无从解析，
-  于是把这张 PNG 也内联，并用 `LoadingManager.setURLModifier` 把该路径重定向过去。
-- CSP 相应放宽 `img-src` / `connect-src` 到 `data: blob:`（仍只允许自身脚本与样式）。
-- 真人系（Aria / Ray，2026-09-19 新增）走独立分支，不复用上面这套：
-  - 素材：**[Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox)（MIT）**，
-    商务装一女一男；`npm run fetch:humans`（`scripts/fetch-human-pets.mjs`）拉取 FBX + 动作剪辑，
-    TGA 用系统 `sips` 转 PNG≤1024，落到 gitignored 的 `resources/human-pets/`，打包走
-    `extraResources`（`predist` 钩子保证先拉取）。README 第三方素材区同步署名。
-  - 加载：运行时 FBX 直读（three 自带 `FBXLoader`，无需 blender 转换链），实例化必须
-    `SkeletonUtils.clone`（普通 clone 蒙皮会粘模板骨骼）；`bd-asset://` 协议
-    （`src/main/human-assets.ts`，限定目录 + 防穿越）供 `file://` 渲染层读取，打包后
-    走 `process.resourcesPath`，dev 走仓库 `resources/`；CSP 加 `bd-asset:`。
-  - 动画：`AnimationMixer` + gait→clip 交叉淡化（walk/idle 常播循环，wave/talk 单次），
-    剪辑与模型同系、骨骼名天然对齐（`Bip01_Footsteps` 等非变形 helper 缺失是预期的，
-    mixer 静默跳过）；`scene.ts` 按 `isHumanPet` 切姿态驱动，真人跳过整体变换块。
-  - 泡泡：DOM `.petball-bubble`（`PetBall.tsx`），切换问好 + 长按回应 + 90s 余额播报，
-    沿用余额显隐与缓存/估算口径；Q 版仍走 1.6s toast。
-  - 设置页真人缩略图直接用采集期 `preview.png`（不占 WebGL 上下文）。
-  - 踩坑：逐只拍摄必须等到 `petReady`（真人 5 个 FBX 解析比 Q 版慢，固定 2200ms 会拍到空球）；
-    `dump` 钩子带 `self/parent` 可区分自身隐藏与祖先链隐藏。
-- 归一化：加载后统一「居中 + 缩放到目标高度（26 世界单位）+ 脚踩 y=0」；
-  **动画层与归一化层必须是两层 Group** —— 动画直接改外层容器的 scale 会把归一化缩放覆盖掉
-  （曾经因此把模型缩回原始尺寸而"看不见宠物"）。
-- 素材无骨骼：动作靠整体变换表达（走动一蹦一蹦 + 前倾、发呆呼吸、撸一把连跳转圈、进食点头、打盹微缩）。
-- 设置页缩略图（`pet3d/thumbnail.ts`）：用一个临时渲染器渲染一帧 → `toDataURL` → 释放上下文，
-  结果缓存后以 `<img>` 显示。8 只角色各起一个 WebGL 上下文会吃满浏览器额度，所以必须"用完即弃"。
+> 历史：早期是自绘程序化角色（`rig.ts`），随后换成 Kenney「Cube Pets 2.0」（CC0，8 只 Q 版动物，
+> `models.ts` + base64 内联 + `thumbnail.ts`），用户要求「把宠物模块改成数字人模块，保留 aria 和 ray，
+> 动物都去掉」后全部下线（8 只 GLB、`glbInline()` 插件、内联缩略图器一起删除）。
 
-**走动与交互**（`pet3d/walker.ts` 纯函数状态机，24 项单测）：idle 随机等待 → 随机选点 → 走向目标
-（1.2 单位内到达、4.5s 超时保护）→ 回到 idle；贴边时目标取到对侧形成自然回头；位置硬夹在漫游区内；
-单帧位移夹在 0.1s 内（掉帧/休眠不瞬移）。单击展开、拖动移动（抓取点跟随光标）、
-长按 0.62s 撸一把（5s 冷却）、右键原生菜单（菜单模型由渲染层给出，主进程只渲染并回传选中项 id）。
+- 素材：**[Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox)（MIT）**，
+  商务装一女一男（aria / ray）；`npm run fetch:humans`（`scripts/fetch-human-pets.mjs`）拉取
+  FBX + 动作剪辑，TGA 用系统 `sips` 转 PNG≤1024，落到 gitignored 的 `resources/human-pets/`，
+  打包走 `extraResources`（`predist` 钩子保证先拉取）。README 第三方素材区同步署名。
+- 加载：运行时 FBX 直读（three 自带 `FBXLoader`，无需 blender 转换链），实例化必须
+  `SkeletonUtils.clone`（普通 clone 蒙皮会粘模板骨骼）；`bd-asset://` 协议
+  （`src/main/human-assets.ts`，限定目录 + 防穿越）供 `file://` 渲染层读取，打包后
+  走 `process.resourcesPath`，dev 走仓库 `resources/`；CSP 加 `bd-asset:`。
+- **按需加载**：`scene.ts` 用 `await import('./human')` 动态引入（human.ts 静态依赖 FBXLoader +
+  SkeletonUtils，约 118KB → 独立 chunk），且**球形态根本不调用** —— 默认形态启动不下载分包、
+  不解析任何 FBX（用户反馈「3D 效果导致启动变慢」的两处根因）。
+- 动画：`AnimationMixer` + action→clip 交叉淡化（idle 常播循环，wave/talk 单次，撸一把→wave、
+  喂食→talk）；剪辑与模型同系、骨骼名天然对齐（`Bip01_Footsteps` 等非变形 helper 缺失是预期的，
+  mixer 静默跳过，`unbound` 会 console.warn）。
+- **剪辑自带根位移必须每帧抵消**：位移曲线挂在骨骼层根节点（Bip01）的 position 上，walk 一圈沿
+  局部 z 拖走 159.7cm（归一化后 ≈33 世界单位）、连 idle 都有 ≈12；不抵消角色会自己滑出去再被循环
+  边界瞬移回来。`rootMotion()` 观测点暴露「迄今抵消掉的峰值」，是「素材到底漂不漂」的现场证据。
+- 归一化（`instantiateHuman`）：居中 + 等比缩放到目标身高（`HUMAN_HEIGHT = 36` 世界单位）+
+  脚踩地面；**动画层与归一化层必须是两层 Group** —— 动画直接改外层容器的 scale 会把归一化缩放
+  覆盖掉（曾经因此把模型缩回原始尺寸而"看不见宠物"）。
+- 泡泡：DOM `.petball-bubble`（`PetBall.tsx`），切换问好 + 长按回应 + 90s 余额播报，
+  沿用余额显隐与缓存/估算口径；toast（`.petball-toast`）只用于冷却/改名这类短提示。
+- 设置页缩略图直接用采集期 `preview.png`（不占 WebGL 上下文，也不再需要临时渲染器）。
+- 踩坑：逐只拍摄必须等到 `petReady`（5 个 FBX 解析比 Q 版慢，固定等待会拍到空画布）；
+  `dump` 钩子带 `self/parent` 可区分自身隐藏与祖先链隐藏。
 
-**鼠标穿透**：渲染层把球心投影 + 球面轮廓角半径算成命中框（随球移动每 90ms 上报），
-主进程 90ms 光标轮询判定命中 → `setIgnoreMouseEvents(ignore, { forward: true })`；
-**仅收起态运行轮询**，展开面板立即停止。
+**交互**：单击展开、拖动移动（抓取点跟随光标）、长按 0.62s 撸一把（5s 冷却）、
+右键原生菜单（菜单模型由渲染层给出，主进程只渲染并回传选中项 id）。
+**鼠标穿透**：渲染层按形态算出主体的投影矩形（球 = 球心投影 ± 轮廓角半径，人物 = 包围盒八角
+投影的外接矩形），每 90ms 上报给主进程；主进程 90ms 光标轮询判定命中 →
+`setIgnoreMouseEvents(ignore, { forward: true })`；**仅收起态运行轮询**，展开面板立即停止。
 
 **指针状态机**（用户反馈"右键菜单后宠物黏住光标乱动"）：
 
@@ -341,18 +353,20 @@ GLM Coding Plan、Kimi 会员等多数**无公开余额 API**。策略：能走�
   并且拖拽帧与光标轮询两处定时器整体 `try/catch`（异常只记一次日志，不终止进程）。
 - 同类教训已写进测试：uitest 会断言「收起态无原生窗口阴影」「球外区域鼠标穿透」等行为。
 
-**面板不再常驻宠物卡**：宠物管理全部在**设置页「宠物」分区**（3D 缩略图 / 改名 / 换一只 / 两个开关 /
+**面板不再常驻宠物卡**：宠物管理全部在**设置页「宠物」分区**（角色缩略图 / 改名 / 换一只 / 两个开关 /
 亲密度与饱食度 / 撸一把喂食 / 导出导入）。面板只放 KPI。
 
 **兜底**：WebGL 不可用（老驱动/软渲染异常）时收起态退回原 2D 圆点（`--dot-*` 令牌仍在用），功能不丢。
 
-**持久化**：`ui:petState`（养成数据，单行 JSON）、`ui:pet`（是否桌面宠物，默认关）、
-`ui:petRing`（是否显示用量环）、`ui:alwaysOnTop`（是否置顶）。旧角色 id（`dino`/`slime`）自动迁移到新角色。
+**持久化**：`ui:petState`（养成数据，单行 JSON）、`ui:pet`（是否个性人物形态，默认关 = 悬浮球）、
+`ui:petRing`（是否显示用量环，只影响球形态）、`ui:alwaysOnTop`（是否置顶）。
+旧角色 id（`dino`/`slime` 及 8 只动物的 id）自动迁移到 `aria`。
 
-**自检工具**（见 README 脚本表）：`electron . --ballshot` 十几秒出图；`BD_PET=1` 宠物形态；
-`BD_PETS=1` 逐只角色；`BD_SKINS=1` 逐皮肤；`BD_DEBUG_RING=1` 画命中环核对可点区域；
+**自检工具**（见 README 脚本表）：`electron . --ballshot` 十几秒出图；`BD_PET=1` 人物形态；
+`BD_PETS=1` 逐只角色；`BD_SKINS=1` 逐皮肤；`BD_DEBUG_RING=1` 画命中区（球形态圆、人物形态方框）；
 `BD_ISOLATE=1` 逐个隐藏场景物体排查"多出来的东西"；渲染层 `window.__bd_ball()` 暴露
-rect/center/像素范围/dump（返回值必须是可结构化克隆的纯数据——塞函数会让 `executeJavaScript` 结果回传失败）。
+rect/center/像素范围/根位移/帧率与最长帧间隔/dump（返回值必须是可结构化克隆的纯数据——
+塞函数会让 `executeJavaScript` 结果回传失败）。
 
 **状态点语义**：灰=禁用 ｜ 琥珀=已启用但未配置 ｜ 绿=已启用且已配置。
 
