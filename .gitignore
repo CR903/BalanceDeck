@@ -11,3 +11,6 @@ __pycache__/
 
 # Fetched third-party pet assets (MIT, reproducible via npm run fetch:humans)
 resources/
+
+# 参考图（他人版权素材，仅本地用；见 README 第三方素材说明）
+refs/
