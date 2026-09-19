@@ -1,5 +1,11 @@
 import type { ProviderKind, ProviderInfo, ProviderInstance, CatalogEntry } from '../shared/types'
-import { getExtra, setExtra, getKey, setKey } from './keystore'
+import { envExtraFor, envValueFor } from './scanner'
+import type { Store } from './store'
+import {
+  SELECTABLE_PROTOCOLS,
+  selectableProtocolById,
+  type CatalogProtocol
+} from './adapters/protocols'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 供应商实例注册表
@@ -18,6 +24,18 @@ import { getExtra, setExtra, getKey, setKey } from './keystore'
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** 内置预设（目录项模板） */
+let store: Store | null = null
+
+/** 由组合根在启动时调用一次；未配置时任何读写都会立刻抛错 */
+export function configureProviders(s: Store): void {
+  store = s
+}
+
+function db(): Store {
+  if (!store) throw new Error('providers 未配置存储：引导时调用 configureProviders(keystoreStore)')
+  return store
+}
+
 export interface BuiltinPreset {
   id: string
   name: string
@@ -141,84 +159,11 @@ export function presetById(id: string): BuiltinPreset | undefined {
   return BUILTIN_PRESETS.find((b) => b.id === id)
 }
 
-/** 自定义协议（内置预设之外的通用协议） */
-export interface CustomProtocol {
-  id: string
-  label: string
-  kind: ProviderKind
-  defaultBaseUrl: string
-  hint: string
-}
-
-export const CUSTOM_PROTOCOLS: CustomProtocol[] = [
-  {
-    id: 'deepseek',
-    label: 'DeepSeek 兼容',
-    kind: 'balance',
-    defaultBaseUrl: 'https://api.deepseek.com',
-    hint: 'GET /user/balance → balance_infos[0].total_balance（多数中转平台兼容）'
-  },
-  {
-    id: 'moonshot',
-    label: 'Moonshot / Kimi 兼容',
-    kind: 'balance',
-    defaultBaseUrl: 'https://api.moonshot.cn',
-    hint: 'GET /v1/users/me/balance → data.available_balance'
-  },
-  {
-    id: 'zhipu',
-    label: '智谱 GLM 兼容',
-    kind: 'balance',
-    defaultBaseUrl: 'https://open.bigmodel.cn',
-    hint: 'GET /api/paas/v4/users/me/balance（宽容解析余额字段）'
-  },
-  {
-    id: 'siliconflow',
-    label: '硅基流动（国内）',
-    kind: 'balance',
-    defaultBaseUrl: 'https://api.siliconflow.cn',
-    hint: 'GET /v1/user/info → data.totalBalance（CNY）'
-  },
-  {
-    id: 'siliconflow-intl',
-    label: 'SiliconFlow（国际）',
-    kind: 'balance',
-    defaultBaseUrl: 'https://api.siliconflow.com',
-    hint: 'GET /v1/user/info → data.totalBalance（USD）'
-  },
-  {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    kind: 'balance',
-    defaultBaseUrl: 'https://openrouter.ai',
-    hint: 'GET /api/v1/credits → total_credits - total_usage（USD）'
-  },
-  {
-    id: 'openai-billing',
-    label: 'OpenAI 计费',
-    kind: 'balance',
-    defaultBaseUrl: 'https://api.openai.com',
-    hint: 'GET /v1/dashboard/billing/subscription + /usage（需老式 sk- key）'
-  },
-  {
-    id: 'minimax',
-    label: 'MiniMax Token Plan',
-    kind: 'token',
-    defaultBaseUrl: 'https://api.minimaxi.com',
-    hint: 'GET /v1/token_plan/remains → total / remain'
-  },
-  {
-    id: 'generic',
-    label: '通用 JSON（宽容解析）',
-    kind: 'balance',
-    defaultBaseUrl: '',
-    hint: 'GET 你填写的完整 URL（Bearer key），自动在响应里寻找余额/用量字段'
-  }
-]
-
-export function customProtocolById(id: string): CustomProtocol | undefined {
-  return CUSTOM_PROTOCOLS.find((p) => p.id === id)
-}
+// 协议目录与采集声明**同源**（ADR-0001）：新增或修改协议只改
+// src/main/adapters/protocols.ts 一张表，目录元数据不再各写一份。
+export type CustomProtocol = CatalogProtocol
+export const CUSTOM_PROTOCOLS: CustomProtocol[] = SELECTABLE_PROTOCOLS
+export const customProtocolById = selectableProtocolById
 
 /**
  * 「添加提供方」选择列表：
@@ -270,7 +215,7 @@ function isInstance(x: unknown): x is ProviderInstance {
 
 /** 读取实例列表；首次运行时从旧模型迁移 */
 export async function listInstances(): Promise<ProviderInstance[]> {
-  const raw = await getExtra('providerInstances')
+  const raw = await db().getExtra('providerInstances')
   if (raw === null) {
     const migrated = await migrateLegacy()
     await saveInstances(migrated)
@@ -286,17 +231,17 @@ export async function listInstances(): Promise<ProviderInstance[]> {
 }
 
 async function saveInstances(list: ProviderInstance[]): Promise<void> {
-  await setExtra('providerInstances', JSON.stringify(list))
+  await db().setExtra('providerInstances', JSON.stringify(list))
 }
 
 /** 旧模型迁移：把"已启用且已配置"的内置供应商转为实例（保留原 id，凭据无需迁移） */
 async function migrateLegacy(): Promise<ProviderInstance[]> {
   const out: ProviderInstance[] = []
   for (const p of BUILTIN_PRESETS) {
-    const enabledFlag = (await getExtra(`provider:${p.id}:enabled`)) ?? (await getExtra(`enabled:${p.id}`)) ?? '1'
+    const enabledFlag = (await db().getExtra(`provider:${p.id}:enabled`)) ?? (await db().getExtra(`enabled:${p.id}`)) ?? '1'
     if (enabledFlag === '0') continue
 
-    const saved = await getKey(p.id)
+    const saved = await db().getKey(p.id)
     const fromEnv = (p.envKeys ?? []).some((n) => !!process.env[n])
     let fromProbe = false
     if (!saved && !fromEnv && p.probeCredential) {
@@ -315,7 +260,7 @@ async function migrateLegacy(): Promise<ProviderInstance[]> {
       presetId: p.id,
       protocol: p.protocol,
       kind: p.kind,
-      baseUrl: (await getExtra(`provider:${p.id}:baseUrl`)) ?? (await getExtra(`baseUrl:${p.id}`)) ?? p.defaultBaseUrl,
+      baseUrl: (await db().getExtra(`provider:${p.id}:baseUrl`)) ?? (await db().getExtra(`baseUrl:${p.id}`)) ?? p.defaultBaseUrl,
       builtin: true,
       enabled: true,
       createdAt: Date.now()
@@ -358,9 +303,9 @@ export async function removeInstance(id: string): Promise<boolean> {
   if (next.length === list.length) return false
   await saveInstances(next)
   // 清理关联配置与凭据
-  await setExtra(`provider:${id}:baseUrl`, '')
-  await setExtra(`provider:${id}:name`, '')
-  await setKey(id, '')
+  await db().setExtra(`provider:${id}:baseUrl`, '')
+  await db().setExtra(`provider:${id}:name`, '')
+  await db().setKey(id, '')
   return true
 }
 
@@ -419,7 +364,7 @@ export async function instanceInfo(inst: ProviderInstance): Promise<ProviderInfo
   const custom = preset ? undefined : customProtocolById(protocol)
 
   let credentialSource: ProviderInfo['credentialSource'] = 'none'
-  const saved = await getKey(inst.id)
+  const saved = await db().getKey(inst.id)
   if (saved) credentialSource = 'saved'
   else if (preset?.envKeys?.some((n) => !!process.env[n])) credentialSource = 'env'
   else if (preset?.localCredential) credentialSource = 'file'
@@ -433,9 +378,12 @@ export async function instanceInfo(inst: ProviderInstance): Promise<ProviderInfo
 
   // OpenCode 协议支持控制台 cookie（百分比精度从整数提升到一位小数）
   const supportsCookie = protocol === 'opencode-go'
-  const cookie = supportsCookie ? ((await getKey('opencodeCookie')) ?? process.env.OPENCODE_GO_COOKIE ?? '') : ''
+  // 环境变量名统一由 scanner 的表拥有（这里曾内联读 process.env，与那张表重复）
+  const cookie = supportsCookie
+    ? ((await db().getKey('opencodeCookie')) ?? envValueFor('opencodeCookie') ?? '')
+    : ''
   const workspaceId = supportsCookie
-    ? ((await getExtra('opencodeWorkspaceId')) ?? process.env.OPENCODE_GO_WORKSPACE_ID ?? '')
+    ? ((await db().getExtra('opencodeWorkspaceId')) ?? envExtraFor('opencodeWorkspaceId') ?? '')
     : ''
 
   return {
