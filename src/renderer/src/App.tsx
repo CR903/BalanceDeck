@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState } from 'react'
-import type { AppState } from '../../shared/types'
+import type { AppState, ProviderSnapshot } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
@@ -22,6 +22,7 @@ import {
   type PetState
 } from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
+import { stopVoice } from './voice'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -71,6 +72,13 @@ export default function App(): React.JSX.Element {
   const [petRing, setPetRing] = useState(true)
   /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
   const [alwaysTop, setAlwaysTop] = useState(true)
+  /** 语音播报开关（ui:voiceOn，默认关） */
+  const [voiceOn, setVoiceOn] = useState(false)
+  /** 语音播报间隔（分钟，ui:voiceEvery，默认 60，档位 1/3/5/10/15/30/60） */
+  const [voiceEvery, setVoiceEvery] = useState(60)
+  const voiceTimerRef = useRef<number | null>(null)
+  /** 宠物动作状态：'entering'/'idle'/'exiting' */
+  const [petAnimState, setPetAnimState] = useState<'entering' | 'idle' | 'exiting'>('idle')
   /** 当前播放的宠物动作（happy/eat），播完自动回 idle */
   const [petAction, setPetAction] = useState<PetAction>('idle')
   /** 动作序号：同一动作重复触发时也要求重播 */
@@ -118,8 +126,12 @@ export default function App(): React.JSX.Element {
   const changePet = (id: PetId): void => {
     const now = Date.now()
     const s: PetState = { ...applyDecay(petRef.current, now), id, name: petMeta(id).name, lastTickAt: now }
+    // 切换角色前播放退场动画
+    if (petOn) playExitAnim()
     setPet(s)
     persistPet(s)
+    // 切换后播放进场动画
+    setTimeout(() => playEnterAnim(), 1600)
   }
   const renamePet = (name: string): void => {
     const s = { ...petRef.current, name }
@@ -131,6 +143,46 @@ export default function App(): React.JSX.Element {
     setPetOn(on)
     void window.api.setExtras({ 'ui:pet': on ? '1' : '0' })
   }
+  /** 播放进场动画 */
+  const playEnterAnim = async (): Promise<void> => {
+    if (!petOn) return
+    setPetAnimState('entering')
+    // 播放 wave 动作作为进场
+    try {
+      await import('./pet3d/scene').then(async () => {
+        // 触发进场动作（场景句柄由 PetBall 创建后挂到 window，见 scene.ts）
+        const scene = (window as any).__bd_pet_scene__
+        if (scene && scene.playAnim) {
+          await scene.playAnim('wave', 1.5) // 1.5 秒进场
+        }
+      })
+    } catch (e) {
+      console.warn('[app] 进场动画播放失败:', e)
+    }
+    // 1.5 秒后回到 idle
+    setTimeout(() => {
+      setPetAnimState('idle')
+      setPetAction('idle')
+    }, 1500)
+  }
+  /** 播放退场动画 */
+  const playExitAnim = async (): Promise<void> => {
+    if (!petOn || petAnimState === 'exiting') return
+    setPetAnimState('exiting')
+    try {
+      await import('./pet3d/scene').then(async () => {
+        const scene = (window as any).__bd_pet_scene__
+        if (scene && scene.playAnim) {
+          await scene.playAnim('talk', 1.5) // 1.5 秒退场
+        }
+      })
+    } catch (e) {
+      console.warn('[app] 退场动画播放失败:', e)
+    }
+    setTimeout(() => {
+      setPetAnimState('idle')
+    }, 1500)
+  }
   /** 总在最前（关闭后不再悬浮于其它窗口之上） */
   const toggleAlwaysTop = (on: boolean): void => {
     setAlwaysTop(on)
@@ -141,6 +193,16 @@ export default function App(): React.JSX.Element {
   const togglePetRing = (on: boolean): void => {
     setPetRing(on)
     void window.api.setExtras({ 'ui:petRing': on ? '1' : '0' })
+  }
+  /** 语音播报开关 */
+  const toggleVoiceOn = (on: boolean): void => {
+    setVoiceOn(on)
+    void window.api.setExtras({ 'ui:voiceOn': on ? '1' : '0' })
+  }
+  /** 语音播报间隔（分钟） */
+  const setVoiceEveryInterval = (minutes: number): void => {
+    setVoiceEvery(minutes)
+    void window.api.setExtras({ 'ui:voiceEvery': String(minutes) })
   }
 
   /** 悬浮球右键菜单：原生菜单由主进程渲染，动作回到这里执行 */
@@ -207,12 +269,18 @@ export default function App(): React.JSX.Element {
   }
 
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop']).then((e) => {
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 3D 悬浮球；只有用户显式开启（'1'）才是 3D 桌面宠物
       setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
       setPetRing(e['ui:petRing'] !== '0')
+      setVoiceOn(e['ui:voiceOn'] === '1')
+      const every = parseInt(e['ui:voiceEvery'] || '60', 10)
+      // 支持档位：1/3/5/10/15/30/60 分钟
+      if (every >= 1 && [1, 3, 5, 10, 15, 30, 60].includes(every)) {
+        setVoiceEvery(every)
+      }
       const st = decodePetState(e['ui:petState'])
       if (st) setPet(applyDecay(st, Date.now()))
     })
@@ -221,6 +289,11 @@ export default function App(): React.JSX.Element {
   // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 桌面宠物（更大漫游区）
   useEffect(() => {
     window.api.setPetMode(petOn)
+    // petOn 变化时触发动画
+    if (petOn) {
+      // 延迟一点播放进场动画，等场景初始化完成
+      setTimeout(() => playEnterAnim(), 300)
+    }
   }, [petOn])
 
   // 惰性衰减的 UI 侧结算（持久化只在互动时写盘，见 persistPet）
@@ -235,10 +308,78 @@ export default function App(): React.JSX.Element {
     void window.api.setExtras({ 'ui:hideBalance': next ? '1' : '' })
   }
 
+  /** 播报焦点供应商的余额与用量 */
+  const speakBalance = (): void => {
+    if (!voiceOn) return
+    if (collapsed || view !== 'card') return // 展开面板时不播报
+    
+    const state = window.__bd_state__?.()
+    if (!state || !state.snapshots || state.snapshots.length === 0) return // 无数据时不播报
+    
+    // 找到第一个状态正常的供应商
+    const snapshot = state.snapshots.find((s: ProviderSnapshot) => s.status === 'ok')
+    if (!snapshot) return
+    
+    // 构建播报文案
+    let text = `${snapshot.providerId}，`
+    if (!hideBalance && snapshot.balance !== null) {
+      const amount = Math.round(snapshot.balance / 100)
+      text += `余额${amount}元，`
+    }
+    const usage = snapshot.percent
+    if (usage !== null) {
+      text += `用量${Math.round(usage)}%`
+      if (snapshot.cache === 'stale') text += '（缓存）'
+      else if (snapshot.cache === 'estimation') text += '（估算）'
+    }
+    
+    // 导入 speak 函数
+    import('./voice').then(({ speak }) => {
+      speak(text)
+    }).catch(() => {
+      console.warn('[voice] 无法导入 speak 函数')
+    })
+  }
+
+  /** 语音播报定时器 */
+  useEffect(() => {
+    if (!voiceOn) {
+      if (voiceTimerRef.current) {
+        window.clearInterval(voiceTimerRef.current)
+        voiceTimerRef.current = null
+      }
+      return
+    }
+
+    // 清除旧定时器
+    if (voiceTimerRef.current) {
+      window.clearInterval(voiceTimerRef.current)
+    }
+
+    // 立即触发一次
+    speakBalance()
+
+    // 设置自重排定时器（依赖 voiceOn && voiceEvery）
+    voiceTimerRef.current = window.setInterval(() => {
+      speakBalance()
+    }, voiceEvery * 60 * 1000)
+
+    return () => {
+      if (voiceTimerRef.current) {
+        window.clearInterval(voiceTimerRef.current)
+        voiceTimerRef.current = null
+      }
+    }
+  }, [voiceOn, voiceEvery, collapsed, view])
+
   useEffect(() => {
     void window.api.getState().then(setState)
     const off1 = window.api.onState(setState)
     const off2 = window.api.onCollapsed(setCollapsed)
+    // 挂载全局状态访问器（供语音播报等模块使用）
+    if (typeof window !== 'undefined') {
+      ;(window as Window).__bd_state__ = () => state
+    }
     const apply = (id: string): void => {
       setSkinId(id)
       if (id.startsWith('ext:')) void window.api.getSkinCss(id).then(setSkinCss)
@@ -327,6 +468,10 @@ export default function App(): React.JSX.Element {
             onTogglePetBall={togglePetBall}
             onTogglePetRing={togglePetRing}
             petRing={petRing}
+            voiceOn={voiceOn}
+            voiceEvery={voiceEvery}
+            onToggleVoiceOn={toggleVoiceOn}
+            onSetVoiceEvery={setVoiceEveryInterval}
             alwaysTop={alwaysTop}
             onToggleAlwaysTop={toggleAlwaysTop}
             onExportPet={exportPet}

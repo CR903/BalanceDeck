@@ -457,7 +457,18 @@ export function PetBall({
     longPressed.current = false
     clearHold()
     if (wasMoved || cancel) onDragEnd()
-    else if (!wasLong && !renaming) onExpand()
+    else if (!wasLong && !renaming) {
+      // 点击展开时触发动画（如果当前是 idle 状态）
+      const scene = (window as any).__bd_pet_scene__
+      if (scene && scene.playAnim) {
+        // 先播放 wave 进场动画，然后展开
+        scene.playAnim('wave', 1.5).then(() => {
+          onExpand()
+        })
+      } else {
+        onExpand()
+      }
+    }
   }
 
   const openMenu = async (e: React.MouseEvent): Promise<void> => {

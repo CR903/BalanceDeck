@@ -96,6 +96,8 @@ export interface Pet3dHandle {
   setPet: (id: PetId) => void
   setStats: (s: Pet3dStats) => void
   setAction: (a: PetAction, ms?: number) => void
+  /** 播放一次性角色动作（wave / talk），到时自动回到 idle；非真人系素材为空实现 */
+  playAnim: (animName: HumanClip, durationSec: number) => Promise<void>
   /** 球形态 / 桌面宠物形态（决定是否放角色与走动） */
   setRoam: (roam: boolean) => void
   setSkin: () => void
@@ -818,6 +820,24 @@ export function createPet3dScene(
       walker = { ...walker, x: ax, z: az, gait: 'idle', since: 0, waitFor: 1e6 }
     },
     petReady: () => petHolder !== null,
+    /** 播放宠物动画（供 App.tsx 调用） */
+    playAnim: async (animName: HumanClip, durationSec: number): Promise<void> => {
+      if (!human) return
+      // 停止当前所有动作
+      human.actions.idle.stop()
+      human.actions.walk.stop()
+      // 播放指定动作
+      const action = human.actions[animName]
+      action.reset()
+      action.clampWhenFinished = true
+      action.play()
+      action.setLoop(THREE.LoopOnce, 1)
+      // 等待动画播放完成
+      await new Promise((resolve) => setTimeout(resolve, durationSec * 1000))
+      // 回到 idle
+      human.actions.idle.reset()
+      human.actions.idle.play()
+    },
     hideIndex: (i, on) => {
       let n = 0
       scene.traverse((o) => {
@@ -909,6 +929,11 @@ export function createPet3dScene(
       renderer.dispose()
       canvas.remove()
     }
+  }
+
+  // 挂载全局状态访问器（供 App.tsx 调用）
+  if (typeof window !== 'undefined') {
+    ;(window as any).__bd_pet_scene__ = handle
   }
 
   return handle

@@ -21,12 +21,18 @@ export interface PetSectionProps {
   petOn: boolean
   /** 悬浮球是否显示用量环 */
   petRing: boolean
+  /** 语音播报开关 */
+  voiceOn: boolean
+  /** 语音播报间隔（分钟） */
+  voiceEvery: number
   onPet: () => PetActionResult
   onFeed: () => PetActionResult
   onChangePet: (id: PetId) => void
   onRenamePet: (name: string) => void
   onTogglePetBall: (on: boolean) => void
   onTogglePetRing: (on: boolean) => void
+  onToggleVoiceOn: (on: boolean) => void
+  onSetVoiceEvery: (minutes: number) => void
   onExportPet: () => Promise<'ok' | 'cancel' | 'fail'>
   onImportPet: () => Promise<'ok' | 'cancel' | 'fail'>
 }
@@ -42,12 +48,16 @@ export function PetSection({
   pet,
   petOn,
   petRing,
+  voiceOn,
+  voiceEvery,
   onPet,
   onFeed,
   onChangePet,
   onRenamePet,
   onTogglePetBall,
   onTogglePetRing,
+  onToggleVoiceOn,
+  onSetVoiceEvery,
   onExportPet,
   onImportPet
 }: PetSectionProps): React.JSX.Element {
@@ -222,6 +232,40 @@ export function PetSection({
             <span className="knob" />
           </button>
         </div>
+
+        <div className="enable-row">
+          <span>
+            定时播报
+            <em className="tag env">系统语音</em>
+          </span>
+          <button
+            type="button"
+            className={'switch' + (voiceOn ? ' on' : '')}
+            title={voiceOn ? '关闭后不再播报' : '开启后按间隔播报焦点供应商余额与用量'}
+            onClick={() => onToggleVoiceOn(!voiceOn)}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+
+        {voiceOn && (
+          <div className="enable-row">
+            <span>播报间隔</span>
+            <select
+              value={voiceEvery}
+              onChange={(e) => onSetVoiceEvery(parseInt(e.target.value, 10))}
+              className="voice-interval"
+            >
+              <option value={1}>1 分钟</option>
+              <option value={3}>3 分钟</option>
+              <option value={5}>5 分钟</option>
+              <option value={10}>10 分钟</option>
+              <option value={15}>15 分钟</option>
+              <option value={30}>30 分钟</option>
+              <option value={60}>60 分钟</option>
+            </select>
+          </div>
+        )}
 
         <div className="field-label pet-sec-label">换一只（保留等级与亲密度）</div>
         <div className="pet-chips">

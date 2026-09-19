@@ -264,7 +264,7 @@ export function registerIpc(): void {
           status: String(model?.status ?? ''),
           canPet: model?.canPet !== false,
           canFeed: model?.canFeed !== false,
-          pets: Array.isArray(model?.pets) ? model.pets.slice(0, 8) : [],
+          pets: Array.isArray(model?.pets) ? model.pets : [], // 显示所有宠物
           ring: model?.ring !== false,
           alwaysOnTop: model?.alwaysOnTop !== false,
           hideBalance: model?.hideBalance === true

@@ -1838,6 +1838,31 @@ textarea {
   margin-top: 0;
 }
 
+/* 语音播报间隔选择器 */
+.voice-interval {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: border var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.voice-interval:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.voice-interval:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 /* ─── 错误兜底 ────────────────────────────────────────────────────────────── */
 .err-boundary {
   height: 100%;
