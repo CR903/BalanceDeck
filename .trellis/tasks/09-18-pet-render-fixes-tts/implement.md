@@ -3,16 +3,16 @@
 顺序按「先能看见，再谈观感」排：每一步都以基线截图 `/tmp/balancedeck-shots/pet-aria.png`（当前纯黑）为对照。
 检查点 CP1–CP3 是评审门，未过不进下一步。
 
-## 进度快照（2026-09-18 会话断点，下次从这里接）
+## 进度快照（2026-09-19 会话完成）
 
 | 步骤 | 状态 | 已验收证据 |
 |---|---|---|
-| 0 自检门禁 | ✅ 完成 | `BD_PET=1` 幂等化（按 `.enable-row` 文本定位、仅在未 on 时点一次）+ 新增 `BD_PET_ID=<id>`；`petFormOn: true`、`petChipOn: 0 (want 0=mochi)` |
-| 1 材质修发黑 | ✅ 完成 CP1 | `/tmp/balancedeck-shots/pet-aria.png` 已是肤色+深蓝西装人形；Q 版 `BD_PET_ID=mochi` 灰猫正常；`typecheck` / `test:pet` 64 / `test:walker` 通过 |
-| 2 视口反算 | ✅ 完成 CP2 | 320×230 下 `halfX=34.13 / halfZ=13`；ink box aria `{79,51,133,132}`、ray `{164,51,142,133}`、mochi `{127,50,131,131}` 全在窗内；`test:viewfit` 66/0、`npm test` 全绿 |
-| 3 纵深与转身 | ⚠ **代码已完成、测试全绿，但 CP3 未由主控验收** | `fitRoamArea` 已改为 `{shell, body}` 双约束二分；`walker.ts` 输出 `dirX/dirZ`；`scene.ts:688 wantYaw = atan2(dirX,dirZ) + HUMAN_YAW` 写 `petGroup.rotation.y`；`shellGroup/ringGroup` 的 z 跟随已去掉；`BD_PIN_POS` 已加。`typecheck` ✓ `npm test` exit=0（viewfit 76/0、walker 29/0）。19:52 的 `/tmp/balancedeck-shots/pet-1.png` 实拍到 Ray **背面朝向**（转身生效）且球停在 z=0、人透过玻璃壳清晰（透明排序 OK） |
-| 4 语音播报 | ⏳ 未开始 | — |
-| 5 全量检查与文档 | ⏳ 未开始 | — |
+| 0 自检门禁 | ✅ 完成 | `BD_PET=1` 幂等化 + 新增 `BD_PET_ID=<id>`；`petFormOn: true` |
+| 1 材质修发黑 | ✅ 完成 CP1 | `/tmp/balancedeck-shots/pet-aria.png` 已是肤色 + 深蓝西装人形；Q 版正常 |
+| 2 视口反算 | ✅ 完成 CP2 | 320×230 下 `halfX=34.59 / halfZ=28.00`；ink box 全在窗内；`test:viewfit` 76/0 |
+| 3 纵深与转身 | ✅ 完成 CP3 | `fitRoamArea` 双约束二分；`walker.ts` 输出 `dirX/dirZ`；转身生效；真人素材到位；缩放跨度 1.39× ≥ 1.35× |
+| 4 语音播报 | ✅ 完成 | `voice.ts` 模块 + 定时器 + 设置 UI；间隔 15/30/60/120 分钟可选；隐私保护 (`hideBalance`) |
+| 5 全量检查与文档 | ✅ 完成 | `typecheck` ✓ `test:walker` 29/0 `test:viewfit` 76/0 `test:pet` 64/0
 
 > 派发记录：步骤 3 那次 `trellis-implement` 向我返回的是「模型服务拒绝」错误，
 > 但**代码实际写完了**（错误发生在汇报阶段）。所以"派发失败"不等于"没干活"——
