@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
 import { petMood, isHumanPet, type PetId, type PetState } from '../../shared/pet'
 import { ROAM_VIEW } from '../../shared/pet-view'
-import { fmtPercent, windowPercent, levelOfPercent, dataTime, isStale, type Level } from './format'
+import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
+import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
 import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } from './pet3d/scene'
 
@@ -17,37 +18,6 @@ import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } fr
 //
 // 设计依据见 DESIGN.md「收起态：3D 桌面宠物」。
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/** 余额类金额的紧凑写法（万元以下保留两位，保证球内可读且不失真） */
-function compactAmount(v: number, unit: 'usd' | 'cny' | 'token' | 'request' | 'percent'): string {
-  switch (unit) {
-    case 'usd':
-      return '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v >= 100 ? v.toFixed(0) : v.toFixed(2))
-    case 'cny':
-      return '¥' + (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v >= 100 ? v.toFixed(0) : v.toFixed(2))
-    case 'token':
-      return v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : v.toFixed(0)
-    default:
-      return String(Math.round(v))
-  }
-}
-
-/** 严重度排序：危险 > 警告 > 正常 > 无数据（最需要关注的排前面） */
-function severity(s: ProviderSnapshot): number {
-  if (s.status === 'error') return 3
-  if (s.status === 'nodata') return 4
-  const pcts = s.windows.map(windowPercent).filter((p): p is number => p != null)
-  if (!pcts.length) return 2
-  const max = Math.max(...pcts)
-  return max >= 85 ? 0 : max >= 60 ? 1 : 2
-}
-
-function ballLevel(s: ProviderSnapshot | undefined, pct: number | null): Level {
-  if (!s) return 'muted'
-  if (s.status === 'error') return 'danger'
-  if (s.status !== 'ok') return 'muted'
-  return levelOfPercent(pct, 'ok')
-}
 
 export interface PetBallProps {
   pet: PetState
@@ -283,7 +253,7 @@ export function PetBall({
   }, [ready, roam, reportHit, debugRing])
 
   // ─── 轮播 ───────────────────────────────────────────────────────────────────
-  const snaps = useMemo(() => [...state.snapshots].sort((a, b) => severity(a) - severity(b)), [state.snapshots])
+  const snaps = useMemo(() => [...state.snapshots].sort((a, b) => severityRank(a) - severityRank(b)), [state.snapshots])
   const count = snaps.length
   useEffect(() => {
     if (count <= 1) return
@@ -293,30 +263,18 @@ export function PetBall({
 
   const s: ProviderSnapshot | undefined = count ? snaps[idx % count] : undefined
 
-  /** 主指标：最接近限额的窗口 */
-  const worst = useMemo(() => {
-    if (!s || s.status !== 'ok' || s.windows.length === 0) return undefined
-    let best: (typeof s.windows)[number] | undefined
-    let bestPct = -1
-    for (const w of s.windows) {
-      const p = windowPercent(w)
-      if (p != null && p > bestPct) {
-        bestPct = p
-        best = w
-      }
-    }
-    return best ?? s.windows[0]
-  }, [s])
+  /** 主指标：最接近限额的窗口（选择规则归 read-model，三处视图同一份） */
+  const worst = useMemo(() => worstWindow(s), [s])
 
   const pct = worst ? windowPercent(worst) : null
-  const lvl = ballLevel(s, pct)
+  const lvl = ballLevel(s, worst)
 
   const value = useMemo(() => {
     if (!s) return '…'
     if (s.status === 'error') return '!'
     if (s.status === 'nodata') return '—'
     if (pct != null) return fmtPercent(pct)
-    if (worst) return hideBalance && s.kind === 'balance' ? '••••' : compactAmount(worst.used, worst.unit)
+    if (worst) return hideBalance && s.kind === 'balance' ? '••••' : fmtAmount(worst.used, worst.unit, { compact: true })
     return '—'
   }, [s, pct, worst, hideBalance])
 

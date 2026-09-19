@@ -1,3 +1,4 @@
+import { primaryWindowIndex, snapshotLevel, windowLevel } from './read-model'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { shortWindowLabel } from '../../shared/tray-text'
@@ -19,21 +20,6 @@ import badgeIcon from './assets/icon.png?inline'
 
 // 主页：所有「已启用且有数据」的供应商以卡片网格呈现，点击任一卡片进入详情。
 // 卡片可拖拽排序（⌥←/⌥→ 亦可），顺序即优先级 —— 状态栏取第一位展示。
-
-/** 卡片主窗口的默认选择：优先 5 小时/首个带限额的窗口，否则第一个窗口 */
-function defaultWindowIndex(s: ProviderSnapshot): number {
-  if (s.windows.length === 0) return 0
-  const i = s.windows.findIndex((w) => w.limit != null && w.limit > 0)
-  return i >= 0 ? i : 0
-}
-
-function CardLevel(s: ProviderSnapshot): Level {
-  if (s.status === 'error') return 'danger'
-  if (s.status !== 'ok') return 'muted'
-  const pcts = s.windows.map(windowPercent).filter((p): p is number => p != null)
-  if (pcts.length === 0) return 'ok'
-  return levelOfPercent(Math.max(...pcts), 'ok')
-}
 
 /** 数据可信度徽章（缓存 / 本机估算）；官方数据返回空 */
 function QualityChip({ s }: { s: ProviderSnapshot }): React.JSX.Element | null {
@@ -59,7 +45,7 @@ function PlanCard({
   winIndex: number
   onSelectWindow: (name: string) => void
 }): React.JSX.Element {
-  const lvl = CardLevel(s)
+  const lvl = snapshotLevel(s)
   const idx = Math.min(Math.max(0, winIndex), Math.max(0, s.windows.length - 1))
   const w: ProviderWindow | undefined = s.windows[idx]
   const pct = w ? windowPercent(w) : null
@@ -82,7 +68,7 @@ function PlanCard({
               type="button"
               className={
                 'win-chip' +
-                ` lvl-${levelOfPercent(windowPercent(win), 'ok')}` +
+                ` lvl-${windowLevel(win)}` +
                 (i === idx ? ' on' : '')
               }
               title={`${win.name}${windowPercent(win) != null ? ` · ${windowPercent(win)}%` : ''}`}
@@ -139,7 +125,7 @@ function PlanCard({
 
 /** 余额卡：金额为主 */
 function BalanceCard({ s, now, hide }: { s: ProviderSnapshot; now: number; hide: boolean }): React.JSX.Element {
-  const lvl = CardLevel(s)
+  const lvl = snapshotLevel(s)
   const w = s.windows[0]
   const isActive = s.status === 'ok' && !!w
   const pct = w ? windowPercent(w) : null
@@ -259,7 +245,7 @@ export function CardView({
       const i = s.windows.findIndex((w) => w.name === pref)
       if (i >= 0) return i
     }
-    return defaultWindowIndex(s)
+    return primaryWindowIndex(s)
   }
   const selectWindow = (id: string, name: string): void => {
     setWinPrefs((p) => ({ ...p, [`ui:cardWindow:${id}`]: name }))
@@ -485,7 +471,7 @@ export function CardView({
   const errCount = snaps.filter((s) => s.status === 'error').length
   const cachedCount = snaps.filter((s) => s.dataQuality === 'cached').length
   const localCount = snaps.filter((s) => s.dataQuality === 'local').length
-  const nearCount = snaps.filter((s) => CardLevel(s) === 'danger').length
+  const nearCount = snaps.filter((s) => snapshotLevel(s) === 'danger').length
   const scanning = state.scanning
   const firstLoad = snaps.length === 0 && scanning
 
@@ -569,7 +555,7 @@ export function CardView({
                   className={
                     'pcard ' +
                     (s.kind === 'balance' ? 'balance' : 'plan') +
-                    ` lvl-${CardLevel(s)}` +
+                    ` lvl-${snapshotLevel(s)}` +
                     (isStale(s) ? ' stale' : '') +
                     (dragging ? ' dragging' : '')
                   }

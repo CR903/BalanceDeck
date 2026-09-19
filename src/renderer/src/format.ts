@@ -9,12 +9,22 @@ export { windowPercent }
 export const fmtPercent = formatPercent
 export { dataTime, isStale, staleLabel } from '../../shared/quality'
 
-export function fmtAmount(v: number, unit: Unit): string {
+/** 金额的紧凑写法：≥1000 用 k（收起态球面只放得下几个字） */
+function compactMoney(v: number): string {
+  return v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v >= 100 ? v.toFixed(0) : v.toFixed(2)
+}
+
+/**
+ * 金额 / 用量格式化。compact=true 是**调用方**按显示空间提出的诉求
+ * （此前收起态自己维护了第三份金额格式化函数，与这里口径不同）。
+ */
+export function fmtAmount(v: number, unit: Unit, opts: { compact?: boolean } = {}): string {
+  const compact = opts.compact === true
   switch (unit) {
     case 'usd':
-      return '$' + v.toFixed(2)
+      return '$' + (compact ? compactMoney(v) : v.toFixed(2))
     case 'cny':
-      return '¥' + v.toFixed(2)
+      return '¥' + (compact ? compactMoney(v) : v.toFixed(2))
     case 'token': {
       if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B'
       if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M'

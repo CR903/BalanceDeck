@@ -1,3 +1,4 @@
+import { primaryWindow, snapshotLevel, windowLevel } from './read-model'
 import { useEffect, useState } from 'react'
 import type { ProviderSnapshot, ProviderWindow, ProviderModelRow } from '../../shared/types'
 import { Ring, Icon, IconButton, Bar, StatusDot } from './components'
@@ -35,14 +36,6 @@ function QualityBanner({ s, onRefresh }: { s: ProviderSnapshot; onRefresh: () =>
       </button>
     </div>
   )
-}
-
-function snapLevel(s: ProviderSnapshot): Level {
-  if (s.status === 'error') return 'danger'
-  if (s.status !== 'ok') return 'muted'
-  const pcts = s.windows.map(windowPercent).filter((p): p is number => p != null)
-  if (pcts.length === 0) return 'ok'
-  return levelOfPercent(Math.max(...pcts), 'ok')
 }
 
 /** 单个窗口的模型明细（可展开） */
@@ -166,8 +159,8 @@ export function DetailView({
     )
   }
 
-  const lvl = snapLevel(s)
-  const hero = s.windows.find((w) => w.limit != null && w.limit > 0) ?? s.windows[0]
+  const lvl = snapshotLevel(s)
+  const hero = primaryWindow(s)
   const heroPct = hero ? windowPercent(hero) : null
   const isPlan = s.kind !== 'balance'
   const hasModels = !!s.models && s.models.length > 0
@@ -222,7 +215,7 @@ export function DetailView({
                     <WindowRow
                       key={i}
                       w={w}
-                      lvl={levelOfPercent(windowPercent(w), 'ok')}
+                      lvl={windowLevel(w)}
                       now={now}
                       models={s.modelsByWindow?.[w.name]}
                     />
