@@ -5,8 +5,8 @@
 //   · ball   悬浮球：玻璃球 + 球内底面上的角色（角色隐藏）→ 相机框住整颗球
 //   · figure 个性人物：只有人物独立站在窗口中央（无球壳、无用量环）→ 相机框住人物
 //
-// 为什么单独成模块：这些数字被多处消费 —— scene.ts 建相机与装饰、viewfit 的命中框
-// 投影口径、scripts/test-viewfit.mjs 复算投影。此前测试只能**用正则读 scene.ts 的源码
+// 为什么单独成模块：这些数字被多处消费 —— scene.ts 建相机与装饰、projection.ts 的命中框
+// 投影口径（它按这些常量反算球在窗口里的投影半径）。此前测试只能**用正则读 scene.ts 的源码
 // 文本**来确认常量没漂移 —— 那正是「没有单一来源」的症状。现在两边 import 同一个模块。
 //
 // 单位：世界单位。球外径 56（球心 y = BALL_CENTER_Y），角色脚踩 GROUND_Y。
@@ -33,12 +33,6 @@ export const BAND_TUBE = 1.1
 export const RING_R = BALL_RADIUS * 0.86
 export const RING_TUBE = 1.9
 export const RING_HALO_TUBE = RING_TUBE * 1.5
-export const SILHOUETTE_R = Math.max(SHELL_EDGE_R, BAND_R + BAND_TUBE, RING_R + RING_HALO_TUBE)
-
-/** 球形态反算漫游边界时的留白（世界单位）——球形态不漫游，仅保留给诊断口径 */
-export const ROAM_FIT_MARGIN = 4
-/** 球形态的纵深预算（R9 的历史口径） */
-export const ROAM_DEPTH_BUDGET = 28
 
 /**
  * 模型固有朝向修正：Max 系 FBX 转 Y-up 后若背对镜头，把该值改成 Math.PI 验证。

@@ -153,7 +153,7 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 
 | 脚本 | 说明 |
 |---|---|
-| `npm test` | 全部纯函数单元测试（百分比 / SSR 解析 / 数据可信度 / 托盘文案 / 助理身份 / 可行区反算 / 动作编排） |
+| `npm test` | 全部纯函数单元测试（百分比 / SSR 解析 / 数据可信度 / 托盘文案 / 助理身份 / 投影口径 / 动作编排） |
 | `npm run uitest` | 无头 UI 自动化：卡片 → 详情 → 收起 → 拖拽 → 设置 → 托盘 → 余额显隐 → 窗口切换 → 3D 悬浮物（穿透/菜单/动作/兜底）→ 降级渲染，93 项断言 |
 | `npm run shots` | 设计走查截图到 `/tmp/balancedeck-shots/`（含各皮肤 3D 悬浮球、人物动作、演示图） |
 | `electron . --ballshot` | 只拍收起态悬浮球 / 个性人物（迭代 3D 观感用，十几秒出图）：`BD_PET=1` 人物形态 · `BD_PETS=1` 逐位角色 · `BD_SKINS=1` 逐皮肤 · `BD_DEBUG_RING=1` 画命中区 · `BD_SETTINGS=1` 拍设置页助理分区 |
@@ -163,9 +163,9 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 
 ## 测试与验证
 
-- **498 项单元断言**：`test:percent` 21 · `test:ssr` 17 · `test:quality` 32 · `test:tray` 29 · `test:pet` 43 ·
-  `test:walker` 29 · `test:viewfit` 62 · `test:gesture` 58（动作目录 / 时长口径 / 调度）· `test:adapters` 146 ·
-  `test:structure` 13 · `test:read-model` 48
+- **422 项单元断言**：`test:percent` 21 · `test:ssr` 17 · `test:quality` 32 · `test:tray` 29 · `test:pet` 43 ·
+  `test:projection` 15（命中区投影口径，与 three 交叉核对）· `test:gesture` 58（动作目录 / 时长口径 / 调度）·
+  `test:adapters` 146 · `test:structure` 13 · `test:read-model` 48
 - **93 项 UI 断言**：真实 Electron 里跑完整交互链路（含合成指针事件回归拖拽、开合不漂移、鼠标穿透、
   两种形态切换、置顶开关、无方框阴影；人物形态另有可见集/尺寸/动作池/步幅/进场与退场位移）
 - **设计走查**：`--shots` 自动产出主面板 / 详情 / 设置 / 各皮肤 3D 悬浮球 / 人物形态 / 断网缓存态截图
@@ -181,7 +181,7 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 ├── tray.ts         菜单栏 / 右键菜单    ├── DetailView     详情（窗口明细 / 每模型表）
 ├── scheduler.ts    统一频率采集调度     ├── SettingsView   供应商 / 外观 / 频率 / 系统
 ├── adapters/       11 家内置 + 9 协议   ├── PetBall      收起态悬浮球/人物（DOM 命中层 + 交互）
-├── providers.ts    供应商实例注册表     ├── pet3d/        3D：scene / human / rig / viewfit / tokens
+├── providers.ts    供应商实例注册表     ├── pet3d/        3D：scene / human / gesture / rig / tokens
 ├── skins.ts        皮肤注册表           ├── PetSection   设置页数字助理分区
 └── autostart.ts    开机自启             └── (resources/human-pets 数字人素材，见第三方素材)
 ├── opencode-*.ts   控制台精度 / 明细    └── skins.css     令牌驱动设计系统（5 皮肤）

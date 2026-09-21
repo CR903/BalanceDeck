@@ -24,7 +24,7 @@ import {
   type Pose
 } from './gesture'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
-import { sphereNdcHalf } from './viewfit'
+import { sphereNdcHalf } from './projection'
 import {
   BALL_CENTER_Y,
   BALL_RADIUS,
@@ -52,9 +52,10 @@ import {
 //   · 球形态：玻璃球 + 环形仪表，球内有角色但不显示；
 //   · 个性人物：**没有球壳、没有用量环**，只有人物独立站在窗口中央（读数走窗口下方的胶囊）。
 //
-// 人物形态不做自主走动：人物占满竖版画布时，横向只剩 ±3 个世界单位可动 —— 那既看不出
-// 「在走」，又必然被窗口裁掉张臂的肩膀。走动能力连同 walker/viewfit 一起留给后续形态
-// （随机动作/进出场），当前两形态都是静止取景。
+// 谁在动、怎么动：**动作编排**（见 gesture.ts）—— 出场从场外走入、平时随机做小动作，
+// 位置与偏航都由动作目录的体态轨迹给出，场景只负责把 Pose 落到节点上。
+// 两种形态都不做自主漫游：人物占满竖版画布时横向只剩 ±3 个世界单位可动，既看不出「在走」，
+// 又必然裁掉张臂的肩膀（原 walker.ts 的随机漫游状态机已随之删除）。
 //
 // 渲染质量：ACES 色调映射 + RoomEnvironment 环境光照（PBR 材质的关键）+
 //   实时软阴影（角色投在地面上）+ 玻璃球壳的菲涅尔亮边与镜面高光。
