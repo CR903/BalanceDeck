@@ -99,16 +99,12 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
   /** 点「个性人物」开关（.pet-sec 里第 1 个开关；文案变了这里要跟着改） */
   const petToggle = "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()"
-  const longPress = (down: boolean): string => `(()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,pointerId:11,bubbles:true,pointerType:'mouse',button:0,buttons:${down ? 1 : 0}}
-    b.dispatchEvent(new PointerEvent('${down ? 'pointerdown' : 'pointerup'}',o))
-  })()`
+  /** 驱动一次动作（长按撸一把已随养成体系下线，这里改成直接点名一个动作做观感走查） */
+  const gesture = (id: string): string => `void window.__bd_gesture?.('${id}')`
 
   await exec(backBtn)
   await sleep(500)
-  // 设置页宠物分区特写（3D 缩略图 / 养成数据 / 两个开关 / 数据迁移）
+  // 设置页「数字助理」分区特写（头像 / 一句话设定 / 三个开关 / 换一位）
   await exec(openSettings)
   await sleep(700)
   await exec("document.querySelector('.pet-sec')?.scrollIntoView({block:'center'})")
@@ -128,7 +124,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
     await shoot(`5c-ball-${id}`)
   }
 
-  // ② 个性人物形态：人物独立站立 + 长按撸一把 + 右键菜单
+  // ② 个性人物形态：出场走入 + 站定挥手 + 右键菜单
   await exec('window.api.expand()')
   await sleep(700)
   await exec(openSettings)
@@ -140,10 +136,16 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(collapseBtn)
   await sleep(2000)
   await shoot('5b-pet', { frames: 2 })
-  await exec(longPress(true))
-  await sleep(900)
+  // 鼓掌（原"撸一把"的反馈动作，现在是普通随机小动作）做一张动作走查。
+  // 不能固定睡：这条剪辑是**按需加载**的（首次要解析几百毫秒），睡着了还在站桩。
+  await exec(gesture('clap'))
+  for (let i = 0; i < 15; i++) {
+    const g = (await exec('window.__bd_ball?.()?.gesture ?? null')) as { cur: string | null } | null
+    if (g?.cur === 'clap') break
+    await sleep(250)
+  }
+  await sleep(700) // 进到动作中段再拍（起手几帧还在垂手）
   await shoot('5d-pet-happy')
-  await exec(longPress(false))
   await sleep(400)
   await exec(`(()=>{
     const b=document.querySelector('.petball-hit'); if(!b) return

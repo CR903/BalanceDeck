@@ -7,7 +7,8 @@
 //
 // 宠物在「漫游区」（世界坐标 x/z 平面）里自主行走：
 //   idle（发呆）──定时器到期──▶ walk（走向新目标点）──到达/超时──▶ idle
-// 交互（撸一把 / 喂食 / 睡觉）优先级高于自主行为，由外部 override 驱动。
+// 交互类步态（pet/eat/sleep）优先级高于自主行为，由外部 override 驱动 ——
+// 注意：原本触发它们的养成互动已下线（见 shared/pet.ts 文件头），当前无人调用。
 //
 // 设计取舍：
 //   · 位置是连续的；Q 版朝向只取左右（±1）——桌面宠物侧对镜头时看着像被压扁，
@@ -164,7 +165,7 @@ export function stepWalker(
   return { x, z, facing, dirX, dirZ, gait, since, tx, tz, waitFor }
 }
 
-/** 外部交互：撸一把 / 喂食 / 睡觉（null = 回到自主行为） */
+/** 外部交互步态（null = 回到自主行为）；养成互动下线后已无调用方 */
 export function setWalkerAction(s: WalkerState, action: 'pet' | 'eat' | 'sleep' | null): WalkerState {
   if (action === null) {
     // 交互结束：原地回到 idle 发呆，重新计时

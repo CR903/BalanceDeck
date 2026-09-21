@@ -398,8 +398,8 @@ export function PetBall({
         isStale(s)
           ? `（${s.dataQuality === 'cached' ? '缓存数据 · ' + (dataTime(s) ? new Date(dataTime(s)!).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '') : '本机估算'}）`
           : ''
-      } · 单击展开 · 拖动移动 · 长按撸一把 · 右键菜单`
-    : `单击展开 · 拖动移动 · 长按撸一把 · 右键菜单`
+      } · 单击展开 · 拖动移动 · 右键菜单`
+    : `单击展开 · 拖动移动 · 右键菜单`
 
   return (
     <div
