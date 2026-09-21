@@ -10,6 +10,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { demoSnapshot } from './fixtures'
+import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
 
 export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   const { mkdirSync, writeFileSync } = await import('fs')
@@ -99,6 +100,37 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
   /** 点「个性人物」开关（.pet-sec 里第 1 个开关；文案变了这里要跟着改） */
   const petToggle = "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()"
+  /**
+   * 收起/展开后等画面**真的可以拍**再按快门。两个条件缺一不可：
+   *   · 窗口尺寸已经落到目标值（setBounds 是异步的，改尺寸后合成器要重画一帧）
+   *   · 画布真的有像素（`measure()` 读 WebGL 缓冲；DOM 覆盖层可能早就画好了）
+   * 少等前者时，抓到的第一张会是空图（实测：5-ball-1 只有泡泡、5b-pet-1 什么都没有，
+   * 而同组的第 2、3 帧正常）—— 那是合成器还没把新尺寸的第一帧画出来，不是场景的问题。
+   */
+  const settle = async (expect?: { width: number; height: number }): Promise<void> => {
+    if (expect) {
+      for (let i = 0; i < 40; i++) {
+        const b = win.getBounds()
+        if (b.width === expect.width && b.height === expect.height) break
+        await sleep(150)
+      }
+    }
+    await sleep(600)
+    for (let i = 0; i < 32; i++) {
+      const box = (await exec('window.__bd_ball?.()?.measure?.box ?? null')) as {
+        width: number
+        height: number
+      } | null
+      if (box && box.width > 4 && box.height > 4) break
+      await sleep(250)
+      if (i === 31) console.log('[shots] 画布迟迟没有像素，可能拍出空图')
+    }
+    // 再等**两帧真正合成**。关键区别：measure() 是"按需渲染 + 读回缓冲"，它证明缓冲里有像素，
+    // 却不代表页面已经合成过这一帧 —— 而 capturePage 抓的是**合成结果**。
+    // 少了这一步，球形态收起后的第一张就是空的（实测 5-ball-1 只有泡泡；同组第 2 帧正常）。
+    await exec('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
+  }
+
   /** 驱动一次动作（长按撸一把已随养成体系下线，这里改成直接点名一个动作做观感走查） */
   const gesture = (id: string): string => `void window.__bd_gesture?.('${id}')`
 
@@ -113,9 +145,11 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(backBtn)
   await sleep(500)
 
-  // ① 球形态（默认）：球 + 用量环 + 环心数值
+  // ① 球形态（默认）：球 + 用量环 + 环心数值。
+  // 不能只睡固定时长：窗口一收下 DOM 就先渲染（泡泡已经在了），而 WebGL 首帧要等
+  // 环境贴图（PMREM）生成完 —— 软渲染器上能到秒级，拍早了就是一张只有泡泡的空画布。
   await exec(collapseBtn)
-  await sleep(1800)
+  await settle(BALL_VIEW)
   await shoot('5-ball', { frames: 3 })
   // 各皮肤下的球体（回归"只有毛玻璃皮肤有立体效果"）
   for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
@@ -134,7 +168,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(backBtn)
   await sleep(400)
   await exec(collapseBtn)
-  await sleep(2000)
+  await settle(FIGURE_VIEW)
   await shoot('5b-pet', { frames: 2 })
   // 鼓掌（原"撸一把"的反馈动作，现在是普通随机小动作）做一张动作走查。
   // 不能固定睡：这条剪辑是**按需加载**的（首次要解析几百毫秒），睡着了还在站桩。
