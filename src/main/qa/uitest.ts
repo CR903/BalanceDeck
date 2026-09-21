@@ -419,9 +419,18 @@ export async function runUiTest(
   void petIdBefore
 
   // 桌面宠物开关：关掉 → 收起态退回 2D 圆点（无 WebGL）；再开回来
-  const petSwitch = async (): Promise<void> => {
+  /**
+   * 点「个性人物」开关，并等到偏好真的落定。
+   * 关闭时会先播**退场动作**（挥手告别 + 转身走出窗口）再收成球，所以不能只睡 500ms；
+   * 展开态下没有 3D 场景（PetBall 未挂载）时立即生效，轮询自然也算得出。
+   */
+  const petSwitch = async (want: '1' | '0'): Promise<void> => {
     await exec("[...document.querySelectorAll('.pet-sec .switch')][0]?.click()")
-    await sleep(500)
+    for (let i = 0; i < 30; i++) {
+      const v = await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']??'')")
+      if ((want === '1' && v === '1') || (want === '0' && v === '0')) return
+      await sleep(400)
+    }
   }
   const gotoView = async (v: 'card' | 'settings' | 'collapse'): Promise<void> => {
     if (v === 'collapse') {
@@ -438,7 +447,7 @@ export async function runUiTest(
   }
 
   // 开关语义：默认未设置 = 球形态；点一次 → 开启桌面宠物（'1'）；再点 → 关闭（'0'）
-  await petSwitch()
+  await petSwitch('1')
   r.petToggleSaved = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
 
   // ── 个性人物形态：窗口是竖版（320×440），人物素材就位，穿透生效 ──
@@ -462,7 +471,14 @@ export async function runUiTest(
     | null
   const ballBits = (figDump ?? []).filter((m) => m.visible && /Sphere|Torus|Tube/.test(m.type))
   r.petFigureOnly = ballBits.length === 0 ? 'ok' : `fail:${ballBits.map((m) => m.type).join(',')}`
-  // 人物要占满竖版窗口（「脸得看得清」的诉求）：命中区与真实 ink box 双口径
+  // 人物要占满竖版窗口（「脸得看得清」的诉求）：命中区与真实 ink box 双口径。
+  // ⚠ 必须等它**静息**再量：人物现在会做动作（走动/张望/伸懒腰），侧身走动时投影自然窄得多，
+  // 拿动作中的帧去量会得到一个跟"脸看不清"无关的小盒子。
+  for (let i = 0; i < 50; i++) {
+    const g = (await exec('window.__bd_ball?.()?.gesture ?? null')) as { cur: string | null } | null
+    if (g && g.cur === null) break
+    await sleep(300)
+  }
   r.petFigureBig = String(
     await exec(`(()=>{const b=window.__bd_ball?.(); if(!b) return 'no-handle'
       const r=b.rect, ink=b.measure?.box
@@ -470,6 +486,40 @@ export async function runUiTest(
         ? 'ok' : 'fail:rect='+JSON.stringify(r&&[Math.round(r.width),Math.round(r.height)])+' ink='+JSON.stringify(ink&&[Math.round(ink.width),Math.round(ink.height)])})()`)
   )
 
+  // ── 进出场动作：不是"配置对不对"，而是**人真的动了** ──
+  // 体态 x 的极值由场景自己记录（靠台架 300ms 采样必然漏掉 1.2 秒的走动）：
+  // 进场从场外左侧走来 → minX 明显为负；退场走出窗口右侧 → maxX 明显为正。
+  const travel = (): { minX: number; maxX: number } => ({ minX: 0, maxX: 0 })
+  let enterTravel = travel()
+  for (let i = 0; i < 40; i++) {
+    enterTravel = ((await exec('window.__bd_ball?.()?.travel ?? null')) as { minX: number; maxX: number } | null) ?? travel()
+    if (enterTravel.minX < -10) break
+    await sleep(300)
+  }
+  // 进场是"模型就位那一刻"自动播的（老代码在模型没加载完时就请求，实际从没被看到过）
+  r.petEnterWalk = enterTravel.minX < -10 ? 'ok' : `fail:minX=${enterTravel.minX}`
+  // 退场：收起态下主动驱动一次，人物必须往窗口外走
+  // ⚠ fire-and-forget：playGesture 的 Promise 在动作播完才兑现，而 executeJavaScript 会 await 它
+  await exec("void window.__bd_gesture?.('exit')")
+  let exitMaxX = 0
+  for (let i = 0; i < 30; i++) {
+    const t = ((await exec('window.__bd_ball?.()?.travel ?? null')) as { maxX: number } | null) ?? { maxX: 0 }
+    exitMaxX = t.maxX
+    if (exitMaxX > 10) break
+    await sleep(300)
+  }
+  r.petExitWalk = exitMaxX > 10 ? 'ok' : `fail:maxX=${exitMaxX}`
+
+  // ── 动作编排：每位角色的随机动作池 ≥5、步幅速度来自剪辑、人物出现即进场 ──
+  // 观感不可断言，但"编排"可以：池子、步速、进场是否真的播过。
+  const gest = (await exec('window.__bd_ball?.()?.gesture ?? null')) as
+    | { cur: string | null; step: number; planned: string | null; last: string | null; pool: string[] }
+    | null
+  r.petGesturePool = gest && gest.pool.length >= 5 ? 'ok' : `fail:${JSON.stringify(gest?.pool ?? null)}`
+  const stride = (await exec('window.__bd_ball?.()?.stride ?? 0')) as number
+  // 步幅速度由 walk 剪辑的根位移反算（实测 ≈27）；落在这个区间才算"真的量到了剪辑步幅"，
+  // 而不是退化成按身高估计（退化时会 console.warn，也在 15–45 内，故同时看 rootMotion）
+  r.petStride = stride >= 15 && stride <= 45 ? 'ok' : `fail:${stride}`
   // 置顶开关（默认开；关掉后主进程不再置顶；再开回来）
   const topDefault = (await exec('window.api.debugPetState()')) as { alwaysOnTop: boolean } | null
   r.petTopDefault = topDefault?.alwaysOnTop === true ? 'ok' : 'fail:default-off'
@@ -494,7 +544,11 @@ export async function runUiTest(
     rect: ball && { w: Math.round(ball.rect.width), h: Math.round(ball.rect.height) },
     ink: ball && { w: ball.measure.box.width, h: ball.measure.box.height },
     // 软化/卡顿现场证据：帧率与最长一帧间隔
-    perf: (ball as { perf?: unknown } | null)?.perf ?? null
+    perf: (ball as { perf?: unknown } | null)?.perf ?? null,
+    stride: (ball as { stride?: unknown } | null)?.stride ?? null,
+    gesture: (ball as { gesture?: unknown } | null)?.gesture ?? null,
+    // 动作解析占用主线程的毫秒数（人物"卡一下"的归因）
+    clipParseMs: (ball as { clipParseMs?: unknown } | null)?.clipParseMs ?? null
   })
 
   // 长按撸一把：亲密度上升、播放开心动作，且**不展开面板**
@@ -565,7 +619,7 @@ export async function runUiTest(
   await sleep(600)
 
   await gotoView('settings')
-  await petSwitch()
+  await petSwitch('0')
   r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
   await gotoView('collapse')
   r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.figure === '0'")) ? 'ok' : 'fail:figure-on'
@@ -585,7 +639,7 @@ export async function runUiTest(
   if (petWasOn) {
     await exec(footerClick('设置'))
     await sleep(600)
-    await petSwitch()
+    await petSwitch('1')
     await sleep(300)
     await exec(footerClick('返回'))
     await sleep(400)
