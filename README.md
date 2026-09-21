@@ -50,6 +50,10 @@
 - **个性人物**：**没有球壳、没有进度环**，只有一位**真人数字人**（aria / ray 两位可选）站在窗口中央，
   窗口扩成 320×440 的**竖版**，人物约占 296px 高（头部约 40px，是球内形态的 3.7 倍）；
   读数显示在脚下胶囊。单击展开、拖动移动、**长按 0.6 秒**撸一把、右键出原生菜单
+- **会动**：出场时**从窗口外走进来再站定挥手**，收起/换人时**挥手告别再转身走出去**；
+  平时每 5–11 秒随机做个小动作，**两位角色各有一套**（Aria：张望 / 伸懒腰 / 思考 / 捋头发 / 转脖子；
+  Ray：张望 / 伸懒腰 / 耸肩 / 思考 / 甩手）；撸一把鼓掌、喂食喝水、播报余额时比划着说话。
+  动作素材**按需加载**：只有出场要用的几条随模型加载，其余第一次被抽到才解析
 
 > 人物素材按需加载：默认的球形态**不下载、不解析**任何人物模型（human 分包只在开启个性人物时载入），
 > 所以「3D 效果拖慢启动」不会落在不用它的人身上。
@@ -64,11 +68,11 @@
 - **养成仍在**：亲密度 / 饱食度按小时惰性衰减（亲密度有下限），经验升级；数据只存本机，
   支持导出/导入 JSON 迁移（换机不丢进度）
 
-**3D 素材**：Q 版宠物模型来自 **[Kenney「Cube Pets」](https://kenney.nl/assets/cube-pets)**（**CC0 1.0**，
-公共领域，可商用无需署名），随包内置 8 只：麻薯猫 / 豆柴 / 企鹅仔 / 小狐狸 / 熊猫团子 / 兔兔 / 考拉 / 小老虎。
-模型以 base64 内联进产物并按需分包，不联网、不落地额外文件。
+**3D 动作**：数字人的平时小动作取自 Rocketbox 自带动作库（MIT）——静息呼吸、走动、挥手、说话之外，
+还有张望 / 伸懒腰 / 思考 / 捋头发 / 转脖子 / 耸肩 / 甩手 / 鼓掌 / 喝水，全部随包分发、按需解析、不联网。
 真人助理（Aria / Ray）来自 **[Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox)**（**MIT**，
-115 个带骨骼真人模型 + 动作库），`npm run fetch:humans` 拉取后随包分发（`resources/human-pets`）。
+115 个带骨骼真人模型 + 三百多条动作库），`npm run fetch:humans` 拉取后随包分发
+（`resources/human-pets`；每人 1 个模型 + 11 条动作，**按文件幂等**、缺哪条补哪条）。
 
 ### 🧭 菜单栏（macOS）/ 系统托盘（Windows）
 - **左键**：直接显示 / 隐藏悬浮卡片（macOS 不再被右键菜单抢占）
@@ -149,7 +153,7 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 
 | 脚本 | 说明 |
 |---|---|
-| `npm test` | 全部纯函数单元测试（百分比 / SSR 解析 / 数据可信度 / 托盘文案 / 宠物养成 / 可行区反算） |
+| `npm test` | 全部纯函数单元测试（百分比 / SSR 解析 / 数据可信度 / 托盘文案 / 宠物养成 / 可行区反算 / 动作编排） |
 | `npm run uitest` | 无头 UI 自动化：卡片 → 详情 → 收起 → 拖拽 → 设置 → 托盘 → 余额显隐 → 窗口切换 → 3D 宠物（穿透/长按/菜单/兜底）→ 降级渲染，74 项断言 |
 | `npm run shots` | 设计走查截图到 `/tmp/balancedeck-shots/`（含各皮肤 3D 悬浮球、宠物动作、演示图） |
 | `electron . --ballshot` | 只拍收起态悬浮球 / 个性人物（迭代 3D 观感用，十几秒出图）：`BD_PET=1` 人物形态 · `BD_PETS=1` 逐位角色 · `BD_SKINS=1` 逐皮肤 · `BD_DEBUG_RING=1` 画命中区 · `BD_SETTINGS=1` 拍设置页宠物分区 |
@@ -159,8 +163,11 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 
 ## 测试与验证
 
-- **187 项单元断言**：`test:percent` 21 · `test:ssr` 17 · `test:quality` 32 · `test:tray` 29 · `test:pet` 64 · `test:walker` 24
-- **74 项 UI 断言**：真实 Electron 里跑完整交互链路（含合成指针事件回归拖拽、长按、开合不漂移、鼠标穿透、两种形态切换、置顶开关、无方框阴影）
+- **522 项单元断言**：`test:percent` 21 · `test:ssr` 17 · `test:quality` 32 · `test:tray` 29 · `test:pet` 66 ·
+  `test:walker` 29 · `test:viewfit` 62 · `test:gesture` 59（动作目录 / 时长口径 / 调度）· `test:adapters` 146 ·
+  `test:structure` 13 · `test:read-model` 48
+- **98 项 UI 断言**：真实 Electron 里跑完整交互链路（含合成指针事件回归拖拽、长按、开合不漂移、鼠标穿透、
+  两种形态切换、置顶开关、无方框阴影；人物形态另有可见集/尺寸/动作池/步幅/进场与退场位移）
 - **设计走查**：`--shots` 自动产出主面板 / 详情 / 设置 / 各皮肤 3D 悬浮球 / 人物形态 / 断网缓存态截图
 - **受限环境自检**：沙箱里跑 Electron 自检时，`BD_SANDBOX_OFF=1`（关进程沙箱 + 允许软件 WebGL）、
   `BD_USER_DATA=<目录>`（把状态落到可写目录）可绕过宿主限制；正常运行不需要这两个变量
@@ -188,8 +195,7 @@ npm run dist:win            # 打 Windows NSIS + zip（可在 macOS 上交叉打
 - 所有数据**只在本机**计算与存储；除各家余额 / 用量接口外不发起任何网络请求，无遥测
 - 凭据通过 Electron `safeStorage` 加密后落盘（macOS Keychain / Windows DPAPI）
 - 仓库与示例中不包含任何可用凭据；宠物数据支持导出为本地 JSON，迁移后可随时删除
-- 第三方素材：Q 版宠物 3D 模型 © [Kenney](https://kenney.nl)（CC0 1.0，公共领域）；
-  真人模型与动作 © Microsoft Rocketbox（MIT，随包分发，见 `resources/human-pets/*/meta.json`）
+- 第三方素材：真人模型与动作 © Microsoft Rocketbox（MIT，随包分发，见 `resources/human-pets/*/meta.json`）
 
 ## Roadmap
 
