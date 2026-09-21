@@ -2,7 +2,27 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { PetId } from '../../../shared/pet'
 import { BALL_VIEW, FIGURE_VIEW } from '../../../shared/pet-view'
-import type { HumanClip } from './human'
+import type { HumanInstance } from './human'
+import { BASE_CLIPS, hasClip, type HumanClip } from './clips'
+import {
+  GESTURES,
+  REST_CLIP,
+  STILL,
+  frameOf,
+  initialPlan,
+  isPlaying,
+  playNow,
+  poseOf,
+  randomPool,
+  resolveStep,
+  stepPlan,
+  toRest,
+  type GestureCtx,
+  type GestureEnv,
+  type GestureId,
+  type GesturePlan,
+  type Pose
+} from './gesture'
 import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
 import { sphereNdcHalf } from './viewfit'
 import {
@@ -47,15 +67,20 @@ import {
 interface HumanRuntime {
   mixer: THREE.AnimationMixer
   root: THREE.Group
-  actions: Record<HumanClip, THREE.AnimationAction>
-  cur: HumanClip
+  inst: HumanInstance
+  /** 当前正在播的剪辑（null = 还没起播，首帧会补上） */
+  cur: HumanClip | null
   /** 剪辑自带根位移的抵消（见 human.ts 的 instantiateHuman） */
   cancelRootMotion: () => void
   /** 迄今抵消掉的根位移峰值（世界单位）——「素材到底漂不漂」的现场证据 */
   rootMotion: () => number
 }
 
-export type PetAction = 'idle' | 'happy' | 'eat' | 'sleep'
+/**
+ * 外部触发的反应动作（撸一把 / 喂食 / 回到静息）。
+ * 'sleep' 已随走动一起下线：当年是"久坐发呆 → 打盹"的定时器，走动停了就再没人触发它。
+ */
+export type PetAction = 'idle' | 'happy' | 'eat'
 
 export interface BallFrame {
   /** 环形进度 0–100（null = 无数据） */
@@ -76,9 +101,12 @@ export interface Pet3dHandle {
   canvas: HTMLCanvasElement
   setFrame: (f: BallFrame) => void
   setPet: (id: PetId) => void
-  setAction: (a: PetAction, ms?: number) => void
-  /** 播放一次性角色动作（wave / talk），到时自动回到 idle；非真人系素材为空实现 */
-  playAnim: (animName: HumanClip, durationSec: number) => Promise<void>
+  setAction: (a: PetAction) => void
+  /**
+   * 播一个动作（进场/退场/打招呼…），**resolve 于该动作播完**。
+   * 模型未就位时排队到就位后再播 —— 这正是"进场动画常常看不到"的老问题的根因。
+   */
+  playGesture: (id: GestureId) => Promise<void>
   setSkin: () => void
   /** 手动推进一步并渲染（测试用；常规由内部 rAF 驱动） */
   tick: (dt: number) => void
@@ -91,6 +119,16 @@ export interface Pet3dHandle {
   rootMotion: () => number | null
   /** 测试观测点：帧率与最长一帧间隔（软化/卡顿的现场证据；命中区变化后用 perf() 复核） */
   perf: () => { fps: number; maxGap: number }
+  /** 测试观测点：走动的自然速度（世界单位/秒）——由 walk 剪辑的根位移反算；0 = 没量到 */
+  stride: () => number
+  /** 测试观测点：最近一次动作解析占用的主线程毫秒数（卡顿归因） */
+  clipParseMs: () => number
+  /** 测试观测点：动作编排现状（当前/下一步/上一步/随机池）——观感不可断言，编排可以 */
+  gesture: () => { cur: GestureId | null; step: number; planned: GestureId | null; last: GestureId | null; pool: GestureId[] } | null
+  /** 测试观测点：当前体态（世界 x / 抬升 / 偏航 / 前倾） */
+  pose: () => Pose
+  /** 测试观测点：体态 x 的极值（迄今）——「真的从场外走进来 / 真的走出去」拿它断言 */
+  travel: () => { minX: number; maxX: number }
   /** 测试观测点：从 WebGL 缓冲读出「有像素的范围」与不透明像素占比 */
   measure: () => { box: { x: number; y: number; width: number; height: number }; ratio: number } | null
   /** 测试观测点：宠物素材是否已就位 */
@@ -397,29 +435,33 @@ export function createPet3dScene(
           return
         }
         disposeCurrentPet()
+        actions.clear()
         petHolder = inst.group
         petHolder.visible = rig.ball === false
         petGroup.add(petHolder)
-        const actions = {
-          walk: inst.mixer.clipAction(inst.clips.walk),
-          idle: inst.mixer.clipAction(inst.clips.idle),
-          wave: inst.mixer.clipAction(inst.clips.wave),
-          talk: inst.mixer.clipAction(inst.clips.talk)
+        // 基础剪辑已在 instantiateHuman 里装载：把它们的 action 收进本地表（首帧即可播）
+        for (const clip of BASE_CLIPS) {
+          const a = await inst.ensureClip(clip)
+          if (a) actions.set(clip, a)
         }
-        actions.walk.setLoop(THREE.LoopRepeat, Infinity)
-        actions.idle.setLoop(THREE.LoopRepeat, Infinity)
-        actions.idle.play()
         human = {
           mixer: inst.mixer,
           root: inst.group,
-          actions,
-          cur: 'idle',
+          inst,
+          cur: null,
           cancelRootMotion: inst.cancelRootMotion,
           rootMotion: inst.rootMotion
         }
-        if (inst.unbound.length > 0) {
-          console.warn('[pet3d] 真人动作绑定缺失节点：', inst.unbound.join(','))
+        pool = randomPool((c) => hasClip(want, c))
+        plan = initialPlan(env)
+        travelMinX = 0
+        travelMaxX = 0
+        const unbound = inst.unbound()
+        if (unbound.length > 0) {
+          console.warn('[pet3d] 真人动作绑定缺失节点：', unbound.join(','))
         }
+        // 人物出现即进场（从场外走入 + 站定挥手）—— 这就是"每个人独立的进出场动作"的进场
+        void queue('enter')
         return
     } catch (e) {
       // 素材加载失败：只留球体，不影响 KPI（再次切换宠物会重试）
@@ -432,8 +474,24 @@ export function createPet3dScene(
 
   // ─── 状态 ───────────────────────────────────────────────────────────────────
   let clock = 0
-  let action: PetAction = 'idle'
-  let actionUntil = 0
+  /** 动作编排：静息 → 抽一个已就位的动作 → 播完回静息（纯逻辑见 gesture.ts） */
+  let plan: GesturePlan | null = null
+  /** 外部请求的动作：等第一步剪辑就位后再开播；active = 正在播的那个（其 Promise 未兑现） */
+  let pending: { id: GestureId; resolve: () => void } | null = null
+  let active: { id: GestureId; resolve: () => void } | null = null
+  /** 已建好 action 的剪辑（懒加载的产物；调度器只播这里有的东西） */
+  const actions = new Map<HumanClip, THREE.AnimationAction>()
+  /** 当前体态（每帧由动作编排算出；测试观测点读它） */
+  let poseNow: Pose = { ...STILL }
+  /** 场景已销毁：挂到 window 的句柄可能在卸载后还被调用（App 的退场编排就是） */
+  let disposed = false
+  /**
+   * 体态 x 的极值（迄今）：进出场"到底走没走"的现场证据。
+   * 为什么在场景里记而不是让台架轮询：进场走动只有 1.2 秒、且 easeOut 前段就消掉大半，
+   * 靠 300ms 一次的 executeJavaScript 去采样必然漏（实测只采到 0，看着像没走）。
+   */
+  let travelMinX = 0
+  let travelMaxX = 0
   let frame: BallFrame = { percent: null, level: 'muted', value: '', label: '', pager: null }
   let ringOn = true
   let tokens: SkinTokens = readSkinTokens(host)
@@ -555,38 +613,143 @@ export function createPet3dScene(
   ro.observe(host)
   resize()
 
-  // ─── 帧循环 ─────────────────────────────────────────────────────────────────
-  const applyAction = (now: number): void => {
-    if (action !== 'idle' && now > actionUntil) action = 'idle'
+  // ─── 动作编排（见 gesture.ts）────────────────────────────────────────────────
+  /** 主角所在平面的可见半宽（世界单位）：走动的"场外"距离 = 它 + 人物半宽 */
+  const viewHalfW = (): number => {
+    const w = host.clientWidth || view.width
+    const h = host.clientHeight || view.height
+    const d = Math.hypot(rig.camZ, rig.pitch)
+    return d * Math.tan((CAM_FOV * Math.PI) / 360) * (w / h)
   }
+
+  /** 本角色可用的随机动作池：目录 ∩ 素材表（"每个人有独立的随机动作"落在数据上） */
+  let pool: GestureId[] = randomPool((c) => hasClip(petId, c))
+
+  const env: GestureEnv = {
+    stepSeconds: (id, step) => {
+      const st = GESTURES[id].steps[step]
+      if (!st) return null
+      return resolveStep(st, human?.inst.clipSeconds(st.clip) ?? null, ctxOf())
+    },
+    // 取值器而不是复制：池子按角色重算（attachPet 里），复制一份就会永远停在旧角色上
+    get pool() {
+      return pool
+    },
+    weightOf: (id) => GESTURES[id].weight,
+    rand: Math.random
+  }
+
+  const ctxOf = (): GestureCtx => ({
+    offStageX: HUMAN_HALF_W + viewHalfW(),
+    strideSpeed: human?.inst.strideSpeed() ?? 0
+  })
+
+  /** 预取一个动作要用到的全部剪辑（在静息期间做，开播时必然就位） */
+  const prefetch = (id: GestureId): void => {
+    const inst = human?.inst
+    if (!inst) return
+    for (const st of GESTURES[id].steps) {
+      if (actions.has(st.clip) || !hasClip(petId, st.clip)) continue
+      void inst.ensureClip(st.clip).then((a) => {
+        // 期间换过角色：这张 action 属于旧 mixer，不能塞进新表
+        if (a && human?.inst === inst) actions.set(st.clip, a)
+      })
+    }
+  }
+
+  const FADE_SEC = 0.25
+  /** 切剪辑（交叉淡化）；还没就位就先请一条、保持当前画面（不播成空站立） */
+  const setClip = (clip: HumanClip): void => {
+    if (!human || human.cur === clip) return
+    const inst = human.inst
+    const next = actions.get(clip)
+    if (!next) {
+      void inst.ensureClip(clip).then((a) => {
+        if (a && human?.inst === inst) actions.set(clip, a)
+      })
+      return
+    }
+    const prev = human.cur ? actions.get(human.cur) : null
+    next.reset()
+    next.fadeIn(FADE_SEC).play()
+    prev?.fadeOut(FADE_SEC)
+    human.cur = clip
+  }
+
+  /**
+   * 外部请求的动作：等第一步剪辑就位再开播。
+   * 这一条修的是老缺陷 —— 进场动画在模型还没加载完时就被请求，于是从来没被看到过。
+   */
+  const pumpRequests = (): void => {
+    if (!human || !pending) return
+    const inst = human.inst
+    const first = GESTURES[pending.id].steps[0].clip
+    if (!actions.has(first)) {
+      void inst.ensureClip(first).then((a) => {
+        if (a && human?.inst === inst) actions.set(first, a)
+      })
+      return
+    }
+    if (!plan) return
+    prefetch(pending.id)
+    active?.resolve() // 后来的请求打断前一个：兑现它的 Promise，别让调用方悬挂
+    active = pending
+    pending = null
+    plan = playNow(plan, active.id)
+  }
+
+  /**
+   * 入队一个动作（后到的覆盖先到的：只有最后一次意图有意义）。
+   * 球形态或**场景已销毁**时立刻兑现 —— 否则 App 的"退场播完再换人/再收成球"
+   * 会拿着一个永远不会 resolve 的 Promise 干等（展开态下 PetBall 已卸载，是真会发生的）。
+   */
+  const queue = (id: GestureId): Promise<void> =>
+    new Promise((resolve) => {
+      if (rig.ball || disposed) {
+        resolve()
+        return
+      }
+      pending?.resolve()
+      pending = { id, resolve }
+      if (human) pumpRequests()
+    })
 
   const step = (dt: number): void => {
     clock += dt
-    applyAction(performance.now())
+    if (!plan) plan = initialPlan(env)
+    const prevPlan = plan
+    plan = stepPlan(plan, dt, env)
+    // 动作一换（或初次选定待播动作）就开始预取，别等开播才发现没料
+    pumpRequests()
+    // 外部请求的动作播完了 → 兑现它的 Promise（App 的"退场播完再换人"就等这个）
+    if (active && plan.cur === null) {
+      active.resolve()
+      active = null
+    }
+    // 预取只在**静息**时做：解析一条动作 FBX 会占住主线程几百毫秒（整条剪辑自带骨骼+蒙皮），
+    // 在动作播放中间做就会看到人物卡住 —— 静息时它只是呼吸，这段卡顿才读不出来。
+    if (plan.cur === null && plan.planned && plan.planned !== prevPlan.planned) prefetch(plan.planned)
 
-    // 人物形态站着不动（走动见文件头注释）：位置恒在世界原点，只有悬停浮沉
+    const f = frameOf(plan, env)
+    setClip(f ? f.clip : REST_CLIP)
+    const pose: Pose = poseOf(plan, env, ctxOf())
+    poseNow = pose
+    if (pose.x < travelMinX) travelMinX = pose.x
+    if (pose.x > travelMaxX) travelMaxX = pose.x
+
+    // 悬停浮沉：剪辑自带的呼吸之外再叠一层整体起伏，读作「悬浮」而不是「抖动」
     const bob = Math.sin(clock * 1.2) * BOB_AMP
-    petGroup.position.set(0, GROUND_Y + bob, 0)
-    // 浮起来时脚下阴影略微变淡变大，读作「离地」而不是「整体缩放」
+    petGroup.position.set(pose.x, GROUND_Y + bob + pose.y, 0)
+    petGroup.rotation.set(pose.lean, HUMAN_YAW + pose.yaw, 0)
+    // 脚下阴影跟着人走（进出场时会横向移动），浮起时略放大
+    blob.position.x = pose.x
     blob.scale.setScalar(rig.shadowW * (1 - bob * 0.02))
 
-    // ─── 真人系位姿：骨骼动画（mixer），action → clip 交叉淡化 ──────────────────
+    // ─── 骨骼动画：mixer 推进 + 抵消剪辑自带的根位移 ────────────────────────────
     if (human) {
       human.mixer.update(dt)
-      const want: HumanClip = action === 'happy' ? 'wave' : action === 'eat' ? 'talk' : 'idle'
-      if (want !== human.cur) {
-        const prev = human.actions[human.cur]
-        const next = human.actions[want]
-        const looped = want === 'idle'
-        next.reset()
-        next.setLoop(looped ? THREE.LoopRepeat : THREE.LoopOnce, Infinity)
-        next.clampWhenFinished = !looped
-        next.fadeIn(0.25).play()
-        prev.fadeOut(0.25)
-        human.cur = want
-      }
-      // 剪辑自带根位移：实测 walk 的根骨骼 z 曲线振幅 159.7cm（归一化后 ≈33 世界单位/循环）、
-      // idle ≈12 —— 不抵消的话角色会自己往前滑再被循环边界瞬移回来。
+      // 剪辑自带根位移：walk 的根骨骼 z 曲线一圈拖走 ≈33 世界单位、idle ≈12 ——
+      // 不抵消的话角色会自己往前滑再被循环边界瞬移回来（位置只由动作编排驱动）。
       human.cancelRootMotion()
     }
 
@@ -642,10 +805,10 @@ export function createPet3dScene(
       petId = want
       void attachPet(want)
     },
-    setAction: (a, ms = 1600) => {
-      if (rig.ball) return // 球形态看不到角色，不播动作
-      action = a
-      actionUntil = performance.now() + ms
+    setAction: (a) => {
+      if (a === 'idle') return
+      // 撸一把 → 鼓掌、喂食 → 喝水：动作目录决定演什么，调用方只管语义
+      void queue(a === 'happy' ? 'clap' : 'drink')
     },
     setSkin: () => applyTokens(),
     tick: (dt) => step(dt > 0 && dt <= 0.1 ? dt : 0.016),
@@ -653,34 +816,35 @@ export function createPet3dScene(
       paused = p
       last = performance.now()
     },
+    travel: () => ({
+      minX: Math.round(travelMinX * 100) / 100,
+      maxX: Math.round(travelMaxX * 100) / 100
+    }),
+    pose: () => ({
+      x: Math.round(poseNow.x * 100) / 100,
+      y: Math.round(poseNow.y * 100) / 100,
+      yaw: Math.round(poseNow.yaw * 1000) / 1000,
+      lean: Math.round(poseNow.lean * 1000) / 1000
+    }),
     hitRect: () => ({ ...hitBox }),
     hitCenter: () => ({ x: hitBox.x + hitBox.width / 2, y: hitBox.y + hitBox.height / 2 }),
     perf: () => ({ fps, maxGap: Math.round(maxGap) }),
+    stride: () => Math.round((human?.inst.strideSpeed() ?? 0) * 10) / 10,
+    clipParseMs: () => human?.inst.lastParseMs() ?? 0,
+    gesture: () =>
+      plan
+        ? {
+            cur: plan.cur,
+            step: plan.step,
+            planned: plan.planned,
+            last: plan.last,
+            pool: [...pool]
+          }
+        : null,
     rootMotion: () => (human ? Math.round(human.rootMotion() * 100) / 100 : null),
     petReady: () => petHolder !== null,
     /** 播放宠物动画（供 App.tsx 调用） */
-    playAnim: async (animName: HumanClip, durationSec: number): Promise<void> => {
-      // 抓住当前实例：await 期间模型可能被销毁或换掉（human 会被置 null），
-      // 之后再解引用就会抛 "Cannot read properties of null (reading 'actions')"，
-      // 而且是 unhandled rejection（调用方是 fire-and-forget 的动效）。
-      const inst = human
-      if (!inst) return
-      // 停止当前所有动作
-      inst.actions.idle.stop()
-      inst.actions.walk.stop()
-      // 播放指定动作
-      const action = inst.actions[animName]
-      action.reset()
-      action.clampWhenFinished = true
-      action.play()
-      action.setLoop(THREE.LoopOnce, 1)
-      // 等待动画播放完成
-      await new Promise((resolve) => setTimeout(resolve, durationSec * 1000))
-      // 回到 idle —— 先确认实例还在（被换掉就什么都不做）
-      if (inst !== human) return
-      inst.actions.idle.reset()
-      inst.actions.idle.play()
-    },
+    playGesture: (id) => queue(id),
     hideIndex: (i, on) => {
       let n = 0
       scene.traverse((o) => {
@@ -753,9 +917,15 @@ export function createPet3dScene(
       }
     },
     dispose: () => {
+      disposed = true
       cancelAnimationFrame(raf)
       ro.disconnect()
       loadToken++ // 让在途的加载结果作废
+      actions.clear()
+      pending?.resolve()
+      active?.resolve()
+      pending = null
+      active = null
       if (human) {
         human.mixer.stopAllAction()
         human = null
@@ -774,9 +944,15 @@ export function createPet3dScene(
     }
   }
 
-  // 挂载全局状态访问器（供 App.tsx 调用）
+  // 挂载全局状态访问器（供 App.tsx 调用）；销毁时收回 —— 只收回自己那一个
   if (typeof window !== 'undefined') {
     ;(window as any).__bd_pet_scene__ = handle
+    const own = handle
+    const origDispose = handle.dispose
+    handle.dispose = () => {
+      origDispose()
+      if ((window as any).__bd_pet_scene__ === own) delete (window as any).__bd_pet_scene__
+    }
   }
 
   return handle

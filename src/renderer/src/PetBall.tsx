@@ -146,17 +146,16 @@ export function PetBall({
     if (ready && frameRef.current) sceneRef.current?.setFrame(frameRef.current)
   }, [ready, hideBalance])
 
-  // 角色切换：见面打招呼（挥手 + 自报家门）
+  // 角色切换：换人 + 自报家门（进场动作由场景在模型就位那一刻自己播，见 scene.ts）
   useEffect(() => {
     sceneRef.current?.setPet(pet.id)
-    sceneRef.current?.setAction('happy', 1700)
     showBubble(`你好，我是${pet.name}～`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pet.id])
 
   useEffect(() => {
     if (!actionSeq) return
-    sceneRef.current?.setAction(action, action === 'happy' ? 1700 : action === 'eat' ? 2200 : 9000)
+    sceneRef.current?.setAction(action)
   }, [actionSeq, action])
 
   // 皮肤：主进程推送时 App 会重挂 data-skin，等一帧让 CSS 变量生效再重读令牌
@@ -173,21 +172,30 @@ export function PetBall({
     const w = window as unknown as {
       __bd_ball?: () => unknown
       __bd_hide?: (i: number, on: boolean) => void
+      __bd_gesture?: (id: string) => Promise<void>
     }
     w.__bd_ball = () => ({
       rect: sceneRef.current?.hitRect() ?? null,
       center: sceneRef.current?.hitCenter() ?? null,
       rootMotion: sceneRef.current?.rootMotion() ?? null,
       perf: sceneRef.current?.perf() ?? null,
+      stride: sceneRef.current?.stride() ?? 0,
+      gesture: sceneRef.current?.gesture() ?? null,
+      pose: sceneRef.current?.pose() ?? null,
+      travel: sceneRef.current?.travel() ?? null,
+      clipParseMs: sceneRef.current?.clipParseMs() ?? 0,
       measure: sceneRef.current?.measure() ?? null,
       petReady: sceneRef.current?.petReady() ?? false,
       dump: sceneRef.current?.dump() ?? [],
       frame: frameRef.current
     })
     w.__bd_hide = (i, on) => sceneRef.current?.hideIndex(i, on)
+    // 动作触发口（测试用）：--uitest 要能在收起态下驱动一次退场，核对"真的走出去了"
+    w.__bd_gesture = (id) => sceneRef.current?.playGesture(id as never) ?? Promise.resolve()
     return () => {
       delete w.__bd_ball
       delete w.__bd_hide
+      delete w.__bd_gesture
     }
   }, [ready])
 
@@ -314,7 +322,11 @@ export function PetBall({
     if (!s || s.status !== 'ok') return
     const stale = isStale(s) ? (s.dataQuality === 'cached' ? '（缓存）' : '（估算）') : ''
     const text = `${label} ${value}${stale}`
-    const t = window.setTimeout(() => showBubble(text), 90_000)
+    const t = window.setTimeout(() => {
+      showBubble(text)
+      // 播报是"说话"的场合：让人物比划着讲（动作目录里的 talk，剪辑按需加载）
+      void sceneRef.current?.playGesture?.('talk')?.catch?.(() => {})
+    }, 90_000)
     return () => window.clearTimeout(t)
   }, [pet.id, figure, failed, s, value, label])
 
@@ -413,7 +425,7 @@ export function PetBall({
       // 点击 = 立即展开。挥手动画**不阻塞**：等 1.5s 动画播完再展开，既是体验问题
       // （点一下要等一秒半），也会让 UI 断言在 700ms 的等待窗口里读不到展开后的窗口。
       const scene = (window as any).__bd_pet_scene__
-      void scene?.playAnim?.('wave', 1.5)?.catch?.(() => {})
+      void scene?.playGesture?.('wave')?.catch?.(() => {})
       onExpand()
     }
   }

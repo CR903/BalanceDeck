@@ -90,19 +90,18 @@ export default function App(): React.JSX.Element {
   const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false, muted: voiceMuted })
   speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance, muted: voiceMuted }
   const voiceTimerRef = useRef<number | null>(null)
-  /** 宠物动作状态：'entering'/'idle'/'exiting' */
-  const [petAnimState, setPetAnimState] = useState<'entering' | 'idle' | 'exiting'>('idle')
-  /** 当前播放的宠物动作（happy/eat），播完自动回 idle */
+  /**
+   * 交互反应动作（撸一把 → 鼓掌 / 喂食 → 喝水）。
+   * 时长由场景按素材算，这里**不猜秒数**：老代码在这写过 1700/2400ms，
+   * 那是"调用方要知道动画多长"，场景一换素材就错。
+   */
   const [petAction, setPetAction] = useState<PetAction>('idle')
   /** 动作序号：同一动作重复触发时也要求重播 */
   const [actionSeq, setActionSeq] = useState(0)
-  const actionTimer = useRef<number | null>(null)
 
   const playPetAction = (a: PetAction): void => {
     setPetAction(a)
     setActionSeq((n) => n + 1)
-    if (actionTimer.current !== null) window.clearTimeout(actionTimer.current)
-    actionTimer.current = window.setTimeout(() => setPetAction('idle'), a === 'happy' ? 1700 : 2400)
   }
 
   const persistPet = (s: PetState): void => {
@@ -135,16 +134,39 @@ export default function App(): React.JSX.Element {
     return { ok: r.ok, reason: r.reason, levelUps: r.state.level - before.level }
   }
 
-  /** 换一只：保留成长进度，只换形象与默认名 */
+  /**
+   * 收起态 3D 场景句柄（由 PetBall 创建后挂到 window，见 scene.ts）。
+   * 画面编排（进场/退场/平时随机动作）全在场景里，这里只表达意图。
+   */
+  const petScene = (): { playGesture?: (id: string) => Promise<void> } | undefined =>
+    (window as unknown as { __bd_pet_scene__?: { playGesture?: (id: string) => Promise<void> } })
+      .__bd_pet_scene__
+
+  /** 播一个动作，播完（或场景不存在）后兑现；动画时长由场景按素材算，这里不猜秒数 */
+  const playGesture = async (id: 'enter' | 'exit' | 'wave'): Promise<void> => {
+    try {
+      const scene = petScene()
+      if (scene?.playGesture) await scene.playGesture(id)
+    } catch (e) {
+      console.warn(`[app] ${id} 动作播放失败:`, e)
+    }
+  }
+
+  /** 换一位：保留成长进度，只换形象与默认名 */
   const changePet = (id: PetId): void => {
     const now = Date.now()
     const s: PetState = { ...applyDecay(petRef.current, now), id, name: petMeta(id).name, lastTickAt: now }
-    // 切换角色前播放退场动画
-    if (petOn) playExitAnim()
-    setPet(s)
-    persistPet(s)
-    // 切换后播放进场动画
-    setTimeout(() => playEnterAnim(), 1600)
+    const swap = (): void => {
+      setPet(s)
+      persistPet(s)
+    }
+    // 先让人退场、**等它真的走完**再换人（换人后场景会自动播进场）：
+    // 老代码在这里 setPet 紧跟 playExitAnim，退场动作实际上从没播出来过。
+    if (!petOn) {
+      swap()
+      return
+    }
+    void playGesture('exit').then(swap)
   }
   const renamePet = (name: string): void => {
     const s = { ...petRef.current, name }
@@ -153,48 +175,16 @@ export default function App(): React.JSX.Element {
   }
   /** 收起态是否显示个性人物（关闭 = 悬浮球） */
   const togglePetBall = (on: boolean): void => {
-    setPetOn(on)
-    void window.api.setExtras({ 'ui:pet': on ? '1' : '0' })
-  }
-  /** 播放进场动画 */
-  const playEnterAnim = async (): Promise<void> => {
-    if (!petOn) return
-    setPetAnimState('entering')
-    // 播放 wave 动作作为进场
-    try {
-      await import('./pet3d/scene').then(async () => {
-        // 触发进场动作（场景句柄由 PetBall 创建后挂到 window，见 scene.ts）
-        const scene = (window as any).__bd_pet_scene__
-        if (scene && scene.playAnim) {
-          await scene.playAnim('wave', 1.5) // 1.5 秒进场
-        }
-      })
-    } catch (e) {
-      console.warn('[app] 进场动画播放失败:', e)
+    const apply = (): void => {
+      setPetOn(on)
+      void window.api.setExtras({ 'ui:pet': on ? '1' : '0' })
     }
-    // 1.5 秒后回到 idle
-    setTimeout(() => {
-      setPetAnimState('idle')
-      setPetAction('idle')
-    }, 1500)
-  }
-  /** 播放退场动画 */
-  const playExitAnim = async (): Promise<void> => {
-    if (!petOn || petAnimState === 'exiting') return
-    setPetAnimState('exiting')
-    try {
-      await import('./pet3d/scene').then(async () => {
-        const scene = (window as any).__bd_pet_scene__
-        if (scene && scene.playAnim) {
-          await scene.playAnim('talk', 1.5) // 1.5 秒退场
-        }
-      })
-    } catch (e) {
-      console.warn('[app] 退场动画播放失败:', e)
+    // 关掉时先让它退场（挥手告别 + 转身走出窗口）再收成球；开启时场景会在模型就位时自动进场
+    if (on) {
+      apply()
+      return
     }
-    setTimeout(() => {
-      setPetAnimState('idle')
-    }, 1500)
+    void playGesture('exit').then(apply)
   }
   /** 总在最前（关闭后不再悬浮于其它窗口之上） */
   const toggleAlwaysTop = (on: boolean): void => {
@@ -312,14 +302,11 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
-  // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 个性人物（竖版窗口）
+  // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 个性人物（竖版窗口）。
+  // 进场动作不在这里触发 —— 场景在**模型就位**那一刻自己播（模型没加载完就请求等于没播，
+  // 老代码那个 300ms 延迟正是进场动画从来没被看到过的原因）。
   useEffect(() => {
     window.api.setPetFigure(petOn)
-    // petOn 变化时触发动画
-    if (petOn) {
-      // 延迟一点播放进场动画，等场景初始化完成
-      setTimeout(() => playEnterAnim(), 300)
-    }
   }, [petOn])
 
   // 惰性衰减的 UI 侧结算（持久化只在互动时写盘，见 persistPet）

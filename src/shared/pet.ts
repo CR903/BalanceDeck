@@ -42,8 +42,9 @@ export interface PetMeta {
 }
 
 export const PETS: PetMeta[] = [
-  { id: 'aria', name: 'Aria', desc: '干练的商务助理，汇报额度从不含糊', trick: '挥手问好' },
-  { id: 'ray', name: 'Ray', desc: '沉稳的商务助理，走路带风', trick: '挥手问好' }
+  // trick = 各自的招牌小动作（悬浮时随机播，鼠标停在头像上能看到）：两人**不一样**
+  { id: 'aria', name: 'Aria', desc: '干练的商务助理，汇报额度从不含糊', trick: '捋捋头发' },
+  { id: 'ray', name: 'Ray', desc: '沉稳的商务助理，走路带风', trick: '耸耸肩' }
 ]
 
 export function petMeta(id: PetId): PetMeta {
