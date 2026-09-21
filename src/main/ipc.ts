@@ -211,49 +211,10 @@ export function registerIpc(): void {
   // 系统里是否有本开关管不到的旧登录项（提示用户手动清理）
   ipcMain.handle('autostart:foreign', () => hasSystemLoginItem())
 
-  // ─── 宠物数据迁移（本地文件读写，仅在用户显式点击时触发）────────────────────
-
-  ipcMain.handle('pet:export', async (_e, payload: string) => {
-    const { dialog } = await import('electron')
-    const { writeFileSync } = await import('fs')
-    const opts: Electron.SaveDialogOptions = {
-      title: '导出宠物数据',
-      defaultPath: 'balancedeck-pet.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }]
-    }
-    const win = getOverlay()
-    const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
-    if (r.canceled || !r.filePath) return { ok: false, canceled: true }
-    try {
-      writeFileSync(r.filePath, String(payload ?? ''), 'utf-8')
-      return { ok: true, path: r.filePath }
-    } catch (e) {
-      return { ok: false, error: (e as Error).message }
-    }
-  })
-
-  ipcMain.handle('pet:import', async () => {
-    const { dialog } = await import('electron')
-    const { readFileSync } = await import('fs')
-    const opts: Electron.OpenDialogOptions = {
-      title: '导入宠物数据',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }]
-    }
-    const win = getOverlay()
-    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true }
-    try {
-      return { ok: true, text: readFileSync(r.filePaths[0], 'utf-8') }
-    } catch (e) {
-      return { ok: false, error: (e as Error).message }
-    }
-  })
-
-  // ─── 悬浮球（3D 桌面宠物）：原生右键菜单 + 鼠标穿透命中框 ────────────────────
+  // ─── 悬浮球（数字助理 / 球形态）：原生右键菜单 + 鼠标穿透命中框 ─────────────
   //
-  // 菜单模型由渲染层给出（它才是宠物状态的唯一持有者），主进程只负责渲染原生菜单
-  // 并回传选中项 id；动效、状态落盘、皮肤等业务动作仍在渲染层执行。
+  // 菜单模型由渲染层给出（它才是助理身份的唯一持有者），主进程只负责渲染原生菜单
+  // 并回传选中项 id；动效、落盘、皮肤等业务动作仍在渲染层执行。
 
   ipcMain.handle('pet:menu', (_e, model: PetMenuModel): Promise<string | null> => {
     return new Promise((resolve) => {
@@ -262,22 +223,17 @@ export function registerIpc(): void {
         const m: PetMenuModel = {
           title: String(model?.title ?? ''),
           status: String(model?.status ?? ''),
-          canPet: model?.canPet !== false,
-          canFeed: model?.canFeed !== false,
-          pets: Array.isArray(model?.pets) ? model.pets : [], // 显示所有宠物
+          pets: Array.isArray(model?.pets) ? model.pets : [],
           ring: model?.ring !== false,
           alwaysOnTop: model?.alwaysOnTop !== false,
           hideBalance: model?.hideBalance === true
         }
         let picked: string | null = null
         const items: Electron.MenuItemConstructorOptions[] = [
-          { label: m.title || '宠物', enabled: false },
+          { label: m.title || '数字助理', enabled: false },
           ...(m.status ? [{ label: m.status, enabled: false } as Electron.MenuItemConstructorOptions] : []),
           { type: 'separator' },
-          { label: '撸一把', enabled: m.canPet, click: () => (picked = 'pet') },
-          { label: '喂食', enabled: m.canFeed, click: () => (picked = 'feed') },
-          { type: 'separator' },
-          { label: '换一只', enabled: false },
+          { label: '换一位', enabled: false },
           ...m.pets.map(
             (p): Electron.MenuItemConstructorOptions => ({
               label: p.name,

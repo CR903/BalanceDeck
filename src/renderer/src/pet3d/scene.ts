@@ -76,12 +76,6 @@ interface HumanRuntime {
   rootMotion: () => number
 }
 
-/**
- * 外部触发的反应动作（撸一把 / 喂食 / 回到静息）。
- * 'sleep' 已随走动一起下线：当年是"久坐发呆 → 打盹"的定时器，走动停了就再没人触发它。
- */
-export type PetAction = 'idle' | 'happy' | 'eat'
-
 export interface BallFrame {
   /** 环形进度 0–100（null = 无数据） */
   percent: number | null
@@ -101,7 +95,6 @@ export interface Pet3dHandle {
   canvas: HTMLCanvasElement
   setFrame: (f: BallFrame) => void
   setPet: (id: PetId) => void
-  setAction: (a: PetAction) => void
   /**
    * 播一个动作（进场/退场/打招呼…），**resolve 于该动作播完**。
    * 模型未就位时排队到就位后再播 —— 这正是"进场动画常常看不到"的老问题的根因。
@@ -131,7 +124,7 @@ export interface Pet3dHandle {
   travel: () => { minX: number; maxX: number }
   /** 测试观测点：从 WebGL 缓冲读出「有像素的范围」与不透明像素占比 */
   measure: () => { box: { x: number; y: number; width: number; height: number }; ratio: number } | null
-  /** 测试观测点：宠物素材是否已就位 */
+  /** 测试观测点：人物素材是否已就位 */
   petReady: () => boolean
   /** 测试观测点：场景里可见物体的清单（排查"不该出现的东西"） */
   dump: () => { name: string; type: string; visible: boolean; pos: number[]; size: number[] }[]
@@ -464,8 +457,8 @@ export function createPet3dScene(
         void queue('enter')
         return
     } catch (e) {
-      // 素材加载失败：只留球体，不影响 KPI（再次切换宠物会重试）
-      console.error('[pet3d] 宠物模型加载失败：', e)
+      // 素材加载失败：只留球体，不影响 KPI（再次切换角色会重试）
+      console.error('[pet3d] 人物模型加载失败：', e)
     }
   }
   // 球形态**不加载**人物素材：默认形态启动时既不下载 human 分包、也不解析 5 个 FBX
@@ -805,11 +798,6 @@ export function createPet3dScene(
       petId = want
       void attachPet(want)
     },
-    setAction: (a) => {
-      if (a === 'idle') return
-      // 撸一把 → 鼓掌、喂食 → 喝水：动作目录决定演什么，调用方只管语义
-      void queue(a === 'happy' ? 'clap' : 'drink')
-    },
     setSkin: () => applyTokens(),
     tick: (dt) => step(dt > 0 && dt <= 0.1 ? dt : 0.016),
     setPaused: (p) => {
@@ -843,7 +831,7 @@ export function createPet3dScene(
         : null,
     rootMotion: () => (human ? Math.round(human.rootMotion() * 100) / 100 : null),
     petReady: () => petHolder !== null,
-    /** 播放宠物动画（供 App.tsx 调用） */
+    /** 播一个动作（供 App.tsx 调用） */
     playGesture: (id) => queue(id),
     hideIndex: (i, on) => {
       let n = 0

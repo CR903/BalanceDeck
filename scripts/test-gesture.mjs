@@ -88,8 +88,9 @@ console.log('\nA. 素材表 / 动作目录 / 采集脚本 三方一致')
     ok(g.GESTURES[id].steps.some((s) => s.span === 'travel'), `${id} 含走动步`)
     eq(g.GESTURES[id].weight, 0, `${id} 不参与随机`)
   }
-  // 交互动作不参与随机（否则"平时随机鼓掌"会跟撸一把的反馈撞车）
-  for (const id of ['wave', 'clap', 'drink', 'talk']) eq(g.GESTURES[id].weight, 0, `${id} 不参与随机`)
+  // 问候与播报不参与随机（外部触发；养成互动下线后，"鼓掌"已改为普通随机小动作）
+  for (const id of ['wave', 'talk']) eq(g.GESTURES[id].weight, 0, `${id} 不参与随机`)
+  ok(g.GESTURES.clap.weight > 0, '鼓掌是普通随机小动作（不再是交互反馈）')
 }
 
 // ─── B. 时长口径 ─────────────────────────────────────────────────────────────

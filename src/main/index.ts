@@ -36,7 +36,7 @@ if (process.env.BD_SANDBOX_OFF === '1') {
 
 app.dock?.hide?.()
 
-// bd-asset:// 特权 scheme 必须在 ready 前注册（真人系宠物素材用）
+// bd-asset:// 特权 scheme 必须在 ready 前注册（数字人素材用）
 registerHumanAssetScheme()
 
 loadPersisted()
@@ -52,9 +52,9 @@ function pushState(s: AppState): void {
 }
 
 app.whenReady().then(async () => {
-  // 真人系宠物素材协议（bd-asset://human-pets…，缺失时渲染层回落，不阻塞启动）
+  // 数字人素材协议（bd-asset://human-pets…，缺失时渲染层回落，不阻塞启动）
   setupHumanAssetProtocol()
-  // 先读偏好：收起态形态（球/桌面宠物）与是否置顶，窗口按最终形态一次成型
+  // 先读偏好：收起态形态（球/个性人物）与是否置顶，窗口按最终形态一次成型
   await primePrefs()
 
   // ── QA 运行模式：入口只做分派，实现在 ./qa ──────────────────────────────

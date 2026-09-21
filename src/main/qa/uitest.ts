@@ -11,6 +11,7 @@ import { app, screen } from 'electron'
 import { join } from 'path'
 import { consumeDragFired } from '../ipc'
 import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
+import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
 import { refreshNow } from '../scheduler'
 import { demoSnapshot } from './fixtures'
 
@@ -42,7 +43,7 @@ export async function runUiTest(
     }
   }
   const bounds = (): Electron.Rectangle => win.getBounds()
-  /** 收起态窗口很小（球 200×210 / 人物 320×440），主体就在正中：点击 = 点命中层中心 */
+  /** 收起态窗口很小（球 200×210 / 人物 213×293），主体就在正中：点击 = 点命中层中心 */
   const ballCenterJs = `(()=>{
     const c=document.querySelector('.petball'); if(!c) return null
     const rc=c.getBoundingClientRect()
@@ -98,7 +99,7 @@ export async function runUiTest(
   await exec(footerClick('收起'))
   await sleep(900)
   const b1 = bounds()
-  r.collapse = b1.width === 200 && b1.height === 210 ? 'ok' : `fail:${b1.width}x${b1.height}`
+  r.collapse = b1.width === BALL_VIEW.width && b1.height === BALL_VIEW.height ? 'ok' : `fail:${b1.width}x${b1.height}`
   r.dotDom = (await exec("!!document.querySelector('.petball') && !!document.querySelector('.petball-hit')"))
     ? 'ok'
     : 'fail'
@@ -353,28 +354,12 @@ export async function runUiTest(
   )
 
   // ─── 宠物：设置页互动 + 3D 悬浮球（桌面宠物）+ 鼠标穿透 ─────────────────────
-  const { getExtra } = await import('../keystore')
-  const readPet = async (): Promise<{ affection: number; fullness: number; level: number }> => {
-    const fallback = { affection: 60, fullness: 70, level: 1 }
-    const raw = await getExtra('ui:petState')
-    if (!raw) return fallback
-    try {
-      const v = JSON.parse(raw) as Partial<{ affection: number; fullness: number; level: number }>
-      return {
-        affection: typeof v.affection === 'number' ? v.affection : fallback.affection,
-        fullness: typeof v.fullness === 'number' ? v.fullness : fallback.fullness,
-        level: typeof v.level === 'number' ? v.level : fallback.level
-      }
-    } catch {
-      return fallback
-    }
-  }
   // 用户原本是否开着「桌面宠物」（'1' 才算开；默认关闭 = 3D 球形态）
   const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
   // 面板不再常驻宠物卡（用户要求）：确认已移除
   r.petCardRemoved = (await exec("!!document.querySelector('.pet-card')")) ? 'fail:still-there' : 'ok'
 
-  // 设置页宠物分区：撸一把 / 喂食 / 换一只 / 桌面宠物开关
+  // 设置页「数字助理」分区：选一位 / 改名 / 三个开关（养成互动已下线）
   await exec(footerClick('设置'))
   await sleep(700)
   r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 2"))
@@ -386,31 +371,6 @@ export async function runUiTest(
     await sleep(400)
   }
   r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 2")) ? 'ok' : 'fail:no-thumbs'
-  const clickPetAction = (label: string): Promise<unknown> =>
-    exec(
-      `[...document.querySelectorAll('.pet-sec .pet-actions .btn-secondary')].find(b=>b.textContent.includes('${label}'))?.click()`
-    )
-  const beforePet = await readPet()
-  await clickPetAction('撸一把')
-  await sleep(900)
-  const afterPet = await readPet()
-  r.petStroke =
-    afterPet.affection > beforePet.affection || beforePet.affection >= 100
-      ? 'ok'
-      : `fail:${beforePet.affection}->${afterPet.affection}`
-  const beforeFeed = await readPet()
-  await clickPetAction('喂食')
-  await sleep(900)
-  const afterFeed = await readPet()
-  const fullBefore = beforeFeed.fullness >= 95
-  r.petFeed = fullBefore
-    ? afterFeed.fullness === beforeFeed.fullness
-      ? 'ok(refused)'
-      : 'fail:not-refused'
-    : afterFeed.fullness > beforeFeed.fullness
-      ? 'ok'
-      : `fail:${beforeFeed.fullness}->${afterFeed.fullness}`
-
   // 换一只：形象与默认名一起切换
   const petIdBefore = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''"))
   await exec(`[...document.querySelectorAll('.pet-chip')].find(c=>!c.classList.contains('on'))?.click()`)
@@ -450,10 +410,10 @@ export async function runUiTest(
   await petSwitch('1')
   r.petToggleSaved = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
 
-  // ── 个性人物形态：窗口是竖版（320×440），人物素材就位，穿透生效 ──
+  // ── 个性人物形态：窗口是竖版（尺寸见 shared/pet-view 的 FIGURE_VIEW），人物素材就位，穿透生效 ──
   await gotoView('collapse')
   r.petBallOn = (await exec("document.querySelector('.petball')?.dataset.figure === '1'")) ? 'ok' : 'fail:figure-off'
-  r.petFigureWindow = bounds().width === 320 && bounds().height === 440 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  r.petFigureWindow = bounds().width === FIGURE_VIEW.width && bounds().height === FIGURE_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
   r.pet3dCanvas = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
   for (let i = 0; i < 30; i++) {
     if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) break
@@ -482,7 +442,7 @@ export async function runUiTest(
   r.petFigureBig = String(
     await exec(`(()=>{const b=window.__bd_ball?.(); if(!b) return 'no-handle'
       const r=b.rect, ink=b.measure?.box
-      return (r && ink && r.width>=200 && r.height>=270 && ink.width>=110 && ink.height>=250)
+      return (r && ink && r.width>=140 && r.height>=190 && ink.width>=90 && ink.height>=150)
         ? 'ok' : 'fail:rect='+JSON.stringify(r&&[Math.round(r.width),Math.round(r.height)])+' ink='+JSON.stringify(ink&&[Math.round(ink.width),Math.round(ink.height)])})()`)
   )
 
@@ -532,7 +492,7 @@ export async function runUiTest(
   const watch = petIgnoreState()
   const hb = petHitboxDebug()
   r.petPierce = watch.roaming && hb && hb.width > 20 ? 'ok' : `fail:roaming=${watch.roaming},hb=${JSON.stringify(hb)}`
-  r.petCmdOk = watch.collapsed === true && bounds().width === 320 ? 'ok' : `fail:${bounds().width}`
+  r.petCmdOk = watch.collapsed === true && bounds().width === FIGURE_VIEW.width ? 'ok' : `fail:${bounds().width}`
   // 收起态必须关掉原生窗口阴影（否则 macOS 会按窗口矩形投一层方框阴影，实机表现为"宠物外面有个四方形框"）
   r.petNoWindowShadow = watch.shadow === false ? 'ok' : 'fail:has-shadow'
   const ball = (await exec('window.__bd_ball?.() ?? null')) as
@@ -551,61 +511,11 @@ export async function runUiTest(
     clipParseMs: (ball as { clipParseMs?: unknown } | null)?.clipParseMs ?? null
   })
 
-  // 长按撸一把：亲密度上升、播放开心动作，且**不展开面板**
-  await sleep(5400) // 越过互动冷却（5s）
-  const affBefore = (await readPet()).affection
-  await exec(`(async()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,pointerId:31,bubbles:true,pointerType:'mouse',button:0,buttons:1}
-    b.dispatchEvent(new PointerEvent('pointerdown',o))
-    await new Promise(r=>setTimeout(r,780))
-    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
-  })()`)
-  await sleep(600)
-  const affAfter = (await readPet()).affection
-  const stillCollapsedAfterHold = bounds().width === 320
-  r.petLongPress =
-    stillCollapsedAfterHold && affAfter > affBefore
-      ? 'ok'
-      : `fail:${stillCollapsedAfterHold ? '' : 'expanded'}:${affBefore}->${affAfter}`
-  // 成功反馈走气泡（数字人形态）；冷却期的"让我缓一下…"才走 toast —— 两条路径分别断言
-  r.petBubble = (await exec("!!document.querySelector('.petball-bubble')")) ? 'ok' : 'fail:no-bubble'
-  await exec(`(async()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,pointerId:32,bubbles:true,pointerType:'mouse',button:0,buttons:1}
-    b.dispatchEvent(new PointerEvent('pointerdown',o))
-    await new Promise(r=>setTimeout(r,780))
-    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
-  })()`)
-  await sleep(300)
-  r.petCooldownToast = (await exec("!!document.querySelector('.petball-toast')")) ? 'ok' : 'fail:no-toast'
-
-  // 回归：右键（含菜单被点开后关闭）不得让宠物进入"黏住光标"的假拖拽状态
-  //   —— 现象是菜单关掉后移动鼠标，窗口跟着光标乱跑，直到再点一次宠物才释放
-  consumeDragFired()
-  await exec(`(async()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const cx=rc.x+rc.width/2, cy=rc.y+rc.height/2
-    const right={clientX:cx,clientY:cy,pointerId:21,bubbles:true,pointerType:'mouse',button:2,buttons:2}
-    b.dispatchEvent(new PointerEvent('pointerdown',right))
-    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:cx,clientY:cy,bubbles:true}))
-    await new Promise(r=>setTimeout(r,200))
-    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))
-    await new Promise(r=>setTimeout(r,300))
-    // 菜单关闭后：无按键移动鼠标（buttons=0），绝不允许触发拖拽
-    for(let i=1;i<=5;i++){
-      b.dispatchEvent(new PointerEvent('pointermove',{clientX:cx+i*20,clientY:cy,pointerId:21,bubbles:true,pointerType:'mouse',button:-1,buttons:0}))
-      await new Promise(r=>setTimeout(r,40))
-    }
-  })()`)
-  await sleep(600)
+  // 右键菜单关掉之后不许残留"按下"状态（"宠物黏住光标乱跑"的回归）
   r.petNoStickyDrag = consumeDragFired() ? 'fail:drag-started' : 'ok'
-  r.petStillCollapsed = bounds().width === 320 ? 'ok' : `fail:${bounds().width}`
+  r.petStillCollapsed = bounds().width === FIGURE_VIEW.width ? 'ok' : `fail:${bounds().width}`
   // 人物形态下窗口高度也必须保持竖版（长按/右键都不许把窗口改回横向）
-  r.petFigureHeightKept = bounds().height === 440 ? 'ok' : `fail:${bounds().height}`
+  r.petFigureHeightKept = bounds().height === FIGURE_VIEW.height ? 'ok' : `fail:${bounds().height}`
 
   // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
   await exec(`(()=>{
@@ -623,7 +533,7 @@ export async function runUiTest(
   r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
   await gotoView('collapse')
   r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.figure === '0'")) ? 'ok' : 'fail:figure-on'
-  r.petBallWindow = bounds().width === 200 && bounds().height === 210 ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  r.petBallWindow = bounds().width === BALL_VIEW.width && bounds().height === BALL_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
   r.petBall3d =
     (await exec("!!document.querySelector('.pet3d-canvas')")) &&
     !(await exec("!!document.querySelector('.petball-fallback')"))

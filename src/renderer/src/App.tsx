@@ -5,19 +5,12 @@ import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
 import { PetBall } from './PetBall'
 import { renderTrayIcon } from './ProviderMark'
-import type { PetAction } from './pet3d/scene'
 import {
   PETS,
-  applyDecay,
-  buildPetExport,
   decodePetState,
   defaultPetState,
   encodePetState,
-  feedOnce,
   petMeta,
-  petMood,
-  petOnce,
-  type PetActionResult,
   type PetId,
   type PetState
 } from '../../shared/pet'
@@ -65,7 +58,7 @@ export default function App(): React.JSX.Element {
   const [hideBalance, setHideBalance] = useState(false)
 
 
-  // ─── 宠物（状态由 App 统一持有：悬浮球、右键菜单、设置页共用同一份成长数据）──
+  // ─── 数字助理（身份由 App 统一持有：悬浮球、右键菜单、设置页共用同一份）──────
   const [pet, setPet] = useState<PetState>(() => defaultPetState())
   const petRef = useRef(pet)
   petRef.current = pet
@@ -90,48 +83,9 @@ export default function App(): React.JSX.Element {
   const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false, muted: voiceMuted })
   speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance, muted: voiceMuted }
   const voiceTimerRef = useRef<number | null>(null)
-  /**
-   * 交互反应动作（撸一把 → 鼓掌 / 喂食 → 喝水）。
-   * 时长由场景按素材算，这里**不猜秒数**：老代码在这写过 1700/2400ms，
-   * 那是"调用方要知道动画多长"，场景一换素材就错。
-   */
-  const [petAction, setPetAction] = useState<PetAction>('idle')
-  /** 动作序号：同一动作重复触发时也要求重播 */
-  const [actionSeq, setActionSeq] = useState(0)
-
-  const playPetAction = (a: PetAction): void => {
-    setPetAction(a)
-    setActionSeq((n) => n + 1)
-  }
 
   const persistPet = (s: PetState): void => {
     void window.api.setExtras({ 'ui:petState': encodePetState(s) })
-  }
-
-  /** 撸一把：+亲密度/+经验（冷却中返回 ok:false） */
-  const petNow = (): PetActionResult => {
-    const now = Date.now()
-    const before = petRef.current
-    const r = petOnce(applyDecay(before, now), now)
-    if (r.ok) {
-      setPet(r.state)
-      persistPet(r.state)
-      playPetAction('happy')
-    }
-    return { ok: r.ok, reason: r.reason, levelUps: r.state.level - before.level }
-  }
-
-  /** 喂食：+饱食度/+亲密度（吃饱了返回 ok:false） */
-  const feedNow = (): PetActionResult => {
-    const now = Date.now()
-    const before = petRef.current
-    const r = feedOnce(applyDecay(before, now), now)
-    if (r.ok) {
-      setPet(r.state)
-      persistPet(r.state)
-      playPetAction('eat')
-    }
-    return { ok: r.ok, reason: r.reason, levelUps: r.state.level - before.level }
   }
 
   /**
@@ -152,10 +106,9 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  /** 换一位：保留成长进度，只换形象与默认名 */
+  /** 换一位：换形象与默认名 */
   const changePet = (id: PetId): void => {
-    const now = Date.now()
-    const s: PetState = { ...applyDecay(petRef.current, now), id, name: petMeta(id).name, lastTickAt: now }
+    const s: PetState = { ...petRef.current, id, name: petMeta(id).name }
     const swap = (): void => {
       setPet(s)
       persistPet(s)
@@ -219,12 +172,8 @@ export default function App(): React.JSX.Element {
   const petMenu = async (): Promise<string | null> => {
     const p = petRef.current
     const model: PetMenuModel = {
-      title: `${p.name} · Lv.${p.level}`,
-      status: `亲密度 ${Math.round(p.affection)} · 饱食度 ${Math.round(p.fullness)} · ${
-        petMood(p) === 'hungry' ? '饿了' : petMood(p) === 'lonely' ? '有点孤单' : petMood(p) === 'happy' ? '心情很好' : '还好'
-      }`,
-      canPet: true,
-      canFeed: p.fullness < 95,
+      title: p.name,
+      status: petMeta(p.id).desc,
       pets: PETS.map((x) => ({ id: x.id, name: x.name, checked: x.id === p.id })),
       ring: petRing,
       alwaysOnTop: alwaysTop,
@@ -232,11 +181,7 @@ export default function App(): React.JSX.Element {
     }
     const picked = await window.api.petMenu(model)
     if (!picked) return null
-    if (picked === 'pet') {
-      petNow()
-    } else if (picked === 'feed') {
-      feedNow()
-    } else if (picked.startsWith('pet:')) {
+    if (picked.startsWith('pet:')) {
       const id = picked.slice(4)
       if (PETS.some((x) => x.id === id)) changePet(id as PetId)
     } else if (picked === 'toggle-top') {
@@ -263,21 +208,6 @@ export default function App(): React.JSX.Element {
     }
     return picked
   }
-  const exportPet = async (): Promise<'ok' | 'cancel' | 'fail'> => {
-    const r = await window.api.exportPet(buildPetExport(petRef.current))
-    if (r.ok) return 'ok'
-    return r.canceled ? 'cancel' : 'fail'
-  }
-  const importPet = async (): Promise<'ok' | 'cancel' | 'fail'> => {
-    const r = await window.api.importPet()
-    if (!r.ok) return r.canceled ? 'cancel' : 'fail'
-    const st = decodePetState(r.text)
-    if (!st) return 'fail'
-    setPet(st)
-    persistPet(st)
-    return 'ok'
-  }
-
   useEffect(() => {
     void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
@@ -298,7 +228,7 @@ export default function App(): React.JSX.Element {
         setVoiceEvery(every)
       }
       const st = decodePetState(e['ui:petState'])
-      if (st) setPet(applyDecay(st, Date.now()))
+      if (st) setPet(st)
     })
   }, [])
 
@@ -308,12 +238,6 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     window.api.setPetFigure(petOn)
   }, [petOn])
-
-  // 惰性衰减的 UI 侧结算（持久化只在互动时写盘，见 persistPet）
-  useEffect(() => {
-    const t = window.setInterval(() => setPet((p) => applyDecay(p, Date.now())), 30_000)
-    return () => window.clearInterval(t)
-  }, [])
 
   const toggleHideBalance = (): void => {
     const next = !hideBalance
@@ -449,12 +373,9 @@ export default function App(): React.JSX.Element {
             pet={pet}
             figure={petOn}
             hideBalance={hideBalance}
-            action={petAction}
-            actionSeq={actionSeq}
             onExpand={doExpand}
             onDragStart={(grab) => window.api.dragStart(grab)}
             onDragEnd={() => window.api.dragEnd()}
-            onPet={petNow}
             onMenu={petMenu}
             onRename={renamePet}
             showRing={petRing}
@@ -467,8 +388,6 @@ export default function App(): React.JSX.Element {
             onToggleVoice={toggleVoiceFor}
             pet={pet}
             petOn={petOn}
-            onPet={petNow}
-            onFeed={feedNow}
             onChangePet={changePet}
             onRenamePet={renamePet}
             onTogglePetBall={togglePetBall}
@@ -480,8 +399,6 @@ export default function App(): React.JSX.Element {
             onSetVoiceEvery={setVoiceEveryInterval}
             alwaysTop={alwaysTop}
             onToggleAlwaysTop={toggleAlwaysTop}
-            onExportPet={exportPet}
-            onImportPet={importPet}
           />
         ) : view === 'detail' ? (
           <DetailView

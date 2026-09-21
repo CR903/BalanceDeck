@@ -5,7 +5,7 @@ import { FIGURE_VIEW } from '../../shared/pet-view'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
-import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } from './pet3d/scene'
+import { createPet3dScene, type BallFrame, type Pet3dHandle } from './pet3d/scene'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 收起态 = 3D 悬浮物，两种形态（见 shared/pet-view 与 pet3d/rig.ts 的 FORMS）
@@ -14,9 +14,10 @@ import { createPet3dScene, type BallFrame, type Pet3dHandle, type PetAction } fr
 //   · 个性人物：**只有人物**独立站在窗口中央（无球壳、无用量环），窗口 320×440 竖版，
 //     读数走窗口下方的胶囊。
 //
-// 共同点：鼠标穿透（主进程按 scene 上报的命中区轮询）、单击展开、拖动移动、长按撸一把、右键菜单。
+// 共同点：鼠标穿透（主进程按 scene 上报的命中区轮询）、单击展开、拖动移动、右键菜单。
+// 定位是**数字助理**：没有喂食/亲密度那套养成互动（2026-09-21 下线）。
 //
-// 设计依据见 DESIGN.md「收起态：3D 桌面宠物」。
+// 设计依据见 DESIGN.md「收起态：3D 悬浮球 / 个性人物」。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface PetBallProps {
@@ -26,15 +27,10 @@ export interface PetBallProps {
   onExpand: () => void
   onDragStart: (grab: { x: number; y: number }) => void
   onDragEnd: () => void
-  /** 长按撸一把（冷却中返回 false，静默忽略） */
-  onPet: () => { ok: boolean; levelUps: number }
   /** 右键菜单：交给主进程弹原生菜单，返回被选中的 action */
   onMenu: () => Promise<string | null>
   onRename: (name: string) => void
   hideBalance: boolean
-  /** 由 App 触发的动作（设置页/菜单里点撸一把、喂食） */
-  action: PetAction
-  actionSeq: number
   /** 是否显示用量环（ui:petRing，右键菜单可关；球形态可见，人物形态本就没有环） */
   showRing?: boolean
 }
@@ -45,12 +41,9 @@ export function PetBall({
   onExpand,
   onDragStart,
   onDragEnd,
-  onPet,
   onMenu,
   onRename,
   hideBalance,
-  action,
-  actionSeq,
   showRing = true
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -63,7 +56,6 @@ export function PetBall({
   const [failed, setFailed] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
-  const [toast, setToast] = useState('')
   /** 真人系语音泡泡（打招呼 / 余额播报，比 toast 大、停留更久，最多两行） */
   const [bubble, setBubble] = useState('')
   /** 测试观测点：命中环（--uitest / --shots 打开，用于核对球体投影与命中判定） */
@@ -83,10 +75,6 @@ export function PetBall({
   const petRef = useRef(pet)
   petRef.current = pet
   const press = useRef({ down: false, moved: false, x: 0, y: 0 })
-  const longPressed = useRef(false)
-  const holdTimer = useRef<number | null>(null)
-  const petCoolUntil = useRef(0)
-  const toastTimer = useRef<number | null>(null)
   const bubbleTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -96,18 +84,10 @@ export function PetBall({
 
   useEffect(
     () => () => {
-      if (holdTimer.current !== null) window.clearTimeout(holdTimer.current)
-      if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
       if (bubbleTimer.current !== null) window.clearTimeout(bubbleTimer.current)
     },
     []
   )
-
-  const showToast = (msg: string): void => {
-    setToast(msg)
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
-    toastTimer.current = window.setTimeout(() => setToast(''), 1600)
-  }
 
   /** 真人系泡泡：4.2s 后自动消失；新泡泡顶掉旧泡泡 */
   const showBubble = (msg: string, ms = 4200): void => {
@@ -116,7 +96,7 @@ export function PetBall({
     bubbleTimer.current = window.setTimeout(() => setBubble(''), ms)
   }
 
-  // ─── 3D 场景（挂载一次；宠物切换走 setPet，皮肤变化走 setSkin）──────────────
+  // ─── 3D 场景（挂载一次；换角色走 setPet，皮肤变化走 setSkin）────────────────
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -152,11 +132,6 @@ export function PetBall({
     showBubble(`你好，我是${pet.name}～`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pet.id])
-
-  useEffect(() => {
-    if (!actionSeq) return
-    sceneRef.current?.setAction(action)
-  }, [actionSeq, action])
 
   // 皮肤：主进程推送时 App 会重挂 data-skin，等一帧让 CSS 变量生效再重读令牌
   useEffect(() => {
@@ -331,24 +306,15 @@ export function PetBall({
   }, [pet.id, figure, failed, s, value, label])
 
   // ─── 交互 ───────────────────────────────────────────────────────────────────
-  const clearHold = (): void => {
-    if (holdTimer.current !== null) {
-      window.clearTimeout(holdTimer.current)
-      holdTimer.current = null
-    }
-  }
-
   /** 复位指针状态（含主进程拖拽）：菜单弹出、指针在窗口外抬起、窗口失焦时都要调用 */
   const resetPress = useCallback((endDrag = false): void => {
     const wasDown = press.current.down
     press.current = { down: false, moved: false, x: 0, y: 0 }
-    longPressed.current = false
-    clearHold()
     if (endDrag && wasDown) onDragEnd()
   }, [onDragEnd])
 
   // 兜底：指针在窗口外抬起、窗口失焦、或指针取消时，按下状态必须复位，
-  // 否则残留状态会让"移动鼠标 = 拖拽"，表现为宠物黏着光标乱跑（只能再点一下才释放）
+  // 否则残留状态会让"移动鼠标 = 拖拽"，表现为主体黏着光标乱跑（只能再点一下才释放）
   useEffect(() => {
     const onGlobalUp = (): void => resetPress(true)
     const onBlur = (): void => resetPress(true)
@@ -363,33 +329,12 @@ export function PetBall({
   }, [resetPress])
 
 
-  /** 长按 0.62s：撸一把（冷却中静默忽略，不打扰用户） */
-  const petNow = (): void => {
-    const now = performance.now()
-    if (now < petCoolUntil.current) {
-      showToast('让我缓一下…')
-      return
-    }
-    petCoolUntil.current = now + 5000
-    const r = onPet()
-    // 长按 = 挥手回应（wave 由父级 action 驱动），配泡泡不配 toast
-    if (r.levelUps > 0) showBubble(`升级！Lv.${petRef.current.level + r.levelUps}`)
-    else showBubble('好舒服～')
-  }
-
   const onPointerDown = (e: React.PointerEvent): void => {
     if (renaming) return
     // 只处理主键：右键会弹原生菜单，此时若还进入"按下"状态，
-    // 菜单关闭后残留的按下标记会把随后的鼠标移动误判成拖拽（宠物"黏住光标"乱跑）
+    // 菜单关闭后残留的按下标记会把随后的鼠标移动误判成拖拽（"黏住光标"乱跑）
     if (e.button !== 0) return
     press.current = { down: true, moved: false, x: e.clientX, y: e.clientY }
-    longPressed.current = false
-    clearHold()
-    holdTimer.current = window.setTimeout(() => {
-      holdTimer.current = null
-      longPressed.current = true
-      petNow()
-    }, 620)
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {
@@ -406,7 +351,6 @@ export function PetBall({
     }
     if (Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 8) {
       press.current.moved = true
-      clearHold()
       // 抓取点 = 按下时鼠标在窗口内的位置：拖动时该点始终贴着光标，球不会跳到光标中心
       const rc = (e.currentTarget as HTMLElement).getBoundingClientRect()
       onDragStart({ x: press.current.x - rc.x, y: press.current.y - rc.y })
@@ -416,12 +360,9 @@ export function PetBall({
   const finish = (cancel = false): void => {
     if (!press.current.down) return
     const wasMoved = press.current.moved
-    const wasLong = longPressed.current
     press.current = { down: false, moved: false, x: 0, y: 0 }
-    longPressed.current = false
-    clearHold()
     if (wasMoved || cancel) onDragEnd()
-    else if (!wasLong && !renaming) {
+    else if (!renaming) {
       // 点击 = 立即展开。挥手动画**不阻塞**：等 1.5s 动画播完再展开，既是体验问题
       // （点一下要等一秒半），也会让 UI 断言在 700ms 的等待窗口里读不到展开后的窗口。
       const scene = (window as any).__bd_pet_scene__
@@ -528,8 +469,10 @@ export function PetBall({
           className={`petball-caption${figure ? '' : ' sub'}`}
           style={{
             left: clampX(center.x, 70),
-            // 人物形态：贴窗口底边（主体几乎占满窗口，按半身高推会溢出被切）
-            top: figure ? viewSize.h - 40 : center.y + half.h + 18
+            // 人物形态：优先贴在主体下方，但**夹在窗内**（窗口矮，按半身高推会溢出被切）
+            top: figure
+              ? Math.min(center.y + half.h + 20, viewSize.h - 26)
+              : center.y + half.h + 18
           }}
           aria-hidden="true"
         >
@@ -559,7 +502,6 @@ export function PetBall({
           aria-hidden="true"
         />
       )}
-      {toast && <div className="petball-toast">{toast}</div>}
       {bubble && (
         // 锚点是泡泡底边（translate(-50%,-100%)）：主体上方留白有限，两行文案高 46px，
         // 所以上移量最多 4 再按高度兜底，否则第一行被窗口顶切掉（R8）
@@ -594,7 +536,7 @@ export function PetBall({
               if (e.key === 'Escape') setRenaming(false)
             }}
             onBlur={commitRename}
-            aria-label="宠物名字"
+            aria-label="助理名字"
           />
         </div>
       )}

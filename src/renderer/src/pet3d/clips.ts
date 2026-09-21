@@ -30,7 +30,6 @@ export type HumanClip =
   | 'clap'
   | 'shrug'
   | 'shakeArms'
-  | 'drink'
 
 /**
  * 基础剪辑：加载模型时一并解析。只留**出场那一刻就要用**的三条 ——
@@ -52,8 +51,7 @@ export const CLIPS: Record<PetId, Partial<Record<HumanClip, string>>> = {
     think: 'f_gestic_thoughtful_01',
     fixHair: 'f_idle_touch_hair_01',
     rollHead: 'f_idle_roll_head_01',
-    clap: 'f_claphands_01',
-    drink: 'f_drink_drinking'
+    clap: 'f_claphands_01'
   },
   ray: {
     walk: 'm_walk_neutral',
@@ -65,8 +63,7 @@ export const CLIPS: Record<PetId, Partial<Record<HumanClip, string>>> = {
     think: 'm_gestic_thoughtful_01',
     shrug: 'm_gestic_shrug_01',
     shakeArms: 'm_idle_shake_arms_01',
-    clap: 'm_claphands_01',
-    drink: 'm_drink_drinking'
+    clap: 'm_claphands_01'
   }
 }
 

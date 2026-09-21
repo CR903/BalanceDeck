@@ -58,7 +58,7 @@ type HumanSourceMaterial = THREE.MeshPhongMaterial | THREE.MeshLambertMaterial
 /**
  * 真人素材材质归一：Phong/Lambert → Standard + 反照率修正。
  * 必须在模板上做一次 —— SkeletonUtils.clone 只深拷贝骨骼/蒙皮、共享材质对象，
- * 在实例上遍历既改不到共享材质也会每次切宠物重复执行。
+ * 在实例上遍历既改不到共享材质也会每次换角色重复执行。
  */
 export function normalizeHumanMaterials(root: THREE.Object3D): HumanMaterialStats {
   const stats = { converted: 0, albedoFixed: 0 }

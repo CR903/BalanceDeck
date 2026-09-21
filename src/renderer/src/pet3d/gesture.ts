@@ -21,12 +21,11 @@ export type GestureId =
   // 进出场（每位角色都有，长动作）
   | 'enter'
   | 'exit'
-  // 交互与问候（外部触发）
+  // 问候与播报（外部触发）
   | 'wave'
-  | 'clap'
-  | 'drink'
   | 'talk'
   // 平时随机动作（≥5 个/角色，具体可用性由素材表决定）
+  | 'clap'
   | 'lookAround'
   | 'stretch'
   | 'think'
@@ -157,24 +156,12 @@ export const GESTURES: Record<GestureId, Gesture> = {
       { clip: 'walk', span: 'travel', travel: 'out', motion: mWalkOut, label: '转身走出场' }
     ]
   },
-  // ── 交互（外部触发：问候 / 撸一把 / 喂食 / 播报） ──
+  // ── 问候与播报（外部触发） ──
   wave: {
     id: 'wave',
     label: '打招呼',
     weight: 0,
     steps: [{ clip: 'wave', span: 'clip', motion: mStill, label: '挥手' }]
-  },
-  clap: {
-    id: 'clap',
-    label: '鼓掌',
-    weight: 0,
-    steps: [{ clip: 'clap', span: 'clip', motion: mAccent({ hop: 0.35 }), label: '鼓掌' }]
-  },
-  drink: {
-    id: 'drink',
-    label: '喝口水',
-    weight: 0,
-    steps: [{ clip: 'drink', span: 'clip', motion: mStill, label: '喝水' }]
   },
   talk: {
     id: 'talk',
@@ -183,6 +170,12 @@ export const GESTURES: Record<GestureId, Gesture> = {
     steps: [{ clip: 'talk', span: 'clip', motion: mStill, label: '讲话' }]
   },
   // ── 平时随机动作：每位角色至少 5 个（可用性由 clips.ts 的素材表裁剪） ──
+  clap: {
+    id: 'clap',
+    label: '鼓鼓掌',
+    weight: 1,
+    steps: [{ clip: 'clap', span: 'clip', motion: mAccent({ hop: 0.35 }), label: '鼓掌' }]
+  },
   lookAround: {
     id: 'lookAround',
     label: '东张西望',

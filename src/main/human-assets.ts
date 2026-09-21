@@ -4,7 +4,7 @@ import { existsSync } from 'fs'
 import { app } from 'electron'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// bd-asset:// 协议：给 file:// 渲染层提供真人系宠物素材（Rocketbox FBX/PNG）。
+// bd-asset:// 协议：给 file:// 渲染层提供数字人素材（Rocketbox FBX/PNG）。
 //
 // 为什么不用 data URL：单只纹理转换后仍有 ~15MB，base64 内联会炸内存；
 // 为什么不用 file:// 直读：file:// 页面的 fetch 会被 Chromium 拦掉；
@@ -13,7 +13,7 @@ import { app } from 'electron'
 // 服务根目录（按优先级取第一个存在的）：
 //   1. process.resourcesPath/human-pets（打包后，extraResources 落点）
 //   2. <appPath>/resources/human-pets（electron-vite dev）
-// 缺失时返回 404，渲染层按「素材缺失」回落到上一只宠物，绝不崩溃。
+// 缺失时返回 404，渲染层按「素材缺失」回落到上一位助理，绝不崩溃。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const HUMAN_ASSET_SCHEME = 'bd-asset'

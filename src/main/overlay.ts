@@ -141,7 +141,7 @@ export function createOverlay(): BrowserWindow {
     skipTaskbar: true,
     resizable: false,
     // 原生窗口阴影：展开态（圆角卡片）打开；收起态关闭 —— 收起态是 GPU 合成的
-    // 透明窗口，macOS 会按**窗口矩形**投一层方框阴影（实机表现为「宠物外面有个四方形框」），
+    // 透明窗口，macOS 会按**窗口矩形**投一层方框阴影（实机表现为「主体外面有个四方形框」），
     // 球的立体感由场景内的接触阴影负责。
     hasShadow: !state.collapsed,
     fullscreenable: false,

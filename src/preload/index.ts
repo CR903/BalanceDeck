@@ -7,7 +7,6 @@ import type {
   AddProviderPayload,
   CatalogEntry,
   OpencodeAuthResponse,
-  PetTransferResponse,
   PetMenuModel,
   PetHitbox
 } from '../shared/types'
@@ -71,10 +70,6 @@ const api = {
   setAutostart: (open: boolean): Promise<boolean> => ipcRenderer.invoke('autostart:set', open),
   /** 系统登录项里是否残留本应用（本开关无法移除，需用户手动清理） */
   hasForeignLoginItem: (): Promise<boolean> => ipcRenderer.invoke('autostart:foreign'),
-
-  // ─── 宠物数据迁移（本地文件）────────────────────────────────────────────────
-  exportPet: (payload: string): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:export', payload),
-  importPet: (): Promise<PetTransferResponse> => ipcRenderer.invoke('pet:import'),
 
   // ─── 收起态 3D 悬浮物（球 / 个性人物）──────────────────────────────────────
   /** 右键菜单：把菜单模型交给主进程弹原生菜单，回传选中项 id（未选中返回 null） */

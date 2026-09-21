@@ -204,17 +204,6 @@ export interface OpencodeAuthResponse {
   workspaceId?: string
 }
 
-/** 宠物数据迁移（导出/导入本地 JSON 文件）结果 */
-export interface PetTransferResponse {
-  ok: boolean
-  /** 用户取消选择文件 */
-  canceled?: boolean
-  /** 导出成功后的落盘路径 */
-  path?: string
-  /** 导入读到的文件内容（渲染层用 shared/pet 校验） */
-  text?: string
-  error?: string
-}
 /** 悬浮球命中框（窗口内 CSS 像素坐标） */
 export interface PetHitbox {
   x: number
@@ -225,13 +214,11 @@ export interface PetHitbox {
 
 /** 悬浮球右键菜单模型（原生菜单由主进程渲染，业务动作由渲染层执行） */
 export interface PetMenuModel {
-  /** 标题行（宠物名 + 等级 + 心情） */
+  /** 标题行（助理名） */
   title: string
-  /** 状态行（亲密度/饱食度） */
+  /** 状态行（一句话设定） */
   status: string
-  canPet: boolean
-  canFeed: boolean
-  /** 可切换的宠物列表 */
+  /** 可切换的数字助理列表 */
   pets: { id: string; name: string; checked: boolean }[]
   /** 是否显示 KPI 环 */
   ring: boolean

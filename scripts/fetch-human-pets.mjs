@@ -38,7 +38,6 @@ const PETS = [
       'f_idle_touch_hair_01',
       'f_claphands_01',
       'f_idle_roll_head_01',
-      'f_drink_drinking',
     ],
   },
   {
@@ -56,7 +55,6 @@ const PETS = [
       'm_gestic_thoughtful_01',
       'm_claphands_01',
       'm_idle_shake_arms_01',
-      'm_drink_drinking',
     ],
   },
 ]
