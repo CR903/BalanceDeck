@@ -482,8 +482,11 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - 智谱余额端点为社区验证版本（`/api/paas/v4/users/me/balance`），响应格式变化时适配器会报"响应格式未识别"，属预期自愈提示。
 - MiniMax 新平台接口失败会自动回退旧接口（需要 GroupID）。
 - **opencode 控制台无 SSR**（2026-09-26 起）：任何依赖 `GET /workspace/<wid>/go` 的 HTML
-  抓取都会拿到 SPA 空壳。控制台数据优先走官方 `zen/go/v1/usage` API；确需页面内容必须
-  用真实窗口水合后读 DOM，不能 `fetch` HTML。
+  抓取都会拿到 SPA 空壳。控制台数据应走 `/console/api/usage/*`（见
+  `09-26-opencode-console-spa`）；确需页面内容必须用真实窗口水合后读 DOM，不能 `fetch` HTML。
+- **别把写死的 fixture 当实测**（2026-09-26 实测教训）：`npm run verify:opencode` 里的
+  "官方 API 响应" 是硬编码的历史样本，不发请求。判断线上行为要么看 `details-test` /
+  `probe-*` 脚本的真实输出，要么别叫它「实测」。
 - **`--uitest` 定位控件要按类名**（2026-09-26 实测）：设置页有多个 `select`，
   按「第一个含某 option 值」找会抓错（播报间隔的 `10` 抢走刷新频率的 `10`）。
   新增控件一律带类名，uitest 按类名定位。
@@ -549,13 +552,28 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - [x] **任务归档**：`09-18-pet-render-fixes-tts` / `09-18-vroid-pet`（父）/ `00-join-smarterlab`
       归档，验收标准里被本轮重构作废的部分逐条标注了接手它的 commit；
       `09-18-vroid-hub` 从父任务解绑为独立任务
-- [ ] **opencode 控制台已重写为纯客户端 SPA**（2026-09-26 实测）：`/workspace/<wid>/go` → 302
-      `/console/login`；新路径 `/console/workspace/<wid>/go` 返回 1565 字符空壳、0 个 `data-slot`，
-      **SSR HTML 已彻底消失**。故 `opencode-cookie.ts`（解析 `usage-item`）与
-      `opencode-details.ts`（隐藏窗口点「显示详情」）**两条抓取路径同时失效**，
-      `npm run details:test` 返回 `{}`。cookie 本身有效（`auth` 到 2027-09-13），
-      官方 `zen/go/v1/usage` API 正常（实测 5h 0% / 周 48% / 月 66%）——
-      所以只有「每模型 breakdown」必须重新摸新 DOM，总量可继续走 API。
-      诊断脚本 `npx electron scripts/opencode-probe-auth.js` 可区分「登录态没了」与「URL 搬家」
+- [ ] **opencode 三条远端路径全断，只剩本机 db**（2026-09-26 实测，已开任务
+      `09-26-opencode-console-spa`）。根因是控制台重写 + 会话不互通，不是选择器变了：
+      - **改版**：`/workspace/<wid>/go` → 302 `/console/login`；新路径
+        `/console/workspace/<wid>/go` 返回 1565 字符空壳、**0 个 `data-slot`** ——
+        SSR HTML 彻底消失。故 `opencode-cookie.ts`（解析 `usage-item`）失效
+      - **会话不互通**：`persist:opencode-auth` 里的 `auth` cookie 未过期（2027-09-13），
+        但新控制台不认 —— SPA 自调 `GET /console/auth/session` → **401**，
+        随后被守卫弹到 `/console/login?next=%2Fconsole`
+      - **明细失效**：`opencode-details.ts`（隐藏窗口点「显示详情」）→ `npm run details:test`
+        耗时 21s、结果 `{}`
+      - **官方 API 也 403**：`GET /zen/go/v1/usage` 返回
+        `EntitlementError: OpenCode Go subscription required.`
+        （与上面第 490 行的用户侧待办是同一件事，此处只做记录）
+      - **出路**：新控制台有**带 OpenAPI 声明的稳定 JSON API**（从公开 bundle 挖到，无需登录）：
+        `GET /console/api/usage/summary`（窗口汇总）与 `GET /console/api/usage/models`（每模型明细）
+      - 诊断脚本：`scripts/opencode-probe-auth.js`（区分登录态/搬家）、
+        `scripts/probe-console-api.js`（端点 401 vs 404）、
+        `scripts/probe-spa-bundle.mjs`（改版时重挖 API 声明）、
+        `scripts/probe-usage-api.mjs`（官方 API 真实状态）
+- [ ] ⚠️ **纠正一条错误记录**：`scripts/verify-opencode.mjs:65-70` 那段注释写着
+      「官方 API 响应（实测）」，实际是**硬编码字面量**（`resetsAt` 停在 9-13/14/20），
+      脚本从不发请求。曾据此误判「官方 API 正常」。该脚本验证的是
+      「本机 db 统计 vs 一组写死期望」，不验证任何线上行为 —— 待 `09-26-opencode-console-spa` 一并修
 - [ ] 磁盘告警：数据卷仅剩 4GB（99% 满），`~/Library/Caches/Electron` 占 475M。
       疑与 `--uitest` 偶发「打完 JSON 不退出 / SIGSEGV」有关，尚未证实

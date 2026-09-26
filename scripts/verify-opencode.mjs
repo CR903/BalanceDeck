@@ -62,7 +62,13 @@ db.close()
 pts.sort((a, b) => a.t - b.t)
 console.log(`本机 opencode-go 记录（31 天）：${pts.length} 条`)
 
-// ── 2. 官方 API 响应（实测）────────────────────────────────────────────────
+// ── 2. 官方 API 响应样本 ────────────────────────────────────────────────────
+// ⚠️ **这是硬编码的历史样本，不是实时响应。** 2026-09-26 起这段注释原写「（实测）」，
+//    但脚本从不发请求 —— 曾据此误判「官方 API 正常」。2026-09-26 实测该端点是
+//    403 `EntitlementError: OpenCode Go subscription required.`（key 无 Go 订阅权益）。
+//    要看线上真实状态请跑 `node scripts/probe-usage-api.mjs`。
+//    本脚本只验证一件事：本机 db 统计与「给定一组官方口径」时，计算逻辑是否自洽。
+const API_SAMPLE_IS_HARDCODED = true
 const api = {
   rolling: { status: 'ok', percent: 0, resetsAt: '2026-09-13T10:41:56.965Z' },
   weekly: { status: 'ok', percent: 48, resetsAt: '2026-09-14T00:00:00.965Z' },
@@ -125,4 +131,7 @@ for (const p of pts) {
   .slice(0, 6)
   .forEach(([m, v]) => console.log(`  ${m.padEnd(32)} $${v.cost.toFixed(4).padStart(8)}  ${(v.tokens / 1e6).toFixed(1).padStart(7)}M tok`))
 
-console.log('\n✓ 验证完成：percent 与 used 均来自官方，tokens 为本机口径（标注清楚）')
+console.log(
+  `\n✓ 计算自洽性验证完成（percent/used 取自上方${API_SAMPLE_IS_HARDCODED ? '硬编码历史样本' : '实时响应'}，` +
+    'tokens 为本机口径）。本脚本不访问网络。'
+)

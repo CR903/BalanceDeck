@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务换的是数据来源（页面 HTML → JSON API），下游多层不动；需要这份 guide 逐层确认数据流与契约边界没被悄悄改动"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "要新增端点常量并让 opencode-cookie / opencode-details 共用一份，避免两处各拼字符串（对应 design.md 契约 2）"}

@@ -1,0 +1,2 @@
+{"file": "CONTEXT.md", "reason": "领域词汇与架构约束：协议/适配器/采集引擎/快照/可信度的定义。检查本任务是否越过了这些边界，以及「明细缺失是否该影响可信度标注」"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "审查契约是否真的没变：CookieFetchResult / ConsoleModelRow 形状保持，下游是否零改动"}
