@@ -8,12 +8,36 @@
 | 步 | 内容 | 状态 | 验证 |
 |---|---|---|---|
 | 0 | 实测取证（改版 / 会话 / 新端点） | ✅ 完成 | 见 `prd.md`「本轮实测确认的事实」 |
-| 1 | 纠正 `verify-opencode.mjs` 的写死 fixture | ⬜ | 脚本不再声称"实测" |
-| 2 | `opencode-auth.ts` 登录 URL + workspace 发现 | ⬜ | 需用户授权才能端到端验 |
-| 3 | 新增 `opencode-console-api.ts`，cookie 路径改打 summary | ⬜ | 纯函数单测 + 401 断言 |
-| 4 | `opencode-details.ts` 改打 models | ⬜ | 纯函数单测 |
+| 1 | 纠正 `verify-opencode.mjs` 的写死 fixture | ✅ 完成 | `ce6755a`，脚本明说「本脚本不访问网络」 |
+| 2 | `opencode-auth.ts` 登录 URL + workspace 发现 + 验证判据 | ✅ 代码完成，端到端待用户授权 | `9d8a112`，typecheck + 全套 test 0 失败 |
+| 3 | cookie 路径改打 `/console/api/usage/summary` | ⬜ | 纯函数单测 + 401 断言 |
+| 4 | `opencode-details.ts` 改打 `/console/api/usage/models` | ⬜ | 纯函数单测 |
 | 5 | R7 形状转储 + R8 错误提示 | ⬜ | 需真实响应 |
 | 6 | 用真实 fixture 收紧解析器 + 重写 `test:ssr` | ⬜ | 阻塞于用户授权 |
+
+### 步 2 补记：实测又挖出两件事（写进 design 后需要改 design）
+
+- **org/workspace 通过请求头传，不是路径段**：bundle 里 `Pg="x-org-id"`，且它在
+  CORS 允许头白名单里。步 3/4 的每个请求都要带 `x-org-id: <workspaceId>`。
+- **workspace 正被改名为 org，但 `wrk_` 仍合法**：bundle 的 id 校验是
+  `/^(org_|wrk_)/`，且 `Actor.WorkspaceID` 用的同一规则。所以
+  `findWorkspaceId` 的正则从只认 `wrk_` 改成两种前缀都认。
+  **这意味着 `opencodeWorkspaceId` 这个 extra 存的值继续有效，不必迁移。**
+- **`x-org-id` 不能省**：选 `/console/api/usage/summary` 而不是 `/api/orgs` 做
+  验证判据，正是因为 orgs 在不带 org 头时也能列 —— 多工作区账号下会假通过。
+
+### ⏸ 当前卡在用户这一步
+
+步 3–6 都卡在同一件事：**新控制台的会话只能由用户登录产生**。
+现有 `auth` cookie 新站不认（`/console/auth/session` → 401），代码绕不过去。
+
+用户在应用里走一次「一键授权」后，`GET /console/api/usage/summary` 应返回 200，
+届时把真实响应给我（或让我跑 `npm run details-test` 从
+`/tmp/balancedeck-details.log` 读转储），步 3–6 就能一轮做完。
+
+**在此之前不要写宽容解析器** —— 真实字段名未知，宽容分支在步 6 会被全部删掉，
+等于写两遍。步 3–6 一起做才是有效工作量。
+
 
 ## 步 1：先纠正已写错的文档（R7 之外的"文档债"）
 

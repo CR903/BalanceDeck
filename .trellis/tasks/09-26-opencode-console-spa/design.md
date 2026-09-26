@@ -88,8 +88,23 @@ export function parseUsageSummary(body: unknown): {
 | 环节 | 现状 | 改后 |
 |---|---|---|
 | 登录 URL | `https://opencode.ai/auth`（现在只是 302 到新登录页） | `https://opencode.ai/console/login` |
-| workspace 发现 | 从 `/workspace`、`/dashboard`、`/` 的 URL/HTML 找（**三条全废**） | 从 `/console/...` 的 URL 找；页面解析作为兜底 |
+| workspace 发现 | 从 `/workspace`、`/dashboard`、`/` 的 URL/HTML 找（**三条全废**） | 从 `/console/...` 的 URL 找；兜底打 `/console/api/orgs` |
+| **验证 cookie 的判据** | 「页面 HTML 含 `usage-item`」—— **SPA 下永不成立，会一路轮询到 5 分钟超时** | 打 `/console/api/usage/summary` 是否 200 |
 | cookie 采集 | 只收 `opencode.ai` 域，**排除子域** | 规则要重新验证（R3） |
+
+**验证判据为什么选 `usage/summary` 而不是 `api/orgs`**：`orgs` 在**不带** `x-org-id`
+时也能列（列的就是"我属于哪些 org"），所以多工作区账号下它会对一个
+根本读不到数据的会话返回 200 —— 假通过。带 org 头的数据端点才真的验证了
+「这个会话能读到该工作区的数据」。
+
+### 5b. 实测补记：workspace 改叫 org，但两种 id 前缀都合法
+
+从 bundle 的 id 校验规则 `it(/^(org_|wrk_)/)`（同时用于 `OrgId` 与 `Actor.WorkspaceID`）：
+
+- `wrk_` 仍合法 → **`opencodeWorkspaceId` 这个 extra 存的值继续有效，不必迁移**
+- 但新站可能发 `org_` → `findWorkspaceId` 改成两种前缀都认
+- **org/workspace 通过请求头 `x-org-id` 传，不是路径段**（bundle 里 `Pg="x-org-id"`，
+  且在 CORS 允许头白名单里）→ 步 3/4 的每个数据请求都要带
 
 `setWindowOpenHandler` 的域名白名单（`opencode-auth.ts:214`）也含 `opencode.ai`，
 新登录会走 Google / GitHub OAuth，这条应该不用改，但要在实施时**实测确认**。
