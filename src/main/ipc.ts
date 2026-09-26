@@ -159,10 +159,14 @@ export function registerIpc(): void {
   ipcMain.on('opencode:auth-cancel', () => cancelOpencodeAuth())
 
   // 在系统默认浏览器中打开控制台用量页（方便用户手动复制 cookie）
+  //
+  // 2026-09-26：控制台重写为纯客户端 SPA，旧的 `/workspace/<wid>/go` 已 302 到登录页、
+  // `/auth` 也只是 302 到 `/console/login`。两个分支都要跟着搬到 `/console` 形状。
   ipcMain.handle('opencode:open-console', async () => {
     const { shell } = await import('electron')
+    const { CONSOLE_ORIGIN } = await import('./adapters/opencode-console-api')
     const wid = (await getExtra('opencodeWorkspaceId')) ?? process.env.OPENCODE_GO_WORKSPACE_ID ?? ''
-    const url = wid ? `https://opencode.ai/workspace/${wid}/go` : 'https://opencode.ai/auth'
+    const url = wid ? `${CONSOLE_ORIGIN}/workspace/${wid}/go` : `${CONSOLE_ORIGIN}/login`
     await shell.openExternal(url)
   })
 

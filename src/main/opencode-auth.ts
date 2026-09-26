@@ -1,24 +1,43 @@
 import { BrowserWindow, session } from 'electron'
 import type { Session } from 'electron'
+import {
+  CONSOLE_ORIGIN,
+  LOGIN_PATH,
+  ORGS_PATH,
+  USAGE_SUMMARY_PATH,
+  buildConsoleHeaders,
+  findOrgId
+} from './adapters/opencode-console-api'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // OpenCode 网页授权：内嵌浏览器窗口登录 → 自动抓取控制台 cookie + workspace id
 //
 // 流程：
-//   1. 打开独立会话（非持久分区）的授权窗口，指向 opencode.ai 登录页
+//   1. 打开独立会话的授权窗口，指向**新控制台**登录页 /console/login
 //   2. 用户在窗口内正常登录（支持 OAuth 弹窗）
 //   3. 轮询该会话的 cookie：出现 auth 后继续解析 workspace id
-//      - 优先从窗口 URL（/workspace/<wrk>/...）
-//      - 其次从页面 HTML（控制台任何链接都含 wrk_）
-//      - 兜底：用 cookie 直接请求控制台首页正则匹配
+//      - 优先从窗口 URL（含 OAuth 弹窗所在窗口）
+//      - 其次从页面 HTML
+//      - 兜底：带 cookie 请求 /console/api/orgs，从 JSON 里正则出 id
 //   4. 拿到两者 → 关闭窗口、清空分区、返回结果（cookie 只回主进程，不进日志）
 //
 // 安全：分区非持久（内存态），抓取后立即 clearStorageData；
 //      唯一的持久副本是 safeStorage 加密后的 secrets.bin。
+//
+// ── 2026-09-26 改版适配（详见 adapters/opencode-console-api.ts）───────────────
+// 控制台重写为纯客户端 SPA 后三处必须改，否则**授权永远失败**：
+//   ① 登录 URL：旧的 `/auth` 现在只是 302 到 `/console/login`。
+//   ② workspace 发现的三个旧路径 `/workspace`、`/dashboard`、`/` 实测已 404/无用，
+//      改用 `/console/api/orgs`。
+//   ③ 验证 cookie 的判据：旧的「页面 HTML 里有 `usage-item`」在 SPA 里**永远不成立**
+//      —— 不改这一条，流程会一直轮询到 5 分钟超时。
+//      新判据是打 `/console/api/usage/summary` 看是否 200，判据强得多
+//      （「登录页打开了」在新旧两套会话下都会发生，200 不会）。
+// 另外 id 前缀要同时认 `org_` 与 `wrk_`：控制台正把 workspace 改名 org。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const PARTITION = 'persist:opencode-auth' // 持久分区：登录一次后记住，再次授权免登录
-const LOGIN_URL = 'https://opencode.ai/auth'
+const LOGIN_URL = `${CONSOLE_ORIGIN}${LOGIN_PATH}`
 const POLL_MS = 900
 const TIMEOUT_MS = 5 * 60_000
 
@@ -38,10 +57,9 @@ export function isOpencodeAuthRunning(): boolean {
   return !!authWin
 }
 
-/** 从任意 HTML 文本里找 workspace id（控制台链接形如 /workspace/wrk_xxx/go） */
+/** 从任意文本里找 org/workspace id（`org_` 与 `wrk_` 两种前缀都认） */
 function findWorkspaceId(text: string): string | null {
-  const m = text.match(/wrk_[A-Za-z0-9]{8,}/)
-  return m ? m[0] : null
+  return findOrgId(text)
 }
 
 /**
@@ -59,48 +77,58 @@ function buildCookieHeader(cookies: { name: string; value: string; domain?: stri
 }
 
 /**
- * 验证 cookie 是否真的能读到用量页。
- * 必要性：登录过程中会短暂出现"中间态"cookie（长度/值都与最终态不同），
- * 存下来后请求会 302 到登录页 —— 必须验证通过才算成功。
+ * 验证 cookie 是否真的能读到控制台用量数据。
+ *
+ * 必要性：登录过程中会短暂出现"中间态"cookie（长度/值都与最终态不同）。
+ *
+ * **判据在 2026-09-26 换过**：原先打 `/workspace/<id>/go` 并检查 HTML 里有没有
+ * `usage-item`。控制台重写成纯客户端 SPA 后这个判据**永远不成立** —— 页面返回
+ * 1565 字符空壳，SSR 内容一点没有，于是授权流程只能一路轮询到 5 分钟超时。
+ * 现在打 `/console/api/usage/summary`（`/api/orgs` 那类端点在没有 org 时也能列，
+ * 用它验证会在多工作区账号下假通过，所以挑了带 org 头的数据端点）。
+ *
+ * 200 → 会话真的可用。401 → 继续等最终态 cookie。
  */
-async function verifyCookie(cookie: string, workspaceId: string): Promise<boolean> {
+async function verifyCookie(cookie: string, orgId: string): Promise<boolean> {
   try {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10_000)
-    const res = await fetch(`https://opencode.ai/workspace/${encodeURIComponent(workspaceId)}/go`, {
-      headers: { Cookie: cookie, Accept: 'text/html' },
+    const res = await fetch(`${CONSOLE_ORIGIN}${USAGE_SUMMARY_PATH}`, {
+      headers: buildConsoleHeaders(cookie, orgId),
       redirect: 'manual',
       signal: ctrl.signal
     })
     clearTimeout(timer)
-    if (res.status !== 200) return false
-    const html = await res.text()
-    return html.includes('usage-item')
+    return res.status === 200
   } catch {
     return false
   }
 }
 
-/** 兜底：带 cookie 请求控制台页面，从 HTML 里正则出 workspace id */
+/**
+ * 兜底发现 org/workspace id。
+ *
+ * 原来的三条候选路径（`/workspace`、`/dashboard`、`/`）在 2026-09-26 实测已
+ * 404 或不含 id —— 控制台搬到 `/console` 之后这些页面不存在了。
+ * 现在打 `/console/api/orgs`（实测端点存在，缺有效会话时返回 401）。
+ *
+ * **不带 `x-org-id`**：那正是我们要发现的东西，此刻还没有。
+ */
 async function discoverWorkspace(cookie: string): Promise<string | null> {
-  for (const url of ['https://opencode.ai/workspace', 'https://opencode.ai/dashboard', 'https://opencode.ai/']) {
-    try {
-      const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), 8000)
-      const res = await fetch(url, {
-        headers: { Cookie: cookie, Accept: 'text/html' },
-        redirect: 'follow',
-        signal: ctrl.signal
-      })
-      clearTimeout(timer)
-      if (!res.ok) continue
-      const id = findWorkspaceId(await res.text())
-      if (id) return id
-    } catch {
-      // 试下一个
-    }
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 8000)
+    const res = await fetch(`${CONSOLE_ORIGIN}${ORGS_PATH}`, {
+      headers: buildConsoleHeaders(cookie),
+      redirect: 'manual',
+      signal: ctrl.signal
+    })
+    clearTimeout(timer)
+    if (!res.ok) return null
+    return findWorkspaceId(await res.text())
+  } catch {
+    return null
   }
-  return null
 }
 
 /**

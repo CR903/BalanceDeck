@@ -21,8 +21,12 @@ import type { ConsoleModelRow, ConsoleDetails } from '../opencode-details'
 // 数据源（按优先级）：
 //   ① 官方 API   GET https://opencode.ai/zen/go/v1/usage（Bearer key）
 //      → 与控制台同源：{ status, percent, resetsAt }
-//   ② Cookie 抓取 GET https://opencode.ai/workspace/<wrk>/go（会话 cookie）
-//      → SSR 解析 data-slot="usage-item"，与控制台完全一致
+//      ⚠️ 2026-09-26 实测：当前 key 返回 403 `EntitlementError`（无 Go 订阅权益）。
+//         这条是 `TASKS.md` 里的用户侧待办（重新生成 key 并 `/connect`），不是代码问题。
+//   ② Cookie 抓取 —— **2026-09-26 起正在迁移**：控制台重写成纯客户端 SPA，
+//      旧实现解析 `/workspace/<wrk>/go` 的 SSR `data-slot="usage-item"` 已失效。
+//      目标端点是新控制台的 `/console/api/usage/summary`（见 ./opencode-console-api）。
+//      改造进行中，详见任务 `09-26-opencode-console-spa`。
 //      （API key 403 / 未配置 key 时启用；逻辑移植自 dsh-opencode-go-usage）
 //   ③ 本机 opencode.db → cost + tokens 明细（仅本机，多设备不全）
 //
