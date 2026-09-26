@@ -243,16 +243,19 @@ export async function runUiTest(
   }
 
   // 刷新频率：单一入口（10 秒 – 5 分钟），即改即存并立即生效
-  const intervalSet = String(
-    await exec(`(()=>{
-      const sel=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='10'))
+  //
+  // 必须按 `.refresh-interval` 定位，**不能**按「第一个含 option value='10' 的 select」找：
+  // 播报间隔（`.voice-interval`）也有 option `10`（10 分钟），而它在 DOM 里排在前面，
+  // 那样会改到播报间隔去 —— 2026-09-26 实测踩过：intervalSaved/intervalFlash 双红而产品无 bug。
+  const setRefreshInterval = (value: string) => exec(`(()=>{
+      const sel=document.querySelector('.refresh-interval')
       if(!sel) return 'no-select'
       const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
-      setter.call(sel,'10')
+      setter.call(sel,${JSON.stringify(value)})
       sel.dispatchEvent(new Event('change',{bubbles:true}))
       return 'set'
     })()`)
-  )
+  const intervalSet = String(await setRefreshInterval('10'))
   await sleep(900)
   r.intervalSelect = intervalSet === 'set' ? 'ok' : `fail:${intervalSet}`
   r.intervalSaved = (await exec("window.api.getExtras(['refreshInterval']).then(e=>e.refreshInterval==='10')"))
@@ -261,14 +264,7 @@ export async function runUiTest(
   r.intervalFlash = (await exec("!!document.querySelector('.saved-flash')")) ? 'ok' : 'fail:no-flash' // 即改即存反馈
   r.intervalDiag = String(await exec("document.querySelector('.settings-foot')?.innerText?.slice(0,60) + ' | sel=' + [...document.querySelectorAll('select')].map(s=>s.value).join(',')"))
   // 还原默认（避免影响后续轮次）
-  await exec(`(()=>{
-    const sel=[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.value==='10'))
-    if(!sel) return 'no-select'   // 没有就别硬调原生 setter：对 undefined 调 .call 会抛 Illegal invocation
-    const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
-    setter.call(sel,'60')
-    sel.dispatchEvent(new Event('change',{bubbles:true}))
-    return 'restored'
-  })()`)
+  await setRefreshInterval('60')
   await sleep(600)
   r.settingsSave = consoleErrors.length === 0 ? 'ok' : `console-errors:${consoleErrors.length}`
   await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")

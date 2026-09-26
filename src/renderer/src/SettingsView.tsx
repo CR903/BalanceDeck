@@ -673,7 +673,11 @@ export function SettingsView({
             所有供应商统一频率
             <em className="tag env">10 秒 – 5 分钟</em>
           </span>
-          <select value={refreshInterval} onChange={(e) => void changeInterval(e.target.value)}>
+          <select
+            className="refresh-interval"
+            value={refreshInterval}
+            onChange={(e) => void changeInterval(e.target.value)}
+          >
             <option value="10">10 秒（最灵敏）</option>
             <option value="15">15 秒</option>
             <option value="30">30 秒</option>
