@@ -201,8 +201,11 @@ function ProviderRow({
               {advancedOpen && (
                 <div className="advanced-body">
                   <div className="advanced-note">
-                    官方 API 只返回整数百分比（如 4%）。登录 OpenCode 控制台后可拿到一位小数（如 4.3%），
-                    与控制台页面逐位一致。<b>不配置不影响使用</b>，只是精度为整数。
+                    官方 API 只返回整数百分比（如 4%）。登录 OpenCode 控制台后能拿到
+                    <b>服务端下发的限额</b>与<b>精确已用量</b>（如 $5.0588 / 一位小数 16.9%），
+                    不用再从百分比反算。
+                    <b>不配置也能用</b>，但会退回本机 opencode.db 估算 ——
+                    那是<b>另一种口径</b>（本机记录、只覆盖这台机器），不只是精度变粗。
                   </div>
                   <div className="auth-row">
                     <button

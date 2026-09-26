@@ -31,14 +31,77 @@ export const LOGIN_PATH = '/login'
 /** 列出当前用户所属的 org/workspace —— workspace 发现的兜底来源 */
 export const ORGS_PATH = '/api/orgs'
 
-/** 窗口汇总：5 小时 / 周 / 月 的百分比与重置时间 */
+/**
+ * Go 订阅的配额窗口 —— **替代旧 SSR 抓取的那个端点**。
+ *
+ * 实测（2026-09-26，带有效会话）：
+ *   GET /console/api/go/status   必需 `x-org-id`，缺则 400 `org_required`
+ *   → access.meters.{fiveHour,week,month} = { startsAt?, resetsAt?, limitMicroCents, usedMicroCents }
+ *   金额单位是**微美分级**（microcents，字符串）：1 USD = 1e8 microcents，
+ *   与旧 SSR 的 `usage`/`limit`（1e-8 USD 整数）**同尺度** → 下游换算不用改。
+ *
+ * 与旧路径相比有两处实质改善：
+ *   ① 限额由服务端下发（`limitMicroCents`），不再依赖代码里硬编码的 $12/$30/$60
+ *   ② `usedMicroCents` 是精确已用量，不必再用 `percent × limit` 反算
+ */
+export const GO_STATUS_PATH = '/api/go/status'
+
+/** 账单与余额（`availableMicroCents` = Go 之外可用的额外额度） */
+export const BILLING_STATUS_PATH = '/api/billing/status'
+
+/**
+ * `go/status` 里三个 meter 字段名 → 我们的窗口名。
+ * 注意 `month` **没有 `resetsAt`**：它的重置时间等于订阅周期末 `access.endsAt`
+ * （实测核对：endsAt 减当时 = 24 天 10 小时 41 分，与页面 "Resets in 24d 10h" 吻合）。
+ *
+ * ⚠️ 只有这一个 meter 的重置来自 `endsAt`。`week` 的 `resetsAt` 是
+ * `2026-09-28T00:00:00Z`（**按自然周对齐到周一 0 点**），而 `access` 是 09-21 周日开的
+ * —— 两者锚定方式不同，所以不能推广成"所有缺 resetsAt 的都回落 endsAt"。
+ */
+export const METER_FIELDS = {
+  fiveHour: 'rolling',
+  week: 'weekly',
+  month: 'monthly'
+} as const
+
+/**
+ * 哪些 meter 的重置时间要回落到 `access.endsAt`（订阅周期末）。
+ * 显式列出来，而不是在解析处写死 `'month'` —— 加第二个同类 meter 时不会静默失配。
+ */
+export const PERIOD_END_RESET_FIELDS: ReadonlySet<string> = new Set(['month'])
+
+/**
+ * `usage/models` 支持的 range → 能对齐的窗口。
+ *
+ * ⚠️ **5 小时窗口对齐不了**：端点最小 range 是 `24h`，而余额板第一个窗口是 5 小时。
+ * 把 24h 的数据标成「5 小时」是**口径撒谎**（`TASKS.md` 记过正是这类 bug：
+ * 「官方源不可达时退回本机统计，与官方口径不同却用同一套视觉展示」）。
+ * 所以这里**不映射 rolling** —— 该窗口宁可不显示明细。
+ */
+export const MODELS_RANGES = {
+  weekly: '7d',
+  monthly: '30d'
+} as const
+
+/**
+ * 用量聚合（**不是窗口数据源**）。
+ *
+ * ⚠️ 实测踩过的坑：它在 bundle 的 API 声明里、也标着 stable，容易被当成"窗口汇总"，
+ *    但响应里只有 total* 聚合数字，**没有 percent / limit / resetsAt**。
+ *    真正的窗口端点是 `GO_STATUS_PATH`（靠打开真实 Go 页观测它调了谁才定位到）。
+ *
+ * 现在的唯一用途是**授权探针**：打一发看会话是否被接受（2026 与 404 能区分）。
+ */
 export const USAGE_SUMMARY_PATH = '/api/usage/summary'
 
-/** 每模型用量明细（`range` 取自 bundle 声明的枚举 `24h | 7d | 30d`） */
+/** 每模型用量明细（`range` 取自 bundle 声明的枚举 `24h | 7d | 30d`，带分页） */
 export const USAGE_MODELS_PATH = '/api/usage/models'
 
-/** 明细默认时间范围。旧控制台的明细表按「每月配额」组织，30d 最接近原口径。 */
-export const MODELS_RANGE = '30d'
+/** 金额单位：1 USD = 1e8 microcents（`go/status` 与 `usage/models` 共用此尺度） */
+export const USAGE_UNIT_SCALE = 1e8
+
+/** 每页条数（实测端点默认 pageSize=10，且有 pageInfo 可翻页） */
+export const MODELS_PAGE_SIZE = 50
 
 /**
  * 组织/工作区 id 通过**请求头**传递，不是路径段

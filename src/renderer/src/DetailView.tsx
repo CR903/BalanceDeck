@@ -39,6 +39,21 @@ function QualityBanner({ s, onRefresh }: { s: ProviderSnapshot; onRefresh: () =>
 }
 
 /** 单个窗口的模型明细（可展开） */
+/**
+ * token 数字的来源标签 —— **跟着数据的实际来源走，不写死"本机"**。
+ *
+ * 2026-09-26 控制台改版后踩过：控制台接口自己就给 tokens（`totalInputTokens` 等），
+ * 之前只能取本机 db。标签没跟着改，于是界面上出现「控制台每月」标题配「本机 880.1M」
+ * 这种自相矛盾的表述（`CONTEXT.md`：数据来路必须如实标出）。
+ * 混合来源（有 console 行也有 local 行）时明确说"混合"，不猜。
+ */
+function tokenProvenanceLabel(rows: ProviderModelRow[]): string {
+  const consoleRows = rows.filter((m) => m.source === 'console').length
+  if (consoleRows === 0) return '本机'
+  if (consoleRows === rows.length) return '服务端'
+  return '服务端 + 本机'
+}
+
 function WindowModels({ rows }: { rows: ProviderModelRow[] }): React.JSX.Element {
   return (
     <div className="wmodels">
@@ -61,7 +76,7 @@ function WindowModels({ rows }: { rows: ProviderModelRow[] }): React.JSX.Element
       ))}
       {rows.some((m) => m.tokens > 0) && (
         <div className="wmodels-note">
-          本机 tokens：
+          {tokenProvenanceLabel(rows)} tokens：
           {rows
             .filter((m) => m.tokens > 0)
             .slice(0, 3)
@@ -242,7 +257,11 @@ export function DetailView({
                         )}
                       </span>
                       {m.percent != null && <span className="model-pct">{fmtPercent(m.percent)}</span>}
-                      {m.tokens > 0 && <span className="model-tokens">本机 {fmtAmount(m.tokens, 'token')}</span>}
+                      {m.tokens > 0 && (
+                        <span className="model-tokens">
+                          {m.source === 'console' ? '服务端' : '本机'} {fmtAmount(m.tokens, 'token')}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

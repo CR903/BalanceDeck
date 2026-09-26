@@ -21,13 +21,15 @@ import type { ConsoleModelRow, ConsoleDetails } from '../opencode-details'
 // 数据源（按优先级）：
 //   ① 官方 API   GET https://opencode.ai/zen/go/v1/usage（Bearer key）
 //      → 与控制台同源：{ status, percent, resetsAt }
-//      ⚠️ 2026-09-26 实测：当前 key 返回 403 `EntitlementError`（无 Go 订阅权益）。
-//         这条是 `TASKS.md` 里的用户侧待办（重新生成 key 并 `/connect`），不是代码问题。
-//   ② Cookie 抓取 —— **2026-09-26 起正在迁移**：控制台重写成纯客户端 SPA，
-//      旧实现解析 `/workspace/<wrk>/go` 的 SSR `data-slot="usage-item"` 已失效。
-//      目标端点是新控制台的 `/console/api/usage/summary`（见 ./opencode-console-api）。
-//      改造进行中，详见任务 `09-26-opencode-console-spa`。
-//      （API key 403 / 未配置 key 时启用；逻辑移植自 dsh-opencode-go-usage）
+//      ⚠️ 403 `EntitlementError` 只发生在 `auth.json` 里那把 key 上；应用实际用
+//         `opencode.db` credential 表里的那把（debug 显示「本机凭据(…9dFe)」），
+//         所以这条路径在应用内通常是**通的**。
+//   ② Cookie 路径   GET /console/api/go/status（会话 cookie + x-org-id）
+//      → 2026-09-26 起。控制台重写成纯客户端 SPA，旧的 SSR `data-slot="usage-item"`
+//         解析已失效；新端点由「打开真实 Go 页观测它调了谁」定位（不是从 bundle 声明猜的
+//         —— `/console/api/usage/summary` 也在声明里，但那是**用量聚合**，没有窗口百分比）。
+//         好处：限额由服务端下发，已用量是精确值。
+//      → 每模型明细：GET /console/api/usage/models（tokens 也来自服务端，多设备不再漏）
 //   ③ 本机 opencode.db → cost + tokens 明细（仅本机，多设备不全）
 //
 // 关键原则（重要）：
@@ -35,9 +37,11 @@ import type { ConsoleModelRow, ConsoleDetails } from '../opencode-details'
 //   - 窗口边界用服务端 resetsAt 反推：start = resetsAt - span
 //     （5h/7d/30d），本机 cost/tokens 在官方窗口内求和，保证与官方口径一致
 //   - 官方不可用时才退回本机 block 算法，且明确标注"本机估算"
-//   - 官方总限额（美元）：5 小时 $12 / 周 $30 / 月 $60
+//   - 限额优先用控制台 `go/status` 下发的 `limitMicroCents`；只有拿不到时才用下面的
+//     `LOCAL_LIMITS` 兜底（2026-09-26 起服务端才是权威，硬编码只是保底）
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** 兜底限额（美元）。仅在控制台与 API 都拿不到限额时使用。 */
 const LOCAL_LIMITS = { fiveHour: 12, weekly: 30, monthly: 60 }
 const USAGE_ENDPOINT = 'https://opencode.ai/zen/go/v1/usage'
 
@@ -489,6 +493,11 @@ function officialWindows(
     }
     percent = clampPct(percent)
 
+    // 花了钱却算不出百分比（控制台没给限额）时，**必须说不知道，不能显示 0%**。
+    // 2026-09-26 修：此前这种情况下界面会渲染「已用 $5.06 / 配额 $30 · 0%」。
+    const percentUnknown = apiPct == null && rawPct == null && (raw?.usage ?? 0) > 0
+    if (percentUnknown) sourceNote = '百分比不可用（控制台未给限额）'
+
     // 已用金额：控制台 payload 的 usage（1e-8 USD）是真实值；否则按百分比折算
     const used =
       raw?.usage != null && raw.usage >= 0 && raw?.limit != null
@@ -517,6 +526,8 @@ function officialWindows(
     }
 
     const status = api?.status ?? rendered?.status ?? raw?.status
+    // `percentUnknown` 时 sourceNote 已经是「百分比不可用（控制台未给限额）」，
+    // 直接用它 —— 否则用户会看到「0% · 控制台」，把"不知道"误读成"就是 0%"。
     const note = status === 'rate-limited' ? '已触发限流' : isRollingIdle ? '当前无活跃窗口' : sourceNote
 
     windows.push({
@@ -559,9 +570,16 @@ function debugLog(msg: string): void {
 }
 
 /**
- * 合并控制台官方明细与本机 tokens：
- * 控制台给出权威的每模型用量/配额/百分比（覆盖所有客户端），
- * 本机 db 补充 token 消耗（官方不提供）。按归一化模型名配对。
+ * 合并控制台官方明细与本机 tokens。
+ *
+ * 2026-09-26 起**控制台直接给 tokens 了**（`usage/models` 响应里有
+ * totalInput/Output/CacheRead + 两种 CacheWrite），所以本机 tokens 只在
+ * 服务端缺该模型时兜底 —— 之前是"官方给 cost、本机给 token"的双源拼接。
+ *
+ * ⚠️ **quota / percent 故意不给**（填 undefined，而不是 0）：
+ * 新接口只有每模型**已用量**，没有每模型配额与百分比（旧 DOM 版能从表头读到）。
+ * 填 0 会让界面显示「$0 / 0%」，那是撒谎。渲染层本来就支持缺省
+ * （`DetailView.tsx` 对 undefined 显示「—」）。
  */
 function mergeConsoleModels(
   consoleRows: ConsoleModelRow[],
@@ -592,9 +610,7 @@ function mergeConsoleModels(
       return {
         model: r.model,
         cost: r.usageUsd,
-        quota: r.quotaUsd,
-        percent: r.percent,
-        tokens: local?.tokens ?? 0,
+        tokens: r.tokens || local?.tokens || 0,
         source: 'console' as const
       }
     })
@@ -697,10 +713,13 @@ export const opencodeAdapter: ProviderAdapter = {
       try {
         const r = await fetchUsageViaCookie(ctx, cookieCred.cookie, cookieCred.workspaceId)
         cookie = { windows: r.windows, raw: r.raw }
-        // 每模型明细（隐藏窗口驱动，5 分钟缓存，非阻塞：本轮用缓存，后台刷新）
+        if (r.unknownMeters.length) {
+          debugLog(`opencode: 控制台接口出现未知计费项 ${r.unknownMeters.join(',')}`)
+        }
+        // 每模型明细（5 分钟缓存，非阻塞：本轮用缓存，后台刷新）
         try {
           const { fetchConsoleDetails } = await import('../opencode-details')
-          consoleDetails = fetchConsoleDetails(cookieCred.workspaceId)
+          consoleDetails = fetchConsoleDetails(cookieCred.workspaceId, cookieCred.cookie)
         } catch {
           consoleDetails = null
         }
@@ -715,7 +734,19 @@ export const opencodeAdapter: ProviderAdapter = {
             const r = await fetchUsageViaCookie(ctx, live, cookieCred.workspaceId)
             cookie = { windows: r.windows, raw: r.raw }
             cookieError = ''
+            // 自愈成功后同样要报未知计费项 —— 否则"第一次失败恰好因为结构变了"时，
+            // 这个改版信号会被丢掉，快照静悄悄退回本机估算（2026-09-26 评审发现）
+            if (r.unknownMeters.length) {
+              debugLog(`opencode: 自愈后仍出现未知计费项 ${r.unknownMeters.join(',')}`)
+            }
             if (ctx.setKey) await ctx.setKey('opencodeCookie', live)
+            try {
+              const { fetchConsoleDetails, invalidateConsoleDetails } = await import('../opencode-details')
+              invalidateConsoleDetails()
+              consoleDetails = fetchConsoleDetails(cookieCred.workspaceId, live)
+            } catch {
+              /* 明细是增强项，失败就算了 */
+            }
             debugLog('opencode: 已用实时 cookie 自愈')
           }
         } catch {
@@ -730,11 +761,15 @@ export const opencodeAdapter: ProviderAdapter = {
     if (apiUsage || cookie) {
       const windows = officialWindows(apiUsage, cookie, local, nowMs)
 
-      // 分窗口的每模型明细（控制台口径 + 本机 tokens 合并）
+      // 分窗口的每模型明细（控制台口径）
+      // 注意 `consoleDetails` 只有 weekly/monthly —— 5 小时窗口**没有**明细，
+      // 因为端点最小 range 是 24h（口径对不上，宁可不给，见 opencode-console-api 的说明）
       const modelsByWindow: Record<string, ProviderModelRow[]> = {}
       if (consoleDetails) {
-        for (const kind of ['rolling', 'weekly', 'monthly'] as UsageWindowKind[]) {
-          const rows = consoleDetails[kind]
+        for (const [kind, rows] of Object.entries(consoleDetails) as [
+          'weekly' | 'monthly',
+          ConsoleModelRow[]
+        ][]) {
           if (rows && rows.length) modelsByWindow[WINDOW_NAMES[kind]] = mergeConsoleModels(rows, local)
         }
       }

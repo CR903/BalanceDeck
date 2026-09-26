@@ -571,9 +571,39 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
         `scripts/probe-console-api.js`（端点 401 vs 404）、
         `scripts/probe-spa-bundle.mjs`（改版时重挖 API 声明）、
         `scripts/probe-usage-api.mjs`（官方 API 真实状态）
-- [ ] ⚠️ **纠正一条错误记录**：`scripts/verify-opencode.mjs:65-70` 那段注释写着
+- [x] **纠正一条错误记录**（`ce6755a`）：`scripts/verify-opencode.mjs:65-70` 那段注释写着
       「官方 API 响应（实测）」，实际是**硬编码字面量**（`resetsAt` 停在 9-13/14/20），
       脚本从不发请求。曾据此误判「官方 API 正常」。该脚本验证的是
-      「本机 db 统计 vs 一组写死期望」，不验证任何线上行为 —— 待 `09-26-opencode-console-spa` 一并修
+      「本机 db 统计 vs 一组写死期望」，不验证任何线上行为 —— 注释已改成
+      「这是硬代码的历史样本，不是实时响应」，并留了 `API_SAMPLE_IS_HARDCODED` 标记
 - [ ] 磁盘告警：数据卷仅剩 4GB（99% 满），`~/Library/Caches/Electron` 占 475M。
       疑与 `--uitest` 偶发「打完 JSON 不退出 / SIGSEGV」有关，尚未证实
+
+## 2026-09-26 第二十二轮：opencode 控制台改版适配（`09-26-opencode-console-spa`）
+
+用户重新授权后实测打通。**三处我原本的判断被实测推翻**，记录在
+`.trellis/tasks/09-26-opencode-console-spa/` 里：
+
+- [x] **授权链路修好**（`9d8a112`）：登录 URL / workspace 发现 / **验证 cookie 的判据**
+      三处同时失效 —— 最后那条是致命的：旧判据检查「页面 HTML 里有 `usage-item`」，
+      而 SPA 返回 1565 字符空壳，**永不成立** → 授权只能一路轮询到 5 分钟超时。
+      改判据为打数据端点看是否 200
+- [x] **窗口数据源换端点**：`/console/api/go/status` 的 `access.meters` 1:1 对上
+      5 小时/周/月。**限额由服务端下发**（旧代码硬编码 $12/$30/$60），
+      `used` 是精确值（实测 `$5.05884411`，不再是 `16% × 30 = 4.8` 的反算）
+- [x] **明细换端点**：`/console/api/usage/models`（删掉 150 行隐藏窗口 DOM 驱动）。
+      1.4s 出 weekly 6 行 / monthly 14 行（旧实现 21s 返回 `{}`）。
+      **tokens 改由服务端给**（实测 880M vs 本机 db 的 414M）
+- [x] **`month` 的重置时间 = `access.endsAt`**（它没有 `resetsAt`）——
+      数值核对：减当时 = 24 天 10 小时 41 分，与控制台页面 "Resets in 24d 10h" 吻合
+- [x] **5 小时窗口没有明细**：端点 range 最小 24h，口径对不上，**宁可不显示**
+      （`TASKS.md` 记过正是「与官方口径不同却用同一套视觉展示」这类 bug）
+- [x] **`test:ssr` 整体重写**（17 → 72 项）：改测**真源码**（`loadTs`）不用内联副本，
+      fixture 取自真实响应
+- [x] **独立 `trellis-check` 复核**：2 CRITICAL + 9 WARNING 全部处置。其中一个是
+      **我引入的回归** —— 控制台开始自己给 tokens 后，`DetailView.tsx` 还把标签写死
+      「本机」，界面上出现「控制台每月」配「本机 880.1M」；已改为按行 `source` 判定
+- 已知缺口：`fetchRange`/`scrape` 的**并发与重试无自动化测试**（需给原生 fetch 打桩），
+      评审实测把串行改回并发测试仍全绿。已在代码注释里写明
+- 顺带发现未接入：`/console/api/billing/status` 有 `availableMicroCents`（$5.00 可用额度）
+  与 `renewalAuthorizationRequired`（页面提示需在 Oct 21 前重新授权支付方式）

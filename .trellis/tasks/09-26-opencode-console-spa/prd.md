@@ -65,41 +65,55 @@
 - **R3**：cookie 采集必须能拿到新控制台设置的会话 cookie。
   现在只按 `opencode.ai` 域收集，**排除 `auth.opencode.ai` 等子域**（这条规则要重新验证：
   新控制台可能把会话 cookie 放在子域上）。要求是"能发出被接受的请求"，不是"cookie 数量变多"。
-- **R4**：`fetchUsageViaCookie` 改打 `GET /console/api/usage/summary` 并**保持既有返回形状**
-  （`{ windows, raw, fetchedAt }`）—— 下游 `cookieWindowsToProvider` 与所有调用方零改动。
-- **R5**：`parseUsageHtml` / `parseUsagePayload` 两个纯函数被 `parseUsageSummary(json)` 取代，
-  仍是**纯函数**、仍可单测，沿用「宽容取值」纪律（多个候选字段名，取到即用）。
-- **R6**：`opencode-details.ts` 改打 `GET /console/api/usage/models`，
-  保持 `ConsoleModelRow`（`model` / `usageUsd` / `quotaUsd` / `percent`）形状，
-  供 `ConsoleDetails` 与界面继续渲染。
-- **R7**：**首帧形状转储**。第一次成功拿到新端点响应时，把响应的键路径结构写进
-  `/tmp/balancedeck-details.log`（沿用既有 `BALANCEDECK_DEBUG` 通道）。
-  目的是让下一步按**真实**结构收紧解析器，而不是照猜的 schema 写死。
+- **R4**：`fetchUsageViaCookie` 改打 **`GET /console/api/go/status`**（**2026-09-26 修订**：
+  原定 `/console/api/usage/summary`，实测后者只有用量聚合、没有 percent/limit/resetsAt）
+  并**保持既有返回形状**（`{ windows, raw, fetchedAt, unknownMeters }`）——
+  下游 `officialWindows` 零改动。`unknownMeters` 是新增的改版信号字段。
+- **R5**：`parseUsageHtml` / `parseUsagePayload` 两个纯函数被 **`parseGoStatus(body, nowMs)`** 取代，
+  仍是**纯函数**、仍可单测。**不写宽容取值分支** —— 真实字段名在 2026-09-26 已拿到，
+  按真实字段写死即可，宽容分支只会在改版时把问题吞掉。
+- **R6**：`opencode-details.ts` 改打 `GET /console/api/usage/models`。
+  **2026-09-26 修订**：`ConsoleModelRow` 改为 `{ model, provider, usageUsd, tokens, requests }`，
+  **删掉** `quotaUsd` / `percent` —— 实测该接口不提供每模型配额与百分比，
+  留一个填 0 的字段会让界面显示「$0 / 0%」，那是撒谎（界面按缺省显示「—」）。
+  同时**新增** `tokens` / `requests`（服务端口径，取代原先只能取本机 db 的做法）。
+- **R7**：**首帧形状转储** —— 形态由「首次成功响应时写结构日志」**改为**
+  「真实响应做 fixture + 结构断言」。理由：一次性的转储对回归没有约束力，
+  fixture + 断言才能在改版时报警。日志通道（`BALANCEDECK_DEBUG`）保留。
 - **R8**：401/403 的错误提示必须**可操作** —— 明确说"新控制台会话无效，请重新授权"，
-  并指向一键授权，而不是笼统的"cookie 已过期"。
-- **R9**：`test:ssr`（现 17 项，覆盖被替换的两个纯函数）改为覆盖新解析器。
-  **禁止占位式断言** —— 用真实响应做 fixture，见「卡点 C2」。
+  并指向一键授权，而不是笼统的"cookie 已过期"。400 `org_required` 单独归类。
+- **R9**：`test:ssr`（原 17 项）**整体重写**为覆盖新解析器，现 72 项 0 失败。
+  **禁止占位式断言** —— 用真实响应做 fixture；且**必须测真源码**（`loadTs`），
+  不用内联副本（2026-09-26 删掉了那份副本）。
 - **R10**：无回归 —— `typecheck` / `npm test` / `--uitest`（82 项）全绿；本机 db 兜底路径不变。
 
-## 卡点（必须先解决，否则 R9 只能写占位测试）
+## 卡点（均已于 2026-09-26 解除）
 
-- **C1（用户动作，阻塞）**：新控制台会话要**用户在应用里重新走一次一键授权**。
-  现有 `auth` cookie 新控制台不认（`/console/auth/session` 401），无法用代码绕过。
-- **C2（依赖 C1，阻塞 R9）**：拿到真实响应之后才能定字段名。
-  现在的响应形状是**未知**的 —— 我只知道端点路径与查询参数（从 bundle 声明里来），
-  不知道 `summary` / `models` 各字段叫什么。
-  **所以 R5/R6/R9 的第一版只能是宽容解析 + R7 的形状转储，不能声称"已适配完成"。**
-  诚实的完成态定义：R1–R4、R7、R8 落地且 R6 拿到过一份真实数据；解析器按真实字段收紧后才算 R9 完成。
+- ~~**C1（用户动作，阻塞）**~~：用户已重新授权，`/console/auth/session` 返回 200。
+- ~~**C2（依赖 C1，阻塞 R9）**~~：真实响应已拿到（`go/status` 与 `usage/models` 的完整 JSON），
+  解析器按真实字段写死，fixture 取自真实响应。
+- **新增卡点 C3（评审发现，仍未解除）**：`fetchRange`/`scrape` 的**并发与重试**逻辑
+  无自动化测试（需要给原生 fetch 打桩，而本模块刻意不用 `ctx.request`）。
+  评审实测把串行改回并发、删掉重试，测试全绿。已在代码注释里写明这个缺口。
 
-## Acceptance criteria
+## Acceptance criteria（2026-09-26 逐条核对）
 
-- [ ] 一键授权能在 `/console/login` 完成，并解析出 workspace id（不再是靠 404 的旧路径）
-- [ ] 授权后 `/console/auth/session` 不再是 401（这是"会话真的建立了"的判据，比"登录页打开了"强）
-- [ ] `npm run details:test` 能打印出 `models` 端点的真实内容（不再返回 `{}`）
-- [ ] 一次成功响应后，`/tmp/balancedeck-details.log` 里有该响应的键路径转储
-- [ ] 拿到真实字段后，解析器收紧 + `test:ssr` 用真实 fixture 覆盖（无占位断言）
-- [ ] 401 时界面提示指向"重新授权"而不是"cookie 过期"
-- [ ] `typecheck` / `npm test` / `--uitest` 82 项全绿；本机 db 兜底路径行为不变
+- [x] 一键授权能在 `/console/login` 完成，并解析出 workspace id
+      —— 用户已成功授权，`/console/api/orgs` 返回 `wrk_01M0…`（Default）与
+      `org_01M2…`（Personal），两种前缀并存，`ORG_ID_RE` 两种都认
+- [x] 授权后 `/console/auth/session` 不再是 401 —— **200**，返回 `expiresAt` 与 `user`
+- [x] `npm run details:test` 打印出真实内容（不再返回 `{}`）——
+      weekly 6 行 / monthly 14 行，约 1.4s（旧实现 21s 返回 `{}`）
+- [x] 解析器按真实字段收紧 + `test:ssr` 用真实 fixture 覆盖 ——
+      72 项 0 失败，**测真源码**（`loadTs`）不用副本
+- [x] 401 时提示指向"重新授权"而不是"cookie 过期"；400 `org_required` 单独归类
+- [x] 三个窗口全部来自控制台，且 `used` 是服务端精确值 ——
+      实测 `used=5.05884411`（反算只会得 `16% × 30 = 4.8`）、`pct=16.9`
+- [x] 限额由服务端下发（`limitMicroCents` = $12/$30/$60），不再是代码硬编码当权威
+- [x] 5 小时窗口**没有**明细表（端点 range 最小 24h，口径对不上，宁可不给）
+- [x] `typecheck` / `npm test`（10 套件 0 失败）/ `--uitest` 82 项全绿；本机 db 兜底不变
+- [x] 独立 `trellis-check` 复核通过，2 CRITICAL + 9 WARNING 全部处置（见 `implement.md`）
+- [ ] **（未做）** `fetchRange`/`scrape` 的并发与重试无自动化测试（卡点 C3）
 
 ## Out of scope
 

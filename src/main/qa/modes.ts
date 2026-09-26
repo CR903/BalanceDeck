@@ -81,14 +81,33 @@ export async function runUiTestAndReport(t: TestApp): Promise<void> {
   process.stdout.write(JSON.stringify({ uitest: true, consoleErrors: t.consoleErrors, ...results }, null, 2))
 }
 
+/**
+ * 解析诊断工具用的凭据 —— 与产品路径 `opencode.ts` 的 `resolveCookie` 同源：
+ * 先读授权分区的实时 cookie，再退回**已保存**的。
+ *
+ * ⚠️ 保存的 cookie 必须用 `getKey` 而不是 `getExtra`：
+ *    `setKey('opencodeCookie', …)` 写的是 `items`（加密），`getExtra` 读的是
+ *    `extras`（明文）—— 两个互不相干的 map，用错会**永远拿到 null**，
+ *    于是"明明授权过"却报缺少凭据。2026-09-26 踩过。
+ */
+async function resolveDiagnosticCred(): Promise<{ workspaceId: string; cookie: string; from: 'partition' | 'saved' | 'none' }> {
+  const { getKey, getExtra } = await import('../keystore')
+  const { readPartitionCookie } = await import('../opencode-auth')
+  const workspaceId =
+    (await getExtra('opencodeWorkspaceId')) ?? process.env.OPENCODE_GO_WORKSPACE_ID ?? ''
+  const live = await readPartitionCookie()
+  if (live) return { workspaceId, cookie: live, from: 'partition' }
+  const saved = (await getKey('opencodeCookie')) ?? process.env.OPENCODE_GO_COOKIE ?? ''
+  return { workspaceId, cookie: saved, from: saved ? 'saved' : 'none' }
+}
+
 /** --shots：设计走查截图（先预热控制台明细缓存，否则首轮采集还没有明细） */
 export async function runShotsMode(onState: PushFn): Promise<void> {
   const win = createOverlay()
   try {
-    const { getExtra } = await import('../keystore')
     const { fetchConsoleDetailsNow } = await import('../opencode-details')
-    const wid = (await getExtra('opencodeWorkspaceId')) ?? ''
-    if (wid) await fetchConsoleDetailsNow(wid)
+    const cred = await resolveDiagnosticCred()
+    if (cred.workspaceId && cred.cookie) await fetchConsoleDetailsNow(cred.workspaceId, cred.cookie)
   } catch {
     // 预热失败不影响截图
   }
@@ -98,21 +117,29 @@ export async function runShotsMode(onState: PushFn): Promise<void> {
 
 /** --details-test：一次性抓取控制台每模型明细并打印（排障用，见 DESIGN.md §5） */
 export async function runDetailsTest(): Promise<void> {
-  const { getExtra } = await import('../keystore')
   const { fetchConsoleDetailsNow } = await import('../opencode-details')
-  const wid = (await getExtra('opencodeWorkspaceId')) ?? process.env.OPENCODE_GO_WORKSPACE_ID ?? ''
+  const cred = await resolveDiagnosticCred()
+  const { workspaceId: wid, cookie, from } = cred
   process.stdout.write(`workspaceId: ${wid ? wid.slice(0, 8) + '…' : '(未配置)'}\n`)
+  process.stdout.write(
+    `cookie: ${{ partition: '授权分区（实时）', saved: '已保存值', none: '(未配置)' }[from]}\n`
+  )
+  if (!wid || !cookie) {
+    process.stdout.write('缺少 workspace id 或 cookie —— 请先走一次「一键授权」\n')
+    return
+  }
   const t0 = Date.now()
-  const data = await fetchConsoleDetailsNow(wid)
+  const data = await fetchConsoleDetailsNow(wid, cookie)
   process.stdout.write(
     `抓取耗时: ${Date.now() - t0}ms | 结果: ${
       data ? JSON.stringify(Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length])), null, 1) : 'null'
     }\n`
   )
-  if (data?.monthly?.length) {
-    process.stdout.write('monthly 前 3 行:\n')
-    for (const r of data.monthly.slice(0, 3)) {
-      process.stdout.write(`  ${r.model} | $${r.usageUsd} | $${r.quotaUsd} | ${r.percent}%\n`)
+  for (const [kind, rows] of Object.entries(data ?? {})) {
+    if (!rows.length) continue
+    process.stdout.write(`${kind} 前 3 行（注意：只有已用量，接口不提供每模型配额与百分比）:\n`)
+    for (const r of rows.slice(0, 3)) {
+      process.stdout.write(`  ${r.model} | $${r.usageUsd.toFixed(4)} | ${r.tokens} tok | ${r.requests} 次\n`)
     }
   }
 }

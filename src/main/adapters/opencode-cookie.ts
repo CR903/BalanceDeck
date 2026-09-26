@@ -1,18 +1,36 @@
-// OpenCode Go 控制台 SSR 页面解析 + cookie 抓取路径。
-// 逻辑移植自 dsh-opencode-go-usage（MIT）：
-//   https://github.com/v587d/dsh-opencode-go-usage
+// OpenCode Go 控制台「配额窗口」读取路径（cookie 会话）。
 //
 // 用途：当 API Key 路径不可用（未配置 / 403 EntitlementError）时，
-// 用浏览器会话 cookie 抓取控制台页面，解析出与控制台完全一致的
+// 用浏览器会话 cookie 读控制台自己的接口，取与控制台完全一致的
 // 三个窗口百分比与重置倒计时。
 //
-// 页面：GET https://opencode.ai/workspace/<workspaceID>/go
-// 每个窗口渲染为 <div data-slot="usage-item"> 块，内部包含：
-//   data-slot="usage-label"   → 窗口名（"Rolling Usage" / "滚动用量"）
-//   data-slot="usage-value"   → 整数百分比
-//   data-slot="reset-time"    → "Resets in 2 hours 29 minutes" / "重置于 2 小时 29 分钟"
+// ── 2026-09-26 改版：从 SSR 页面抓取 换成 控制台自己的 JSON API ──────────────
+// 旧实现 GET `https://opencode.ai/workspace/<id>/go` 并解析 SSR HTML 里的
+// `data-slot="usage-item"`。控制台重写成纯客户端 SPA 后这条路死了：
+//   · `/workspace/<id>/go` → 302 `/console/login`
+//   · `/console/workspace/<id>/go` → 200 但只有 1565 字符空壳、**0 个 data-slot**
+// 新端点是实测出来的（带有效会话打开 Go 页抓它自己的请求）：
+//   GET /console/api/go/status   必需 x-org-id，缺则 400 `org_required`
+//   → access.meters.{fiveHour,week,month}
+// 金额是**微美分级字符串**（1 USD = 1e8 microcents），与旧 SSR 的
+// `usage`/`limit` 同尺度，所以下游换算一行都不用改。
+//
+// 这个改法还推翻了本文件原来的一条设计判断：旧注释论证「与其逆向 RPC 协议，
+// 不如解析页面 DOM，对站点改版更鲁棒」。改版把 DOM 一起换掉时，DOM 鲁棒论
+// 失效；而数据端点反倒在公开 bundle 里带 OpenAPI 声明标了 stable。
+//
+// 逻辑移植自 dsh-opencode-go-usage（MIT）的 cookie 规范化部分：
+//   https://github.com/v587d/dsh-opencode-go-usage
 
-import type { ProviderWindow } from '../../shared/types'
+import {
+  CONSOLE_ORIGIN,
+  GO_STATUS_PATH,
+  METER_FIELDS,
+  PERIOD_END_RESET_FIELDS,
+  buildConsoleHeaders,
+  classifyConsoleStatus,
+  consoleAuthMessage
+} from './opencode-console-api'
 import type { CollectContext } from './types'
 
 export type UsageWindowKind = 'rolling' | 'weekly' | 'monthly'
@@ -40,13 +58,16 @@ export const WINDOW_NAMES: Record<UsageWindowKind, string> = {
   monthly: '本月'
 }
 
-/** 用量金额的最小单位：SSR payload 里 `usage`/`limit` 为 1e-8 USD 的整数 */
-export const USAGE_UNIT_SCALE = 1e8
+/**
+ * 用量金额的最小单位：`go/status` 与 `usage/models` 的 `*MicroCents` 为 1e-8 USD 的整数字符串。
+ * 唯一定义在 ./opencode-console-api —— 这里**转发**而非重定义（两份会漂）。
+ * 转发是为了不改下游的 import 路径。
+ */
+export { USAGE_UNIT_SCALE } from './opencode-console-api'
 
 /**
- * 控制台 SSR payload 里的原始窗口数据（比渲染文本更精确）。
- * 序列化形态示例：
- *   rollingUsage:$R[34]={status:"ok",resetInSec:16137,usagePercent:0.2,usage:2511472,limit:1200000000}
+ * 控制台接口里的原始窗口数据（比渲染文本更精确）。
+ * 现由 `parseGoStatus` 产出，字段与旧 SSR 版本保持一致，下游零改动。
  */
 export interface SsrRawWindow {
   status?: string
@@ -59,169 +80,112 @@ export interface SsrRawWindow {
   resetInSec?: number
 }
 
-/** 从序列化字符串里取数值字段 */
-function pickNum(body: string, key: string): number | undefined {
-  const m = body.match(new RegExp(`${key}:\\s*(-?[\\d.]+)`))
-  if (!m) return undefined
-  const n = Number(m[1])
+
+// ─── `go/status` 响应解析 ─────────────────────────────────────────────────────
+
+/** 微美分级字符串 → 数字。端点把所有金额都发成字符串（避免 JS 精度丢失）。 */
+function microCents(v: unknown): number | undefined {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined
+  if (typeof v !== 'string' || v.trim() === '') return undefined
+  const n = Number(v)
   return Number.isFinite(n) ? n : undefined
 }
 
-/** 从序列化字符串里取字符串字段 */
-function pickStr(body: string, key: string): string | undefined {
-  const m = body.match(new RegExp(`${key}:\\s*"([^"]*)"`))
-  return m ? m[1] : undefined
+/** ISO 时间 → 距今秒数。缺字段（`month` 没有 `resetsAt`）返回 undefined。 */
+function secondsUntil(iso: unknown, nowMs: number): number | undefined {
+  if (typeof iso !== 'string' || !iso) return undefined
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return undefined
+  return Math.round((t - nowMs) / 1000)
+}
+
+export interface GoStatusParse {
+  windows: Partial<Record<UsageWindowKind, SsrUsageWindow>>
+  raw: Partial<Record<UsageWindowKind, SsrRawWindow>>
+  /**
+   * 认不出的 meter 字段名 —— 站点改版时的早期信号。
+   * 非空就说明 `METER_FIELDS` 需要更新，要打日志（别静默返回空：那会让
+   * 快照悄悄退回本机估算，而界面看不出任何异常）。
+   */
+  unknownMeters: string[]
 }
 
 /**
- * 从控制台页面 HTML 的 SolidStart 序列化 payload 里提取三个窗口的**精确**数据。
- * 这是比渲染文本（`data-slot="usage-value"`）更权威的来源：
- * 它同时给出 `usagePercent`（小数）与 `usage`/`limit`（真实美元，1e-8 单位）。
+ * 解析 `GET /console/api/go/status` 的响应。
+ *
+ * 真实响应（2026-09-26 实测，已脱敏）：
+ * ```json
+ * { "product": "go",
+ *   "access": {
+ *     "endsAt": "2026-10-21T01:25:47.000Z",
+ *     "meters": {
+ *       "fiveHour": { "startsAt": "…", "resetsAt": "2026-09-26T15:22:41.617Z",
+ *                     "limitMicroCents": "1200000000", "usedMicroCents": "52000" },
+ *       "week":     { "startsAt": "…", "resetsAt": "2026-09-28T00:00:00.000Z",
+ *                     "limitMicroCents": "3000000000", "usedMicroCents": "505884411" },
+ *       "month":    { "limitMicroCents": "6000000000", "usedMicroCents": "505884411" }
+ * } } }
+ * ```
+ *
+ * 三个要点：
+ *  1. **限额由服务端下发**（`limitMicroCents`），不再依赖代码里硬编码的 $12/$30/$60。
+ *  2. `month` **没有 `resetsAt`** —— 它的重置时间等于订阅周期末 `access.endsAt`。
+ *     实测核对：`endsAt` 减当时 = 24 天 10 小时 41 分，与控制台页面显示的
+ *     "Monthly usage … Resets in 24d 10h" 吻合。
+ *  3. 金额是 1e-8 USD 尺度（microcents），与旧 SSR 的 `usage`/`limit` 同尺度。
  */
-export function parseUsagePayload(html: string): Partial<Record<UsageWindowKind, SsrRawWindow>> {
-  const out: Partial<Record<UsageWindowKind, SsrRawWindow>> = {}
-  for (const kind of ['rolling', 'weekly', 'monthly'] as UsageWindowKind[]) {
-    // 兼容 `kindUsage:$R[12]={...}` 与 `kindUsage:{...}` 两种序列化形态
-    const m = html.match(new RegExp(`${kind}Usage:\\s*(?:\\$R\\[\\d+\\]\\s*=\\s*)?\\{([^{}]*)\\}`))
-    if (!m) continue
-    const body = m[1]
-    out[kind] = {
-      status: pickStr(body, 'status'),
-      usagePercent: pickNum(body, 'usagePercent'),
-      usage: pickNum(body, 'usage'),
-      limit: pickNum(body, 'limit'),
-      resetInSec: pickNum(body, 'resetInSec')
+export function parseGoStatus(body: unknown, nowMs: number): GoStatusParse {
+  const out: GoStatusParse = { windows: {}, raw: {}, unknownMeters: [] }
+  if (!body || typeof body !== 'object') return out
+  const access = (body as { access?: unknown }).access
+  if (!access || typeof access !== 'object') return out
+  const meters = (access as { meters?: unknown }).meters
+  if (!meters || typeof meters !== 'object') return out
+
+  const periodEndSec = secondsUntil((access as { endsAt?: unknown }).endsAt, nowMs)
+  // 注意取 **键**（接口里的 meter 字段名），不是值（我们的窗口名）。
+  // 取错了会把 fiveHour/week/month 全判成"未知计费项"——2026-09-26 就踩过这个。
+  const known = new Set<string>(Object.keys(METER_FIELDS))
+
+  for (const [field, value] of Object.entries(meters as Record<string, unknown>)) {
+    if (!known.has(field)) {
+      out.unknownMeters.push(field)
+      continue
     }
-  }
-  return out
-}
+    const kind = METER_FIELDS[field as keyof typeof METER_FIELDS]
+    if (!value || typeof value !== 'object') continue
+    const m = value as { limitMicroCents?: unknown; usedMicroCents?: unknown; resetsAt?: unknown }
 
-// ─── SSR 解析（移植自 dsh-opencode-go-usage/src/api.ts）─────────────────────
+    const limit = microCents(m.limitMicroCents)
+    const usage = microCents(m.usedMicroCents)
+    if (limit === undefined && usage === undefined) continue
 
-interface SsrItem {
-  label: string
-  percent: number
-  resetsIn: string
-}
+    // month 没有 resetsAt，回落到订阅周期末（实测与页面显示一致）
+    const resetInSec = secondsUntil(m.resetsAt, nowMs) ?? (PERIOD_END_RESET_FIELDS.has(field) ? periodEndSec : undefined)
+    const usagePercent = limit !== undefined && limit > 0 && usage !== undefined ? (usage / limit) * 100 : undefined
 
-/** 从 SSR HTML 中提取三个窗口，失败返回空对象 */
-export function parseUsageHtml(html: string): Partial<Record<UsageWindowKind, SsrUsageWindow>> {
-  // 每个 usage-item 是 <div data-slot="usage-item">...</div> 块，内部可能嵌套 div。
-  // 不尝试用正则匹配闭合标签，而是按连续起始标签切片，保留整块内容。
-  const itemStartRe = /<div[^>]*data-slot="usage-item"/g
-  const starts: number[] = []
-  let m = itemStartRe.exec(html)
-  while (m !== null) {
-    starts.push(m.index)
-    m = itemStartRe.exec(html)
-  }
+    // 算不出百分比时**不能报 0%**。
+    // 那会让界面显示「已用 $5.06 / 配额 $30 · 0%」—— 花了钱却显示 0%，是撒谎。
+    // 做法：raw 照留（金额是真的），但不产出 `windows[kind]`，
+    // 于是下游 `renderedPct` 为 null，优先级链会落到别的来源（官方 API），
+    // 实在没别的来源时由 opencode.ts 给出「百分比不可用」的提示。
+    if (usagePercent === undefined && (usage ?? 0) > 0) {
+      out.raw[kind] = { status: 'percent-unavailable', usage, limit, resetInSec }
+      continue
+    }
 
-  const items: SsrItem[] = []
-  for (let i = 0; i < starts.length; i++) {
-    const block = html.slice(starts[i], starts[i + 1] ?? html.length)
-    const labelMatch = block.match(/data-slot="usage-label"[^>]*>([^<]+)</)
-    // 百分比可能是小数（如 "2.8%"），接受整数与小数两种形态
-    const valueMatch = block.match(/data-slot="usage-value"[\s\S]*?<!--\$-->\s*(\d+(?:\.\d+)?)\s*<!--\/-->/)
-    // 重置短语随 UI 语言：英文 "Resets in" / 中文 "重置于"
-    const resetMatch = block.match(
-      /data-slot="reset-time"[\s\S]*?(?:Resets in|重置于)(?:<!--\/-->\s*)?([\s\S]*?)(?:<!--\/-->|<\/span>)/
-    )
-    if (!labelMatch || !valueMatch) continue
-    items.push({
-      label: (labelMatch[1] ?? '').trim(),
-      percent: Number.parseFloat(valueMatch[1] ?? '0'),
-      resetsIn: resetMatch ? stripHtmlComments(resetMatch[1] ?? '').trim() : ''
-    })
-  }
-
-  const out: Partial<Record<UsageWindowKind, SsrUsageWindow>> = {}
-  for (const item of items) {
-    const kind = labelToKind(item.label)
-    if (!kind) continue
-    out[kind] = {
+    const pct = usagePercent === undefined ? 0 : Math.max(0, Math.min(100, Math.floor(usagePercent)))
+    out.raw[kind] = { status: pct >= 100 ? 'rate-limited' : 'ok', usagePercent, usage, limit, resetInSec }
+    out.windows[kind] = {
       kind,
-      percent: clampPercent(item.percent),
-      resetInSec: parseDurationToSec(item.resetsIn),
-      status: item.percent >= 100 ? 'rate-limited' : 'ok'
+      percent: pct,
+      // 0 的含义是"重置时间未知"（month 无 resetsAt 且无 endsAt 时）。
+      // 下游都判 `> 0` 才用，所以 0 = 倒计时不显示，而不是"还有 0 秒"。
+      resetInSec: resetInSec ?? 0,
+      status: pct >= 100 ? 'rate-limited' : 'ok'
     }
   }
   return out
-}
-
-function labelToKind(label: string): UsageWindowKind | undefined {
-  const lower = label.toLowerCase()
-  if (lower.startsWith('rolling')) return 'rolling'
-  if (lower.startsWith('weekly')) return 'weekly'
-  if (lower.startsWith('monthly')) return 'monthly'
-  // 中文标签（zh locale）：滚动用量 / 每周用量 / 每月用量
-  if (lower.startsWith('滚动')) return 'rolling'
-  if (lower.startsWith('每周')) return 'weekly'
-  if (lower.startsWith('每月')) return 'monthly'
-  return undefined
-}
-
-function stripHtmlComments(s: string): string {
-  return s.replace(/<!--[\s\S]*?-->/g, '').trim()
-}
-
-function clampPercent(n: number): number {
-  if (!Number.isFinite(n)) return 0
-  // 保留一位小数（控制台可能显示 2.8% 这类精度）
-  return Math.max(0, Math.min(100, Math.round(n * 10) / 10))
-}
-
-/**
- * 把人类短语解析为秒数，中英文都支持：
- *   "2 hours 29 minutes" → 8940    "2 小时 29 分钟" → 8940
- *   "5 days" → 432000              "30 seconds" → 30
- *   "1 week" → 604800              "1 month" → 2592000
- */
-export function parseDurationToSec(phrase: string): number {
-  if (!phrase) return 0
-  const cleaned = phrase.replace(/<!--[\s\S]*?-->/g, ' ')
-  const p = cleaned.trim().replace(/\s+/g, ' ').toLowerCase()
-  if (!p) return 0
-  const re = /(\d+)\s*(?:个\s*)?(second|minute|hour|day|week|month|year|秒|分钟|小时|天|周|月|年)s?/g
-  let total = 0
-  let matched = false
-  let m = re.exec(p)
-  while (m !== null) {
-    const n = Number.parseInt(m[1] ?? '0', 10)
-    const unit = m[2] ?? ''
-    matched = true
-    switch (unit) {
-      case 'second':
-      case '秒':
-        total += n
-        break
-      case 'minute':
-      case '分钟':
-        total += n * 60
-        break
-      case 'hour':
-      case '小时':
-        total += n * 3600
-        break
-      case 'day':
-      case '天':
-        total += n * 86400
-        break
-      case 'week':
-      case '周':
-        total += n * 604800
-        break
-      case 'month':
-      case '月':
-        total += n * 2592000 // 30 天（粗粒度，展示足够）
-        break
-      case 'year':
-      case '年':
-        total += n * 31536000
-        break
-    }
-    m = re.exec(p)
-  }
-  return matched ? total : 0
 }
 
 // ─── Cookie 规范化（移植自 dsh-opencode-go-usage/src/config.ts）──────────────
@@ -269,78 +233,75 @@ export function normalizeCookie(input: string | undefined | null): string | null
 
 export interface CookieFetchResult {
   windows: Partial<Record<UsageWindowKind, SsrUsageWindow>>
-  /** SSR payload 里的精确数据（usage/limit 为 1e-8 USD） */
+  /** 接口里的精确数据（usage/limit 为 1e-8 USD 尺度） */
   raw: Partial<Record<UsageWindowKind, SsrRawWindow>>
   /** 抓取成功的时刻 */
   fetchedAt: number
+  /**
+   * 认不出的 meter 字段名（站点改版的早期信号）。
+   * 非空说明端点结构变了 —— 上层应把它显示出来，别让快照静悄悄退回本机估算。
+   */
+  unknownMeters: string[]
 }
 
 /**
- * 用 cookie 抓取控制台页面并解析。任何失败都抛 Error（消息不含 cookie）。
- * 页面在 cookie 失效时 302 到登录页，登录页解析为空 → 抛 'cookie 已过期或无效'。
+ * 用 cookie 读控制台的配额窗口（`GET /console/api/go/status`）并解析。
+ * 任何失败都抛 Error（消息不含 cookie）。
+ *
+ * 错误分类刻意分三档，因为它们要**不同的用户动作**：
+ *  · 401 → 会话没了，要用户点「一键授权」
+ *  · 400 `org_required` → 缺 workspace id，要重新授权让它被发现
+ *  · 其它非 2xx → 这条路暂时不通，够不着但不是用户能修的
+ * 旧的笼统文案「cookie 已过期或无效」让用户看不出该做什么，已删除。
  */
 export async function fetchUsageViaCookie(
   ctx: CollectContext,
   cookie: string,
   workspaceID: string,
-  baseUrl = 'https://opencode.ai',
+  baseUrl = CONSOLE_ORIGIN,
   timeoutMs = 12_000
 ): Promise<CookieFetchResult> {
   const normalized = normalizeCookie(cookie)
   if (!normalized) throw new Error('Cookie 格式无效：未找到 auth= 段')
-  if (!workspaceID.trim()) throw new Error('未配置 Workspace ID')
+  const orgId = workspaceID.trim()
+  if (!orgId) throw new Error('未配置 Workspace ID（请重新授权以自动发现）')
 
-  const url = `${baseUrl.replace(/\/+$/, '')}/workspace/${encodeURIComponent(workspaceID.trim())}/go`
+  const url = `${baseUrl.replace(/\/+$/, '')}${GO_STATUS_PATH}`
   try {
     // 出网、超时与可达性记账都由注入的能力负责（生产实现见 src/main/request.ts）——
     // 这里曾经自己 fetch 并直接 import ../net，那条依赖让整个 opencode 家族无法被单测加载。
-    const res = await ctx.request({ url, headers: { Cookie: normalized, Accept: 'text/html' }, timeoutMs })
+    const res = await ctx.request({ url, headers: buildConsoleHeaders(normalized, orgId), timeoutMs })
     // 拿到响应即说明网络可达（4xx/5xx 属于凭据/服务问题，不算离线）
-    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`)
-    const html = res.text
-    const windows = parseUsageHtml(html)
-    const raw = parseUsagePayload(html)
-    if (!windows.rolling && !windows.weekly && !windows.monthly && !raw.rolling && !raw.weekly && !raw.monthly) {
-      throw new Error('用量页面解析为空（cookie 已过期或无效？）')
+    if (res.status < 200 || res.status >= 300) {
+      const auth = classifyConsoleStatus(res.status)
+      const hint = consoleAuthMessage(auth)
+      if (hint) throw new Error(hint)
+      if (res.status === 400 && /org_required/.test(res.text)) {
+        throw new Error('控制台要求指定工作区，但当前 workspace id 无效（请重新授权）')
+      }
+      throw new Error(`控制台接口返回 HTTP ${res.status}`)
     }
-    return { windows, raw, fetchedAt: Date.now() }
+
+    let body: unknown
+    try {
+      body = JSON.parse(res.text)
+    } catch {
+      throw new Error('控制台接口返回的不是 JSON（站点可能改版或返回了错误页）')
+    }
+
+    const parsed = parseGoStatus(body, Date.now())
+    const has = parsed.windows.rolling || parsed.windows.weekly || parsed.windows.monthly
+    if (!has) {
+      // 结构变了（METER_FIELDS 对不上）比"会话失效"更可能是原因，所以要说清楚
+      throw new Error(
+        parsed.unknownMeters.length
+          ? `控制台接口结构已变（出现未知计费项：${parsed.unknownMeters.join(', ')}）`
+          : '控制台接口未返回任何计费窗口（会话可能已失效，请重新授权）'
+      )
+    }
+    return { ...parsed, fetchedAt: Date.now() }
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw new Error(`请求超时（${timeoutMs}ms）`)
     throw e
   }
-}
-
-/** 把 cookie 路径的窗口转成 ProviderWindow。
- *  官方限额以美元定义，used = percent × limit 即服务端口径花费（权威）；
- *  tokens 由调用方用本机数据在窗口内补充（官方不提供）。 */
-export function cookieWindowsToProvider(
-  windows: Partial<Record<UsageWindowKind, SsrUsageWindow>>,
-  nowMs: number,
-  limits: { fiveHour: number; weekly: number; monthly: number }
-): ProviderWindow[] {
-  const limitFor: Record<UsageWindowKind, number> = {
-    rolling: limits.fiveHour,
-    weekly: limits.weekly,
-    monthly: limits.monthly
-  }
-  const order: UsageWindowKind[] = ['rolling', 'weekly', 'monthly']
-  const out: ProviderWindow[] = []
-  for (const kind of order) {
-    const w = windows[kind]
-    if (!w) continue
-    const limit = limitFor[kind]
-    const resetInMs = w.resetInSec > 0 ? w.resetInSec * 1000 : 0
-    // 5h 窗口 percent=0 且倒计时≈5h：占位值，当前无活跃窗口
-    const isIdle = kind === 'rolling' && w.percent === 0 && resetInMs > 0 && Math.abs(resetInMs - WINDOW_SPANS.rolling) < 120_000
-    out.push({
-      name: WINDOW_NAMES[kind],
-      used: (w.percent / 100) * limit,
-      limit,
-      unit: 'usd',
-      percent: w.percent,
-      resetAt: resetInMs > 0 && !isIdle ? new Date(nowMs + resetInMs).toISOString() : undefined,
-      note: w.status === 'rate-limited' ? '已触发限流' : isIdle ? '当前无活跃窗口' : '控制台 cookie'
-    })
-  }
-  return out
 }

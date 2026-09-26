@@ -8,16 +8,66 @@
 ```
 采集引擎 (engine.ts / request.ts)  ── 发请求 / 超时 / 可达性记账 / HTTP→错误映射
         │
-        ├─ 官方 API 路径   opencode.ts        GET /zen/go/v1/usage  (Bearer key)   → 403 EntitlementError
+        ├─ 官方 API 路径   opencode.ts        GET /zen/go/v1/usage  (Bearer key)
+        │                                          ⚠️ 403 只发生在 auth.json 那把 key 上；
+        │                                             应用实际能用 opencode.db credential 表里的
+        │                                             那把（debug 里显示「本机凭据(…9dFe)」），
+        │                                             所以这条路径在应用内是**通的**
         │
         └─ cookie 路径      opencode-cookie.ts ─┐
-                              opencode-details.ts ┴─ GET /console/api/usage/summary   ← 改这里
-                                                    GET /console/api/usage/models    ← 改这里
+                              opencode-details.ts ┴─ GET /console/api/go/status        ← 窗口百分比
+                                                    GET /console/api/usage/models    ← 每模型明细
 opencode-auth.ts  ── 一键授权（登录 URL / workspace 发现 / cookie 采集）        ← 改这里
 ```
 
-**刻意不改**：`CollectorWindow` 形状、`cookieWindowsToProvider`、`ConsoleModelRow`、界面渲染、
-本机 db 兜底分支。改动的终点是「数据来源换了，下游一行不动」。
+**刻意不改**：`CollectorWindow` 形状、`cookieWindowsToProvider`、界面渲染、本机 db 兜底分支。
+改动的终点是「数据来源换了，下游一行不动」。
+
+> ⚠️ `ConsoleModelRow` **改了**（删掉 `quotaUsd` / `percent`）—— 新接口不提供这两个数，
+> 留着就是撒谎。见「实施后的修正」。
+
+## ⚠️ 实施后的修正：本 design 的核心假设错了
+
+原契约 1 假定「`/console/api/usage/summary` 替代 SSR 的窗口解析」。**实测不是**：
+
+```json
+// GET /console/api/usage/summary?range=24h
+{"totalRequests":"244","totalInputTokens":"3903412",...,"totalCostMicroCents":"13000","services":[]}
+```
+
+它只有**用量聚合**（总量 / 按 range / 按天），**没有 percent / limit / resetsAt**。
+`range` 取遍 `24h` / `7d` / `30d` 也一样。
+
+真正的窗口端点是打开真实 Go 页、观测它自己的请求才找到的：
+
+```
+GET /console/api/go/status        必需 x-org-id，缺则 400 org_required
+→ access.meters.{fiveHour,week,month}
+     { startsAt?, resetsAt?, limitMicroCents, usedMicroCents }
+```
+
+**这比原方案更好**：限额由服务端下发（`limitMicroCents`），不再依赖代码里硬编码的
+$12/$30/$60；`usedMicroCents` 是精确已用量，不必再用 `percent × limit` 反算
+（实测 `used=5.05884411`，而反算只会得到 `16% × 30 = 4.8`）。
+
+> **教训（值得进 spec）**：光读 bundle 里的 API 声明**不足以**判断哪个端点有用 ——
+> `summary` 也在声明里、也标了 stable，但它是另一类数据。
+> 唯一可靠的依据是**打开真实页面看它调了谁**（`scripts/opencode-go-page-capture.js`）。
+
+### 另两处与原设计的差异
+
+| 原设计 | 实际 |
+|---|---|
+| `ConsoleModelRow` 保留 `quotaUsd` / `percent` | `usage/models` **没有**每模型配额与百分比 → 两字段**删掉**（填 0 会让界面显示「$0 / 0%」= 撒谎）。渲染层本来就支持缺省（`DetailView.tsx` 显示「—」） |
+| 明细按窗口各取一次 | 5 小时窗口**取不到**（端点 range 最小 24h）→ `MODELS_RANGES` 故意不映射 rolling，该窗口宁可不显示明细 |
+
+`month` meter 没有 `resetsAt`，回落到 `access.endsAt`（实测与页面 "Resets in 24d 10h" 吻合）。
+
+### 顺带白捡的（未接入，记档）
+
+`GET /console/api/billing/status` → `availableMicroCents: 500000000`（$5.00 可用额外额度）
+与 `renewalAuthorizationRequired: true`（页面提示需在 Oct 21 前重新授权支付方式）。
+两者都是真实可用的新数据源，但接入要改快照形状（余额型 vs 套餐型），应单开一轮。
 
 ## 契约
 
