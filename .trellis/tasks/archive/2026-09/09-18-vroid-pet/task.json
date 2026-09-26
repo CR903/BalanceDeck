@@ -3,7 +3,7 @@
   "name": "vroid-pet",
   "title": "VRoid pet companion",
   "description": "Add user VRoid characters as desktop pets that walk, greet, and announce balance via speech bubbles",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "zhou",
   "assignee": "zhou",
   "createdAt": "2026-09-18",
-  "completedAt": null,
+  "completedAt": "2026-09-26",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -19,8 +19,7 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "09-18-vroid-local",
-    "09-18-vroid-hub"
+    "09-18-vroid-local"
   ],
   "parent": null,
   "relatedFiles": [],
