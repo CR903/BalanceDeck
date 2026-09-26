@@ -6,14 +6,14 @@
  *
  * On every model request, inject a short <workflow-state> breadcrumb
  * into the in-memory copy of the latest user message via
- * `experimental.chat.messages.transform`. Stored history and the TUI
- * are not modified (issue #553). Breadcrumb text is pulled exclusively
- * from the project's workflow.md [workflow-state:STATUS] tag blocks —
- * workflow.md is the single source of truth. There are no fallback
- * tables in this plugin: when workflow.md is missing or a tag is
- * absent, the breadcrumb degrades to a generic
- * "Refer to workflow.md for current step." line so users see (and fix)
- * the broken state instead of the plugin silently masking it.
+ * `ctx.session.hook("context", ...)`. The V2 hook receives a per-dispatch
+ * working copy, so stored history and the TUI are not modified
+ * (issue #553). Breadcrumb text is pulled exclusively from the project's
+ * workflow.md [workflow-state:STATUS] tag blocks — workflow.md is the
+ * single source of truth. There are no fallback tables in this plugin:
+ * when workflow.md is missing or a tag is absent, the breadcrumb degrades
+ * to a generic "Refer to workflow.md for current step." line so users see
+ * (and fix) the broken state instead of the plugin silently masking it.
  *
  * Silently skips when:
  *   - No .trellis/ directory
@@ -24,11 +24,11 @@
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import {
-  MESSAGES_TRANSFORM_HOOK,
-  latestUserPromptText,
-  platformInputFromMessages,
-  prependEphemeralText,
-} from "../lib/context-visibility.js"
+  V2_CONTEXT_HOOK,
+  lastUserTextV2,
+  messageAlreadyHasMarkerV2,
+  prependTextToUserMessageV2,
+} from "../lib/context-visibility-v2.js"
 import { TrellisContext, debugLog, isTrellisSubagent } from "../lib/trellis-context.js"
 
 // Supports STATUS values with letters, digits, underscores, hyphens
@@ -39,6 +39,13 @@ const TAG_RE = /\[workflow-state:([A-Za-z0-9_-]+)\]\s*\n([\s\S]*?)\n\s*\[\/workf
 // `common.config.get_prompt_injection_config()` / the shared Python hook's
 // `_resolve_skip_keyword()` + `prompt_has_skip_keyword()`.
 const DEFAULT_PROMPT_INJECTION_SKIP_KEYWORD = "no-trellis"
+
+// Per-dispatch dedup marker. `buildBreadcrumb` always wraps its body in
+// this tag, so seeing it in the latest user message means this turn's
+// breadcrumb is already in place. The V2 `context` hook fires once per
+// model request — including every tool-driven continuation — over a reused
+// messages array, so this guard is required, not merely an optimization.
+const BREADCRUMB_MARKER = "<workflow-state>"
 
 function stripInlineComment(value) {
   let inQuote = null
@@ -174,67 +181,82 @@ function buildBreadcrumb(id, status, templates) {
   if (body === undefined) {
     body = "Refer to workflow.md for current step."
   }
-  let header = id === null ? `Status: ${status}` : `Task: ${id} (${status})`
-  return `<workflow-state>\n${header}\n${body}\n</workflow-state>`
+  const header = id === null ? `Status: ${status}` : `Task: ${id} (${status})`
+  return `${BREADCRUMB_MARKER}\n${header}\n${body}\n</workflow-state>`
 }
 
-// OpenCode 1.2.x expects plugins to be factory functions (see inject-subagent-context.js comment).
-export default async ({ directory }) => {
-  const ctx = new TrellisContext(directory)
-  debugLog("workflow-state", "Plugin loaded, directory:", directory)
+function hooksDisabled() {
+  return process.env.TRELLIS_HOOKS === "0" || process.env.TRELLIS_DISABLE_HOOKS === "1"
+}
 
-  return {
-      [MESSAGES_TRANSFORM_HOOK]: async (_input, output) => {
-        try {
-          const messages = output?.messages
-          const platformInput = platformInputFromMessages(messages)
-          // Skip Trellis sub-agent turns — the per-turn breadcrumb is for the
-          // main session only; sub-agent context comes from the parent's
-          // tool.execute.before injection.
-          if (isTrellisSubagent(platformInput)) {
-            debugLog("workflow-state", "Skipping trellis subagent turn:", platformInput?.agent)
-            return
-          }
-          if (process.env.TRELLIS_HOOKS === "0" || process.env.TRELLIS_DISABLE_HOOKS === "1") {
-            return
-          }
-          if (process.env.OPENCODE_NON_INTERACTIVE === "1") {
-            return
-          }
-          if (!ctx.isTrellisProject()) {
-            return
-          }
+// OpenCode V2 entrypoint: a default export carrying a stable `id` and
+// `setup(ctx)`. The V1 `export default async ({ directory }) => ({ hooks })`
+// shape is not recognized by V2, so a V1 entrypoint makes this plugin a
+// silent no-op there.
+export default {
+  id: "trellis.workflow-state",
 
-          const originalText = latestUserPromptText(messages)
+  async setup(ctx) {
+    const directory = ctx.location.directory
+    const trellis = new TrellisContext(directory)
+    debugLog("workflow-state", "Plugin loaded, directory:", directory)
 
-          // Escape hatch (issue #427): user prompt contains the skip keyword
-          // as a standalone word — emit nothing for this turn only.
-          if (promptHasSkipKeyword(originalText, readSkipKeyword(directory))) {
-            debugLog("workflow-state", "Skipping turn: skip keyword present in prompt")
-            return
-          }
+    // Resolved once per setup instead of per turn: config.yaml is a
+    // per-project static file, and the skip keyword is read on every request.
+    const skipKeyword = readSkipKeyword(directory)
 
-          const templates = loadBreadcrumbs(directory)
-          const task = getActiveTask(ctx, platformInput)
-          const breadcrumb = task
-            ? buildBreadcrumb(task.id, task.status, templates, task.source)
-            : buildBreadcrumb(null, "no_task", templates)
-
-          prependEphemeralText(messages, breadcrumb)
-          debugLog(
-            "workflow-state",
-            "Injected breadcrumb for task",
-            task ? task.id : "none",
-            "status",
-            task ? task.status : "no_task",
-          )
-        } catch (error) {
-          debugLog(
-            "workflow-state",
-            "Error in messages.transform:",
-            error instanceof Error ? error.message : String(error),
-          )
+    await ctx.session.hook(V2_CONTEXT_HOOK, async (event) => {
+      try {
+        // Skip Trellis sub-agent turns — the per-turn breadcrumb is for the
+        // main session only; sub-agent context comes from the parent's
+        // tool.execute.before injection.
+        if (isTrellisSubagent(event)) {
+          debugLog("workflow-state", "Skipping trellis subagent turn:", event?.agent)
+          return
         }
-      },
-  }
+        if (hooksDisabled()) return
+        if (process.env.OPENCODE_NON_INTERACTIVE === "1") return
+        if (!trellis.isTrellisProject()) return
+
+        const messages = event?.messages
+        if (!Array.isArray(messages)) return
+
+        if (messageAlreadyHasMarkerV2(messages, BREADCRUMB_MARKER)) {
+          debugLog("workflow-state", "Skipping - breadcrumb already present this turn")
+          return
+        }
+
+        // Escape hatch (issue #427): user prompt contains the skip keyword
+        // as a standalone word — emit nothing for this turn only.
+        if (promptHasSkipKeyword(lastUserTextV2(messages), skipKeyword)) {
+          debugLog("workflow-state", "Skipping turn: skip keyword present in prompt")
+          return
+        }
+
+        const templates = loadBreadcrumbs(directory)
+        const task = getActiveTask(trellis, {
+          sessionID: event.sessionID,
+          agent: event.agent,
+        })
+        const breadcrumb = task
+          ? buildBreadcrumb(task.id, task.status, templates)
+          : buildBreadcrumb(null, "no_task", templates)
+
+        prependTextToUserMessageV2(messages, breadcrumb)
+        debugLog(
+          "workflow-state",
+          "Injected breadcrumb for task",
+          task ? task.id : "none",
+          "status",
+          task ? task.status : "no_task",
+        )
+      } catch (error) {
+        debugLog(
+          "workflow-state",
+          "Error in context hook:",
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    })
+  },
 }

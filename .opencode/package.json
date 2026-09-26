@@ -1,5 +1,14 @@
 {
-  "dependencies": {
-    "@opencode-ai/plugin": "^1.14.39"
-  }
+  "name": "trellis-opencode-plugins",
+  "private": true,
+  "type": "module",
+  "comment": [
+    "Trellis-managed OpenCode plugin host for .opencode/plugins/*.js.",
+    "The plugins use the OpenCode V2 plugin API (default export with `id` +",
+    "`setup(ctx)`) and are plain ESM JavaScript, so they import no runtime",
+    "package and need no dependency install.",
+    "",
+    "The previous `@opencode-ai/plugin` pin was the V1 SDK and was unused:",
+    "OpenCode V1 plugin entrypoints are not recognized by V2 at all."
+  ]
 }
