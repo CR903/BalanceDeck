@@ -3,6 +3,30 @@
 顺序按「先能看见，再谈观感」排：每一步都以基线截图 `/tmp/balancedeck-shots/pet-aria.png`（当前纯黑）为对照。
 检查点 CP1–CP3 是评审门，未过不进下一步。
 
+## 收尾归档说明（2026-09-26）
+
+步骤 0–5 已全部落地并验收（`typecheck` / `npm test` 10 套件 0 失败 / `--uitest` 82 项 0 失败），
+本任务于 2026-09-26 归档。**归档时对本 PRD 的验收标准做了作废标注**，因为落地后
+项目方向又变了，下列前提已不成立 —— 保留原文本是为了留下决策依据，不是待办：
+
+| 原 AC / 要求 | 现状 | 接手它的 commit |
+|---|---|---|
+| R5–R7 漫游区反算、球壳不裁切、`fitRoamArea` 双约束 | **漫游机制整体下线**，`walker.ts` / `fitRoamArea` / `test-walker` / `test-viewfit` 全删 | `4f85487` |
+| R9 `halfZ` 13→28、缩放跨度 ≥1.35× | 前提（漫游纵深）已不存在 | `4f85487` |
+| R10 真人系朝行进方向偏航 | 改由动作编排接管（`clips.ts` / `gesture.ts`） | `a0def59` |
+| R17 `test:walker` / `test-viewfit` 全绿 | 这两个套件已删除；现存的是 `test:pet` / `test:gesture` / `test:projection` | `4f85487` |
+| 隐含的「养成」验收 | **养成体系下线**，收起态人物定位改为「数字助理」 | `69d9aff` |
+| 「与现有 8 只 Q 版并列」 | 8 只 Q 版动物已下线，`src/renderer/src/pet3d/` 只剩 Aria / Ray 两位真人 | `0f70602` |
+| 窗口 320×230 | 球 `200×210`、人物 `213×293`（`src/shared/pet-view.ts` 是唯一来源） | `aed234c` / `69d9aff` |
+| 「补 CP3 验收」那一节（4 张 `BD_PIN_POS` 定点图） | **已作废** —— `BD_PIN_POS` / `fitRoamArea` 随漫游机制一起没了 | `4f85487` |
+
+**仍然成立、且由本任务交付的**：R1 材质反照率修正（`pet3d/human.ts` 的 Phong→Standard
++ 黑 `color` 提白 + `envMapIntensity`）、R2 IBL 真正生效、R12–R16 语音播报
+（`src/renderer/src/voice.ts` + 设置页开关与间隔档位 + `hideBalance` 隐私口径 +
+单定时器不自叠）。
+
+真人化观感（皮肤/毛发/布料分材质、打光重构）始终**不在本任务**，仍归 `09-18-human-realism`。
+
 ## 进度快照（2026-09-19 会话完成）
 
 | 步骤 | 状态 | 已验收证据 |
