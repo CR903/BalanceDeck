@@ -481,6 +481,13 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - Electron 必须 ≤37（macOS 12 兼容），升级前先跑 `npm run smoke`。
 - 智谱余额端点为社区验证版本（`/api/paas/v4/users/me/balance`），响应格式变化时适配器会报"响应格式未识别"，属预期自愈提示。
 - MiniMax 新平台接口失败会自动回退旧接口（需要 GroupID）。
+- **opencode 控制台无 SSR**（2026-09-26 起）：任何依赖 `GET /workspace/<wid>/go` 的 HTML
+  抓取都会拿到 SPA 空壳。控制台数据优先走官方 `zen/go/v1/usage` API；确需页面内容必须
+  用真实窗口水合后读 DOM，不能 `fetch` HTML。
+- **`--uitest` 定位控件要按类名**（2026-09-26 实测）：设置页有多个 `select`，
+  按「第一个含某 option 值」找会抓错（播报间隔的 `10` 抢走刷新频率的 `10`）。
+  新增控件一律带类名，uitest 按类名定位。
+- `--uitest` 契约是「解析 stdout 的 JSON」，**退出码不参与判定**。
 
 ## 2026-09-06 追加修复（用户反馈）
 
@@ -507,3 +514,48 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - [x] uitest 新增 `noDrift`（两轮开合位置逐像素一致）/ `logoBadge` / `gaugeSubRows` 断言，共 21 项
 - [x] 录屏验证：CDP 驱动真实 IPC 链路 3 轮开合，窗口位置分毫未动（1296,25）；截图确认 logo 与三窗口显示正常
 - [ ] 打包：按用户要求暂缓，功能齐后统一 `dist:mac` / `dist:win`（环境注意：本机默认 node v14 跑不动工具链且 build 会**静默失败**留旧产物，需 `export PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH"`；electron 下载走 `export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` 并临时清空 `*_proxy`）
+
+## 2026-09-20 ～ 09-22 第二十轮：收起态定位改为「数字助理」+ 漫游机制下线
+
+> 这一轮把第十九轮（2026-09-19）里三条前提推翻了：8 只 Q 版动物没了、走动没了、养成没了。
+> 下面按 commit 记，历史条目不改写（那是当时的真相）。
+
+- [x] **8 只 Q 版动物全部下线**（`0f70602`）：宠物模块整体改为数字人；`glbInline()` 插件、
+      内联 GLB、8 只素材一起删。`CONTEXT.md` 新增「形态」词条
+- [x] **养成体系下线**（`69d9aff`）：定位是数字助理 —— 只有身份（选了谁 + 名字）与动作，
+      没有等级/经验/亲密度/饱食度。旧 `ui:petState` 的 `id`/`name` 照常读出，养成字段被
+      `decodePetState` 忽略，老用户升级不丢身份
+- [x] **漫游机制下线**（`b5f93c8` / `4f85487`）：`walker.ts` / `fitRoamArea` / `test-walker` /
+      `test-viewfit` 连同两个测试套件删除。理由记在 `DESIGN.md:283-285`：人物占满竖版画布后
+      横向只剩 ±3 世界单位，既看不出「在走」，又必然裁掉张臂的肩膀
+- [x] **形态表 `FORMS` 引入**（`6fdda32`）：机位 / 装饰可见性 / 阴影直径收进唯一来源
+- [x] **动作编排**（`a0def59` / `3d10ac3`）：`pet3d/clips.ts` + `gesture.ts` 三层模块，
+      每位角色独立的进出场与平时随机动作池；纯函数测试 59 项 + 台架动作断言
+      （进出场位移 / 动作池 / 步幅）
+- [x] 命名按「形态」统一（`aed234c` / `78da566`）：主进程与设置页 `roam → figure`，
+      人物窗口收至 `213×293`（球 `200×210`，见 `src/shared/pet-view.ts`）
+- [x] **走查截图修正**（`cdabc9f`）：收起后第一张常拍到空画布，改为等「合成过一帧」再按快门
+- 验证：typecheck ✓ · `npm test` 10 套件 0 失败 · `--uitest` 82 项 0 失败
+
+## 2026-09-26 第二十一轮：验证命令与站点变更
+
+- [x] **uitest 护栏修复**（`e7d782b`）：`intervalSaved` / `intervalFlash` 长期双红但产品无 bug ——
+      断言靠「第一个含 `option value='10'` 的 select」找刷新频率，而播报间隔
+      （`.voice-interval`）也有 option 10（10 分钟）且 DOM 顺序在前。改按 `.refresh-interval`
+      类名定位。整轮 82 项 0 失败
+- [x] **Trellis 插件移植到 OpenCode V2 插件 API**（`eab8557`）：V1 的
+      `@opencode-ai/plugin` pin 一直没被用到（V2 不识别 V1 入口），删掉；新增
+      `.opencode/.verify-v2-plugins.mjs` 作回归护栏
+- [x] **任务归档**：`09-18-pet-render-fixes-tts` / `09-18-vroid-pet`（父）/ `00-join-smarterlab`
+      归档，验收标准里被本轮重构作废的部分逐条标注了接手它的 commit；
+      `09-18-vroid-hub` 从父任务解绑为独立任务
+- [ ] **opencode 控制台已重写为纯客户端 SPA**（2026-09-26 实测）：`/workspace/<wid>/go` → 302
+      `/console/login`；新路径 `/console/workspace/<wid>/go` 返回 1565 字符空壳、0 个 `data-slot`，
+      **SSR HTML 已彻底消失**。故 `opencode-cookie.ts`（解析 `usage-item`）与
+      `opencode-details.ts`（隐藏窗口点「显示详情」）**两条抓取路径同时失效**，
+      `npm run details:test` 返回 `{}`。cookie 本身有效（`auth` 到 2027-09-13），
+      官方 `zen/go/v1/usage` API 正常（实测 5h 0% / 周 48% / 月 66%）——
+      所以只有「每模型 breakdown」必须重新摸新 DOM，总量可继续走 API。
+      诊断脚本 `npx electron scripts/opencode-probe-auth.js` 可区分「登录态没了」与「URL 搬家」
+- [ ] 磁盘告警：数据卷仅剩 4GB（99% 满），`~/Library/Caches/Electron` 占 475M。
+      疑与 `--uitest` 偶发「打完 JSON 不退出 / SIGSEGV」有关，尚未证实
