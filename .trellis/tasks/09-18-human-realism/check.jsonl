@@ -1,0 +1,3 @@
+{"file": "CONTEXT.md", "reason": "检查是否越过「数字助理不是宠物」的定位，以及是否该新增词汇（如「派生粗糙度图」）"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "LIGHT_RIG 是新增常量表，且要消除 applyTokens 里的重复硬写；粗糙度转换的纯函数也要避免第二处实现"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "审查四层数据流（采集 → bd-asset 协议 → 材质 → 灯光）是否端到端一致，特别是素材缺失时的降级路径"}

@@ -1,0 +1,2 @@
+{"file": "CONTEXT.md", "reason": "领域词汇与纪律：快照/可信度/协议/适配器等定义，以及「数字助理不是宠物」的定位。检查本任务是否越界，以及素材体积变化要不要影响任何口径"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动跨采集脚本（fetch-human-pets / 新转换脚本）→ 资源协议 bd-asset:// → 渲染层材质 → 灯光四层，要逐层确认数据流与契约没被悄悄改动"}
