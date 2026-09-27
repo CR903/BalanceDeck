@@ -44,7 +44,7 @@ hooks are not.
 `useInsertionEffect`.
 
 If you need memoization for a *pure computation*, prefer `useMemo`. If you need a component to
-skip re-render, the project has deliberately chosen not to do that — 82 assertions in
+skip re-render, the project has deliberately chosen not to do that — 109 assertions in
 `--uitest` and a small enough tree that it has never mattered. Don't introduce `memo` casually.
 
 ---

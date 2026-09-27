@@ -228,7 +228,6 @@ export function registerIpc(): void {
           title: String(model?.title ?? ''),
           status: String(model?.status ?? ''),
           pets: Array.isArray(model?.pets) ? model.pets : [],
-          ring: model?.ring !== false,
           alwaysOnTop: model?.alwaysOnTop !== false,
           hideBalance: model?.hideBalance === true
         }
@@ -248,7 +247,6 @@ export function registerIpc(): void {
           ),
           { label: '改名…', click: () => (picked = 'rename') },
           { type: 'separator' },
-          { label: '显示用量环', type: 'checkbox', checked: m.ring, click: () => (picked = 'toggle-ring') },
           { label: '总在最前', type: 'checkbox', checked: m.alwaysOnTop, click: () => (picked = 'toggle-top') },
           { label: '隐藏余额', type: 'checkbox', checked: m.hideBalance, click: () => (picked = 'toggle-balance') },
           { type: 'separator' },

@@ -70,11 +70,10 @@ Use a **named `export interface XxxProps`** when a component has more than ~5 pr
 // src/renderer/src/PetBall.tsx:23-36
 export interface PetBallProps {
   pet: PetState
-  /** 收起态是否为「个性人物」形态（关闭 = 默认的悬浮球，省显存/不加载角色素材） */
+  /** 收起态是否为「个性人物」形态（关闭 = 默认的 2D 小圆环，省显存/不加载角色素材） */
   figure: boolean
   ...
-  /** 是否显示用量环（ui:petRing，右键菜单可关；球形态可见，人物形态本就没有环） */
-  showRing?: boolean
+  hideBalance: boolean
 }
 ```
 
@@ -94,7 +93,7 @@ export function SettingsView({ onBack, onDataChanged, ..., ...petProps }: {
 - Callbacks are `on*`, always explicitly typed, never `React.Dispatch`:
   `onOpen: (id: string) => void`, `onMenu: () => Promise<string | null>`.
 - A prop is optional **only** when it is destructured with a default (`size = 68`,
-  `showRing = true`) or is genuinely nullable (`models?`, `onClick?`).
+  `dim = false`) or is genuinely nullable (`models?`, `onClick?`).
 - Per-prop JSDoc in Chinese is used on non-obvious props and is worth writing:
   ```tsx
   // src/renderer/src/SettingsView.tsx

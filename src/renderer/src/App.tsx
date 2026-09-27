@@ -64,8 +64,6 @@ export default function App(): React.JSX.Element {
   petRef.current = pet
   /** 收起态形态（ui:pet）：true = 个性人物（人物独立站着），false = 默认的悬浮球 */
   const [petOn, setPetOn] = useState(true)
-  /** 悬浮球是否显示用量环（ui:petRing；个性人物形态本就没有环） */
-  const [petRing, setPetRing] = useState(true)
   /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
   const [alwaysTop, setAlwaysTop] = useState(true)
   /** 语音播报开关（ui:voiceOn，默认关） */
@@ -145,11 +143,6 @@ export default function App(): React.JSX.Element {
     window.api.setAlwaysOnTop(on)
     void window.api.setExtras({ 'ui:alwaysOnTop': on ? '1' : '0' })
   }
-  /** 悬浮球是否显示用量环 */
-  const togglePetRing = (on: boolean): void => {
-    setPetRing(on)
-    void window.api.setExtras({ 'ui:petRing': on ? '1' : '0' })
-  }
   /** 语音播报开关 */
   const toggleVoiceOn = (on: boolean): void => {
     setVoiceOn(on)
@@ -175,7 +168,6 @@ export default function App(): React.JSX.Element {
       title: p.name,
       status: petMeta(p.id).desc,
       pets: PETS.map((x) => ({ id: x.id, name: x.name, checked: x.id === p.id })),
-      ring: petRing,
       alwaysOnTop: alwaysTop,
       hideBalance
     }
@@ -189,10 +181,6 @@ export default function App(): React.JSX.Element {
       setAlwaysTop(next)
       window.api.setAlwaysOnTop(next)
       void window.api.setExtras({ 'ui:alwaysOnTop': next ? '1' : '0' })
-    } else if (picked === 'toggle-ring') {
-      const next = !petRing
-      setPetRing(next)
-      void window.api.setExtras({ 'ui:petRing': next ? '1' : '0' })
     } else if (picked === 'toggle-balance') {
       const next = !hideBalance
       setHideBalance(next)
@@ -209,12 +197,11 @@ export default function App(): React.JSX.Element {
     return picked
   }
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
-      setPetRing(e['ui:petRing'] !== '0')
       setVoiceOn(e['ui:voiceOn'] === '1')
       try {
         const muted = JSON.parse(e['ui:voiceMuted'] || '[]') as unknown
@@ -378,7 +365,6 @@ export default function App(): React.JSX.Element {
             onDragEnd={() => window.api.dragEnd()}
             onMenu={petMenu}
             onRename={renamePet}
-            showRing={petRing}
           />
         ) : view === 'settings' ? (
           <SettingsView
@@ -391,8 +377,6 @@ export default function App(): React.JSX.Element {
             onChangePet={changePet}
             onRenamePet={renamePet}
             onTogglePetBall={togglePetBall}
-            onTogglePetRing={togglePetRing}
-            petRing={petRing}
             voiceOn={voiceOn}
             voiceEvery={voiceEvery}
             onToggleVoiceOn={toggleVoiceOn}

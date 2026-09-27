@@ -8,7 +8,7 @@ import { Icon } from './components'
 // 定位是数字助理，不是宠物 —— 等级 / 经验 / 亲密度 / 饱食度 / 心情 / 撸一把 / 喂食
 // 那一整套养成体系已下线（2026-09-21）。这里只剩：
 //   · 选一位（Aria / Ray）与改名
-//   · 三个开关：收起态形态（个性人物）、显示用量环、定时播报（含间隔）
+//   · 两个开关：收起态形态（个性人物）、定时播报（含间隔）
 //
 // 头像直接用采集期 preview.png（bd-asset 直显，不占 WebGL 上下文）。
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -16,8 +16,6 @@ import { Icon } from './components'
 export interface PetSectionProps {
   pet: PetState
   petOn: boolean
-  /** 悬浮球是否显示用量环（个性人物形态没有环，此项只影响球形态） */
-  petRing: boolean
   /** 语音播报开关 */
   voiceOn: boolean
   /** 语音播报间隔（分钟） */
@@ -25,7 +23,6 @@ export interface PetSectionProps {
   onChangePet: (id: PetId) => void
   onRenamePet: (name: string) => void
   onTogglePetBall: (on: boolean) => void
-  onTogglePetRing: (on: boolean) => void
   onToggleVoiceOn: (on: boolean) => void
   onSetVoiceEvery: (minutes: number) => void
 }
@@ -33,13 +30,11 @@ export interface PetSectionProps {
 export function PetSection({
   pet,
   petOn,
-  petRing,
   voiceOn,
   voiceEvery,
   onChangePet,
   onRenamePet,
   onTogglePetBall,
-  onTogglePetRing,
   onToggleVoiceOn,
   onSetVoiceEvery
 }: PetSectionProps): React.JSX.Element {
@@ -138,18 +133,6 @@ export function PetSection({
           {petOn
             ? '开启中：收起后是这个人站在桌面上（无球壳、无进度环），读数显示在脚下；出场会从窗口外走进来，平时会随机做几个小动作。单击展开、拖动移动、右键菜单。'
             : '关闭中：收起后是一个 56×56 的小圆环（环心一个数，不加载人物素材、不占显存）。'}
-        </div>
-
-        <div className="enable-row">
-          <span>显示用量环</span>
-          <button
-            type="button"
-            className={'switch' + (petRing ? ' on' : '')}
-            title={petRing ? '关闭后圆环上不显示用量弧' : '开启后在圆环上显示用量弧（个性人物形态没有环）'}
-            onClick={() => onTogglePetRing(!petRing)}
-          >
-            <span className="knob" />
-          </button>
         </div>
 
         <div className="enable-row">

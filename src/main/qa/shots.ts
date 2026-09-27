@@ -140,7 +140,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
 
   await exec(backBtn)
   await sleep(500)
-  // 设置页「数字助理」分区特写（头像 / 一句话设定 / 三个开关 / 换一位）
+  // 设置页「数字助理」分区特写（头像 / 一句话设定 / 两个开关 / 换一位）
   await exec(openSettings)
   await sleep(700)
   await exec("document.querySelector('.pet-sec')?.scrollIntoView({block:'center'})")

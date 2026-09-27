@@ -2,6 +2,7 @@ import { primaryWindowIndex, snapshotLevel, windowLevel } from './read-model'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { shortWindowLabel } from '../../shared/tray-text'
+import { isPlan } from '../../shared/quality'
 import { Ring, Icon, IconButton, Bar, StatusDot } from './components'
 import { ProviderMark } from './ProviderMark'
 import {
@@ -554,7 +555,7 @@ export function CardView({
                   aria-label={`${s.name} 详情`}
                   className={
                     'pcard ' +
-                    (s.kind === 'balance' ? 'balance' : 'plan') +
+                    (isPlan(s) ? 'plan' : 'balance') +
                     ` lvl-${snapshotLevel(s)}` +
                     (isStale(s) ? ' stale' : '') +
                     (dragging ? ' dragging' : '')
@@ -568,7 +569,10 @@ export function CardView({
                     onOpen(s.id)
                   }}
                 >
-                  {s.kind === 'balance' ? (
+                  {/* 与上面的 className 同一个口径（shared/quality 的 isPlan）：
+                      这里原先写的是裸 `s.kind === 'balance'`，与 558 行的 isPlan() 并存 ——
+                      今天两者等价，但 isPlan 的规则一旦改动，分支与类名就会各走各的 */}
+                  {!isPlan(s) ? (
                     <BalanceCard s={s} now={now} hide={hideBalance} />
                   ) : (
                     <PlanCard

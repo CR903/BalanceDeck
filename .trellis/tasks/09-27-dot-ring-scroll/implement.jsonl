@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "主战场是 PetBall.tsx 的 .petball-fallback 三层环判定（L1 isPlan / L2 track / L3 fill），新增组件结构与 JSX 分支须符合组件规范"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "新增 winIdx state、wheel/lastAdvance/holdUntil/display 四个 ref，以及 prevRef 决定动画起点 —— 状态来源纪律是本任务最容易劈叉的地方（切窗口 vs 数据刷新走不同起点）"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "新增三类 effect：窗口夹紧 effect（依赖是 windows.length 不是 s）、轮播秒级 tick（setInterval 1000 + 两个时间戳）、rAF 动画 effect（须 cancel 前一次 + 卸载 cleanup）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增 Reading 联合类型（k:'lit' | k:'num'）与 shared isPlan() 签名；k:'lit' 结构性排除 hideBalance 泄露，属类型驱动设计"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "口径复用是硬约束：isPlan 抽到 shared 供 CardView:557 与球共用、复用 shortWindowLabel/windowPercent/worstWindow，不许另写第二份判断"}

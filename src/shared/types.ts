@@ -220,8 +220,6 @@ export interface PetMenuModel {
   status: string
   /** 可切换的数字助理列表 */
   pets: { id: string; name: string; checked: boolean }[]
-  /** 是否显示 KPI 环 */
-  ring: boolean
   /** 是否总在最前 */
   alwaysOnTop: boolean
   /** 是否打码余额 */

@@ -48,8 +48,8 @@ Prop drilling is the accepted cost: `PetSection` receives **10 props**, forwarde
 subscription:
 
 ```tsx
-// src/renderer/src/App.tsx:372-382 — only pet, figure, hideBalance, showRing + 4 callbacks
-<PetBall pet={pet} figure={petOn} hideBalance={hideBalance} showRing={petRing} ... />
+// src/renderer/src/App.tsx:359-370 — only pet, figure, hideBalance + 4 callbacks
+<PetBall pet={pet} figure={petOn} hideBalance={hideBalance} ... />
 ```
 
 ```tsx
@@ -155,7 +155,7 @@ Full key inventory:
 | Key | Encoded as | Note |
 |---|---|---|
 | `ui:petState` | `encodePetState` (`shared/pet.ts`) | versioned, migrates legacy ids |
-| `ui:pet` / `ui:alwaysOnTop` / `ui:petRing` / `ui:voiceOn` | `'1'` / `'0'` | |
+| `ui:pet` / `ui:alwaysOnTop` / `ui:voiceOn` | `'1'` / `'0'` | `ui:petRing` 已随用量环开关下线（键不再读写） |
 | `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:221`) |
 | `ui:voiceEvery` | `String(minutes)` | re-validated against a whitelist (`App.tsx:227`) |
 | `ui:hideBalance` | **`'1'` / `''`** | differs from the other six booleans — don't copy |

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AppState, ProviderSnapshot } from '../../shared/types'
+import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { type PetId, type PetState } from '../../shared/pet'
 import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
+import { isPlan } from '../../shared/quality'
+import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
@@ -21,6 +23,38 @@ import { createPet3dScene, type Pet3dHandle } from './pet3d/scene'
 // 设计依据见 DESIGN.md「收起态」。
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// 自动轮播节奏：6 秒换一位供应商（手动操作后暂停 MANUAL_HOLD_MS，见 onWheel）
+const AUTO_MS = 6000
+/** 手动切换后自动轮播暂停多久（PRD AC4.3：8 秒内不推进，第 9 秒起恢复） */
+const MANUAL_HOLD_MS = 8000
+/** 滚轮：累计多少像素算「够一格」（挡抖动） */
+const WHEEL_THRESHOLD = 60
+/** 滚轮：同一轴两次切换的最短间隔 ms（挡触控板惯性连发） */
+const WHEEL_COOLDOWN = 250
+/**
+ * 滚轮：距上一个事件超过这个 ms 就算**断流（新手势）**，先把残量清掉再累加（见 onWheel ①）。
+ *
+ * 为什么必须有：`acc` 只在「真的切了一次」时归零，被 COOLDOWN 挡下的事件会继续往上垒 ——
+ * 一次 30×`deltaY:40` 的惯性手势走完能残留 1000+px 而一步未切；冷却一过，
+ * 下一次哪怕 1px 的轻扫也立刻过阈值，**误切一格且用户毫无感觉**。
+ * 150ms 是因为触控板惯性事件连续到达（间隔 <15ms），而人重新起手必然 >150ms；
+ * 鼠标滚轮单格（`deltaY≈100`）清完再累加照样第一格就过阈值，一格一跳不变。
+ */
+const WHEEL_GESTURE_GAP = 150
+/** 数字递增时长（PRD R5：看得见在动、又不嫌慢的下限） */
+const COUNTUP_MS = 600
+
+/**
+ * 中心读数的两态（R5 的核心分离：**显示值 ≠ 目标值**）：
+ *   · `lit` —— 非数值（`!` 采集失败 / `—` 无数据 / `…` 快照未到位 / `••••` 打码余额）
+ *              直接落定，**结构上**进不了数字动画 —— hideBalance 的余额在构造 reading
+ *              时就变成了 lit，动画链路拿不到数字，不靠「记得跳过」（AC5.3）
+ *   · `num` —— 真实数值 + 本次渲染该用的格式化器；百分比与金额走同一套动画（AC5.4）
+ */
+type Reading =
+  | { k: 'lit'; text: string }
+  | { k: 'num'; target: number; fmt: (n: number) => string }
+
 export interface PetBallProps {
   pet: PetState
   /** 收起态是否为「个性人物」形态（关闭 = 默认的 2D 小圆环，省显存/不加载角色素材） */
@@ -32,8 +66,6 @@ export interface PetBallProps {
   onMenu: () => Promise<string | null>
   onRename: (name: string) => void
   hideBalance: boolean
-  /** 是否显示用量环（ui:petRing，右键菜单可关）：球形态控制 2D 环的填充弧，人物形态本就没有环 */
-  showRing?: boolean
 }
 
 export function PetBall({
@@ -44,8 +76,7 @@ export function PetBall({
   onDragEnd,
   onMenu,
   onRename,
-  hideBalance,
-  showRing = true
+  hideBalance
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const hitRef = useRef<HTMLDivElement | null>(null)
@@ -54,6 +85,8 @@ export function PetBall({
   const sceneRef = useRef<Pet3dHandle | null>(null)
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
   const [idx, setIdx] = useState(0)
+  /** 当前看的是该供应商的第几个时限窗口（仅内存，不落盘；球形态上下滚轮切换它） */
+  const [winIdx, setWinIdx] = useState(0)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -78,6 +111,13 @@ export function PetBall({
   petRef.current = pet
   const press = useRef({ down: false, moved: false, x: 0, y: 0 })
   const bubbleTimer = useRef<number | null>(null)
+  /**
+   * 测试观测点：球上的两个索引（`--uitest` 守「滚轮切窗口 / 换人唯一入口 / 人物形态不许切」）。
+   * 渲染期镜像写法与 App.tsx:78-84 同源 —— 赋值放在渲染里（见 winCount 之后那行），
+   * 读方是 `__bd_ball` 的纯数据钩子（可结构化克隆，函数不能进那个 payload）。
+   * 人物形态没有可见的窗口索引，不去掉 `onWheel` 首行的 figure 守卫就只能靠它测出来。
+   */
+  const idxMirror = useRef({ idx: 0, winIdx: 0, winCount: 0 })
 
   useEffect(() => {
     void window.api.getState().then(setState)
@@ -160,6 +200,11 @@ export function PetBall({
       __bd_gesture?: (id: string) => Promise<void>
     }
     w.__bd_ball = () => ({
+      // 索引观测点（渲染期镜像 idxMirror，纯数据）：人物形态没有可见的窗口索引，
+      // 「滚轮在人物形态下什么都不做」全靠它才断言得出来
+      idx: idxMirror.current.idx,
+      winIdx: idxMirror.current.winIdx,
+      winCount: idxMirror.current.winCount,
       rect: sceneRef.current?.hitRect() ?? null,
       center: sceneRef.current?.hitCenter() ?? null,
       rootMotion: sceneRef.current?.rootMotion() ?? null,
@@ -253,28 +298,176 @@ export function PetBall({
   // ─── 轮播 ───────────────────────────────────────────────────────────────────
   const snaps = useMemo(() => [...state.snapshots].sort((a, b) => severityRank(a) - severityRank(b)), [state.snapshots])
   const count = snaps.length
+
+  /**
+   * 换供应商的**唯一入口** —— 自动轮播 tick 与滚轮横向步进都必须调它。
+   * 换人 → 窗口索引固定落回 `windows[0]`（PRD §6 已拍板的 Q1=B：上下滚动的起始点可预期），
+   * 两个 setState 在同一次调用里由 React 批处理成一帧，`winIdx` 与 `s` 永远同帧更新。
+   *
+   * ⚠ 不许在 interval 里另写一次 `setIdx`（那条路径就不会重置窗口），
+   *   也不许改成 `useEffect(..., [idx])` 去重置 —— 后者会先用**旧 winIdx** 画一帧
+   *   新供应商的窗口，再被 effect 打回 0：中心数字闪一下别的读数，动画起点也会算错。
+   */
+  const advanceProvider = useCallback(
+    (dir: number): void => {
+      if (count <= 1) return // 只有一位时「换人」是空操作：也不该把用户选好的窗口打回 0
+      setIdx((i) => (i + dir + count) % count)
+      setWinIdx(0)
+    },
+    [count]
+  )
+
+  /** 上次自动推进的时刻 / 手动操作要求的暂停截止（轮播节奏的两个时间戳） */
+  const lastAdvance = useRef(0)
+  const holdUntil = useRef(0)
+
   useEffect(() => {
     if (count <= 1) return
-    const t = window.setInterval(() => setIdx((i) => (i + 1) % count), 6000)
+    // 节奏从挂载起算：不重置的话 lastAdvance 一直是 0，第 1 秒的 tick 就会判定「已满 6 秒」
+    lastAdvance.current = Date.now()
+    // 秒级 tick + 两个时间戳，而不是「固定 6s interval + hold 守卫」：后者在手动操作落在
+    // 第 5.9 秒时，下一跳会被推到第 12 秒 —— 实测是「说了暂停 8 秒却等了 12 秒」。
+    // 1s tick 只做判断、未必 setIdx，零渲染开销，而语义精确到 ±1 秒。
+    const t = window.setInterval(() => {
+      const now = Date.now()
+      if (now < holdUntil.current) return // 还在手动操作后的暂停期（AC4.3）
+      if (now - lastAdvance.current < AUTO_MS) return // 满 6 秒才换
+      lastAdvance.current = now
+      advanceProvider(1) // ← 同一个入口：自动换人也把窗口打回 windows[0]
+    }, 1000)
     return () => window.clearInterval(t)
-  }, [count])
+  }, [count, advanceProvider])
 
   const s: ProviderSnapshot | undefined = count ? snaps[idx % count] : undefined
 
-  /** 主指标：最接近限额的窗口（选择规则归 read-model，三处视图同一份） */
+  /** 主指标：最接近限额的窗口（选择规则归 read-model，三处视图同一份）——**人物形态**用它 */
   const worst = useMemo(() => worstWindow(s), [s])
 
-  const pct = worst ? windowPercent(worst) : null
-  const lvl = ballLevel(s, worst)
+  /** 当前供应商有几个时限窗口（球形态上下滚轮在其中逐个切换） */
+  const winCount = s?.windows.length ?? 0
+  // 渲染期镜像（见 idxMirror 的注释）：与上面的 ref 同一帧刷新，`__bd_ball` 读到的永远是本次渲染的索引
+  idxMirror.current = { idx, winIdx, winCount }
 
-  const value = useMemo(() => {
-    if (!s) return '…'
-    if (s.status === 'error') return '!'
-    if (s.status === 'nodata') return '—'
-    if (pct != null) return fmtPercent(pct)
-    if (worst) return hideBalance && s.kind === 'balance' ? '••••' : fmtAmount(worst.used, worst.unit, { compact: true })
-    return '—'
-  }, [s, pct, worst, hideBalance])
+  // 窗口夹紧：同一个供应商的窗口数量变了（数据刷新）就把索引收回范围内，防止越界。
+  // ⚠ 依赖必须是**长度**而不是 `s`：依赖 s 的话，每轮采集（10–300s 一次）都会把用户
+  //   正在浏览的窗口打回 0，滚轮浏览会被周期性重置。
+  useEffect(() => {
+    setWinIdx((i) => (winCount === 0 ? 0 : i < winCount ? i : winCount - 1))
+  }, [winCount])
+
+  /** 球形态选中的窗口；status 非 ok 时不选窗口 —— 与 worstWindow 同口径（出错/无数据没有可读的窗口） */
+  const wBall: ProviderWindow | undefined =
+    s && s.status === 'ok' && winCount ? s.windows[Math.max(0, Math.min(winIdx, winCount - 1))] : undefined
+
+  /**
+   * 本次读数用哪个窗口（环、等级、读数、短标签都从它取，不会各选各的）：
+   *   · 人物形态固定 `worstWindow()` —— R6 要求脚下的读数胶囊与改动前逐位相同
+   *   · 球形态用滚轮选中的 `winIdx` —— R3 的多时限逐个显示
+   */
+  const active = figure ? worst : wBall
+
+  const pct = active ? windowPercent(active) : null
+  const lvl = ballLevel(s, active)
+
+  const reading = useMemo<Reading>(() => {
+    if (!s) return { k: 'lit', text: '…' }
+    if (s.status === 'error') return { k: 'lit', text: '!' }
+    if (s.status === 'nodata') return { k: 'lit', text: '—' }
+    if (pct != null) return { k: 'num', target: pct, fmt: fmtPercent }
+    if (active) {
+      // hideBalance 下的余额**从不构建数字**（k:'lit'）—— 动画链路拿不到它（AC5.3）
+      if (hideBalance && !isPlan(s)) return { k: 'lit', text: '••••' }
+      return { k: 'num', target: active.used, fmt: (n) => fmtAmount(n, active.unit, { compact: true }) }
+    }
+    return { k: 'lit', text: '—' }
+  }, [s, pct, active, hideBalance])
+
+  /** 落定后的完整读数：人物形态胶囊、余额播报、tooltip 用它（人物形态不做数字动画，R6） */
+  const valueText = reading.k === 'lit' ? reading.text : reading.fmt(reading.target)
+
+  /**
+   * 2D 小圆环的呈现条件（三种情形，缺一不可）：
+   *   · 球形态：恒为真 —— 它本来就是 2D（这一版没有 3D 球）
+   *   · 人物形态 + WebGL 初始化失败：`failed` 兜底，老显卡/驱动异常时仍要有可用界面
+   * 这一条不能因为「球形态已经是 2D 了」顺手删掉：它服务的是**人物形态的失败路径**。
+   * 放在这里（而不是 return 之前）是因为下面的数字动画也要按它分流：人物形态的读数
+   * 走 valueText（静态，R6 要求逐位不变），动画只在真有 .dot-value 时才跑。
+   */
+  const dot2d = !figure || failed
+
+  // ─── 数字递增（R5）：显示值 ≠ 目标值 ───────────────────────────────────────
+  /** 当前显示值（**渲染就读它**）；数值动画逐帧改写它 */
+  const display = useRef(0)
+  /** 显示值变化的重渲染信号：display 是 ref，改了不会自己触发渲染 */
+  const [, setTick] = useState(0)
+  const raf = useRef<number | null>(null)
+  /** 上一次动画时的索引：区分「切窗口/切供应商」（从 0 涨）与「数据刷新」（从旧值补） */
+  const pose = useRef({ idx: 0, winIdx: 0 })
+
+  // 渲染期镜像：索引一变，**本帧**就把显示值归零。
+  // 放在渲染里而不是 effect 里才有这个效果 —— 等 effect 再归零的话，新供应商会先闪
+  // 一帧旧读数（`41%` → `0%` → 涨到新值）。与 App.tsx:78-84 的 ref 镜像同一写法：
+  // 变换只在索引变化的那一帧发生，之后两值相同、不会重复改写（StrictMode 双渲染亦然）。
+  if (pose.current.idx !== idx || pose.current.winIdx !== winIdx) {
+    pose.current = { idx, winIdx }
+    display.current = 0
+  }
+
+  const countUpKey = reading.k === 'num' ? reading.target : null
+  useEffect(() => {
+    const cancel = (): void => {
+      if (raf.current !== null) {
+        cancelAnimationFrame(raf.current)
+        raf.current = null
+      }
+    }
+    if (countUpKey === null || !dot2d) {
+      // 读数不是数字（! / — / … / ••••），或压根没有 .dot-value（人物形态）：
+      // 停掉上一条动画（刷新打断上一次动画）。人物形态的胶囊渲染静态 valueText（R6），
+      // 但 display 仍要落定到目标值，否则「人物 → 球」切换会拿一个陈旧中间值当起点。
+      cancel()
+      if (countUpKey !== null) display.current = countUpKey
+      return
+    }
+    const target = countUpKey
+    // 起点：切窗口/切供应商那一帧，渲染期镜像已经把 display 归零（见上面的 pose 判断），
+    // 所以这里直接读它就是「切了 → 0、只是刷新 → 旧值」两种语义的分界（AC5.1 / 平时刷新）
+    const from = display.current
+    cancel() // 每次 start 前必须取消上一条，否则快速连切会有多条 rAF 并发（AC5.5）
+    const commit = (v: number): void => {
+      display.current = v
+      setTick((t) => t + 1)
+    }
+    if (from === target) {
+      commit(target)
+      return
+    }
+    const t0 = performance.now()
+    const step = (now: number): void => {
+      const t = Math.min(1, (now - t0) / COUNTUP_MS)
+      if (t >= 1) {
+        // 收尾必须**精确赋目标值**：easeOut 末帧插值会留下 40.999999 这类尾差（AC5.2）
+        commit(target)
+        raf.current = null
+        return
+      }
+      commit(from + (target - from) * (1 - (1 - t) ** 3))
+      raf.current = requestAnimationFrame(step)
+    }
+    raf.current = requestAnimationFrame(step)
+    // countUpKey 已经是 target 的全部信息（lit 时为 null）；display 是 ref 镜像，不能进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countUpKey, idx, winIdx])
+
+  useEffect(
+    () => () => {
+      if (raf.current !== null) cancelAnimationFrame(raf.current)
+    },
+    []
+  )
+
+  /** 环心实际渲染的文本：非数值直接落定，数值按动画中的显示值格式化 */
+  const shownText = reading.k === 'lit' ? reading.text : reading.fmt(display.current)
 
   const label = s?.name ?? ''
 
@@ -292,20 +485,20 @@ export function PetBall({
     sceneRef.current?.setPaused(renaming)
   }, [renaming])
 
-  // 余额播报：每 90s 冒一次主指标泡泡（value 已含余额显隐与诚实口径）。
+  // 余额播报：每 90s 冒一次主指标泡泡（valueText 已含余额显隐与诚实口径）。
   // 数据变化会重置计时（新数据值得先播），球形态（没有人可以说话）即停。
   useEffect(() => {
     if (!figure || failed) return
     if (!s || s.status !== 'ok') return
     const stale = isStale(s) ? (s.dataQuality === 'cached' ? '（缓存）' : '（估算）') : ''
-    const text = `${label} ${value}${stale}`
+    const text = `${label} ${valueText}${stale}`
     const t = window.setTimeout(() => {
       showBubble(text)
       // 播报是"说话"的场合：让人物比划着讲（动作目录里的 talk，剪辑按需加载）
       void sceneRef.current?.playGesture?.('talk')?.catch?.(() => {})
     }, 90_000)
     return () => window.clearTimeout(t)
-  }, [pet.id, figure, failed, s, value, label])
+  }, [pet.id, figure, failed, s, valueText, label])
 
   // ─── 交互 ───────────────────────────────────────────────────────────────────
   /** 复位指针状态（含主进程拖拽）：菜单弹出、指针在窗口外抬起、窗口失焦时都要调用 */
@@ -398,21 +591,79 @@ export function PetBall({
     setRenaming(false)
   }
 
+  // ─── 滚轮切换（R4）：上下切时限窗口、左右切供应商 ─────────────────────────
+
+  /** 切时限窗口：单窗口供应商是空操作（AC3.4），多窗口按数组顺序循环、含回绕（AC3.1） */
+  const stepWindow = (dir: number): void => {
+    const n = s?.windows.length ?? 0
+    if (n <= 1) return
+    setWinIdx((i) => (((i % n) + dir + n) % n))
+  }
+
+  /** 分轴累积状态：触控板一次轻扫会连发几十个 wheel 事件（AC4.4 防的就是它） */
+  const wheel = useRef({ accX: 0, accY: 0, lastX: 0, lastY: 0, lastEvent: 0 })
+
+  const onWheel = (e: React.WheelEvent): void => {
+    // ⚠ 第一行守卫：人物形态**也渲染** .petball-hit，不挡住的话人物形态下滚轮照样会
+    //   切窗口、切时限（R6 违规 —— 这是本步最容易漏的一处）。早退后滚轮照旧穿透到
+    //   桌面：不新增命中区（AC4.5），也不调 preventDefault（React 的 onWheel 是
+    //   passive 语义，调了只会告警；.petball 本来就无可滚动祖先）。
+    //   判据是 `figure`（人物形态）本身 —— 写成 `!figure` 会正好挡住球形态，
+    //   人球两种形态的表现整体互换（2026-09-27 出过一次，被步 7 的断言当场抓住）。
+    if (figure) return
+    const now = performance.now()
+    const dx = e.deltaX
+    const dy = e.deltaY
+    const st = wheel.current
+    // ① 断流清残量 —— **必须写在累加之前**：acc 只在真的切了一次时归零，被 COOLDOWN
+    //    挡下的事件一路往上垒，一个惯性手势下来能剩 1000+px；冷却过后下一次 1px 轻扫
+    //    就过阈值了（误切一格、用户无感）。放累加之后等于先用残量判一次，等于没写。
+    if (now - st.lastEvent > WHEEL_GESTURE_GAP) {
+      st.accX = 0
+      st.accY = 0
+    }
+    st.lastEvent = now
+    // ② 每个事件只喂**主导轴**：斜向手势不至于同时切两个维度（AC4.2）
+    if (Math.abs(dx) > Math.abs(dy)) {
+      st.accX += dx
+      // ③ 判据取 |累加量|，**方向取累加量的符号**（不是本事件的 dx 符号）：
+      //    acc 里可能带着同手势内上一次同向的残量，用本事件的符号会让「累计量」与
+      //    「方向」不自洽；带符号直接 `acc >= 60` 判断则对上滚/左滚永假（静默失效）。
+      if (Math.abs(st.accX) >= WHEEL_THRESHOLD && now - st.lastX > WHEEL_COOLDOWN) {
+        advanceProvider(st.accX > 0 ? 1 : -1) // 左右 = 换人（唯一入口，同时把窗口打回 windows[0]）
+        st.accX = 0
+        st.lastX = now
+        holdUntil.current = Date.now() + MANUAL_HOLD_MS // 手动切换 → 自动轮播暂停 8 秒（AC4.3）
+      }
+    } else if (dy !== 0) {
+      st.accY += dy
+      if (Math.abs(st.accY) >= WHEEL_THRESHOLD && now - st.lastY > WHEEL_COOLDOWN) {
+        stepWindow(st.accY > 0 ? 1 : -1) // 上下 = 切时限窗口
+        st.accY = 0
+        st.lastY = now
+        holdUntil.current = Date.now() + MANUAL_HOLD_MS
+      }
+    }
+  }
+
+  /**
+   * 球形态才补的两句（人物形态的 tooltip 与改动前逐字相同，R6）：
+   * 当前看的是哪个时限（多窗口才有意义）+ 滚轮怎么用（没得切就不说）。
+   */
+  const ballHint =
+    figure || !s
+      ? ''
+      : `${s.windows.length > 1 && active ? ` · ${active.name}` : ''}${
+          count > 1 || winCount > 1 ? ' · 滚轮：上下切时限，左右切供应商' : ''
+        }`
+
   const tooltip = s
-    ? `${s.name}${pct != null ? ` · ${fmtPercent(pct)}` : ''}${
+    ? `${s.name}${ballHint}${pct != null ? ` · ${fmtPercent(pct)}` : ''}${
         isStale(s)
           ? `（${s.dataQuality === 'cached' ? '缓存数据 · ' + (dataTime(s) ? new Date(dataTime(s)!).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '') : '本机估算'}）`
           : ''
       } · 单击展开 · 拖动移动 · 右键菜单`
     : `单击展开 · 拖动移动 · 右键菜单`
-
-  /**
-   * 2D 小圆环的呈现条件（三种情形，缺一不可）：
-   *   · 球形态：恒为真 —— 它本来就是 2D（这一版没有 3D 球）
-   *   · 人物形态 + WebGL 初始化失败：`failed` 兜底，老显卡/驱动异常时仍要有可用界面
-   * 这一条不能因为「球形态已经是 2D 了」顺手删掉：它服务的是**人物形态的失败路径**。
-   */
-  const dot2d = !figure || failed
 
   return (
     <div
@@ -426,6 +677,7 @@ export function PetBall({
       <div
         className="petball-hit"
         ref={hitRef}
+        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(e) => {
@@ -447,26 +699,48 @@ export function PetBall({
         // 2D 小圆环：球形态的**正常**呈现（不建 3D），也是人物形态 WebGL 失败时的兜底。
         // 这段 JSX 就是首版（`d5a028e` 的 CollapsedDot）的那份，逻辑早已在 PetBall 里
         // 重写过一遍（严重度排序 / 轮播 / 8px 拖拽 / tooltip），搬回旧组件会多出一份状态来源。
-        <div className="petball-fallback" ref={fallbackRef}>
-          <svg viewBox="0 0 56 56" aria-hidden="true">
-            <circle className="dot-ring-track" cx="28" cy="28" r="22" fill="none" strokeWidth="5" />
-            {/* 填充弧由「显示用量环」（ui:petRing）控制：关掉只剩素圆盘 + 数字。
-                没有这一条，右键菜单那个开关在球形态下就成了点了没反应的死开关。 */}
-            {showRing && pct != null && (
-              <circle
-                className="dot-ring-fill"
-                cx="28"
-                cy="28"
-                r="22"
-                fill="none"
-                strokeWidth="5"
-                strokeLinecap="round"
-                strokeDasharray={`${(2 * Math.PI * 22 * Math.min(100, Math.max(0, pct))) / 100} ${2 * Math.PI * 22}`}
-                transform="rotate(-90 28 28)"
-              />
-            )}
-          </svg>
-          <span className={`dot-value${value.length > 4 ? ' small' : ''}`}>{value}</span>
+        // data-ring：与 L1 **完全同源**的探针（--uitest 的 petBallCenterValue 靠它区分
+        // 「套餐没环」= 回归 与 「余额没环」= 设计）。没有它，DOM 上两种情形长得一模一样，
+        // 断言只能靠猜读数格式，余额一旦显示成百分比就会误判。
+        // ⚠ 没有快照时是 ''（既非套餐也非余额 —— 此时 L1 本来就不画 SVG），不是 'balance'：
+        //   写成 'balance' 会让断言在「一个供应商都没有」时照样绿（track 本来就没有），
+        //   那是标签与机制对不上的永真兜底。
+        <div className="petball-fallback" ref={fallbackRef} data-ring={s ? (isPlan(s) ? 'plan' : 'balance') : ''}>
+          {/* 环的三层判定（缺一层就少画一层，不合并成一个大布尔）：
+              L1 只有**套餐**（plan）供应商有环 —— 充值余额连轨道都不画，只留素圆盘 + 金额
+                 （判定与主卡片同一个 isPlan()，卡片说余额、球不会说套餐）
+              L2 轨道与 pct **解耦**：套餐即使这个窗口算不出比例（无 limit）也必须有轨道。
+                  沿用「pct != null 才画」会把它显示成素圆盘 —— 用户会读成「这个供应商
+                  没环」，与 L2 的「余额才没环」自相矛盾（AC3.3）
+              L3 填充弧才需要 pct：算不出比例就没有弧，绝不画 0% 的假弧（数据诚实） */}
+          {s && isPlan(s) && (
+            <svg viewBox="0 0 56 56" aria-hidden="true">
+              <circle className="dot-ring-track" cx="28" cy="28" r="22" fill="none" strokeWidth="5" />
+              {pct != null && (
+                <circle
+                  className="dot-ring-fill"
+                  cx="28"
+                  cy="28"
+                  r="22"
+                  fill="none"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeDasharray={`${(2 * Math.PI * 22 * Math.min(100, Math.max(0, pct))) / 100} ${2 * Math.PI * 22}`}
+                  transform="rotate(-90 28 28)"
+                />
+              )}
+            </svg>
+          )}
+          {/* 读数：数值走逐帧动画的显示值，非数值（! / — / … / ••••）直接落定；
+              .small 按**落定后的目标值**分类，否则动画中途长度变化会来回切字号 */}
+          <span className={`dot-value${valueText.length > 4 ? ' small' : ''}`}>{shownText}</span>
+          {/* 当前时限短标签（D3 已拍板：要，但只在多窗口时显示 —— 单窗口写 5H 是噪音）。
+              没有它，切时限就只有数字在变，用户不知道停在 5H 还是周，功能等于盲切。 */}
+          {active && s && s.windows.length > 1 && (
+            <span className="dot-winlabel" aria-hidden="true">
+              {shortWindowLabel(active.name)}
+            </span>
+          )}
         </div>
       )}
 
@@ -482,7 +756,7 @@ export function PetBall({
           }}
           aria-hidden="true"
         >
-          <span className={`petball-value${value.length > 5 ? ' small' : ''}`}>{value}</span>
+          <span className={`petball-value${valueText.length > 5 ? ' small' : ''}`}>{valueText}</span>
           {label && <span className="petball-label">{label}</span>}
           {count > 1 && (
             <span className="petball-dots">

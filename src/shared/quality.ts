@@ -19,6 +19,14 @@ import type { ProviderSnapshot } from './types'
 export const MAX_CACHE_AGE = 24 * 3600_000
 
 /**
+ * 供应商分两类：**套餐**（`coding` / `token`）与**充值余额**（`balance`）。
+ * 卡片、详情页与收起态小圆环的「画不画用量环 / 叫它余额还是套餐」都由这一个判定说了算
+ * —— 抽到 shared 就是为了让「卡片说是余额、球说是套餐」这类劈叉在结构上不可能发生
+ * （2026-09-27 前 CardView:557 与小圆环各写一份 `kind === 'balance'`）。
+ */
+export const isPlan = (s: { kind: string }): boolean => s.kind !== 'balance'
+
+/**
  * 「最后有效值」策略：本轮降级时沿用上次官方数据，但必须打上 cached 标记。
  *
  * 不缓存的情况：

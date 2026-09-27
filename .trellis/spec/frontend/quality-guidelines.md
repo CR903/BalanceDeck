@@ -37,8 +37,8 @@ export async function loadTs(relPath, { alias } = {}) {
 }
 ```
 
-7 scripts use it (`test-adapters`, `test-ssr-parser`, `test-tray`, `test-pet`,
-`test-projection`, `test-gesture`, `test-read-model`); `test-quality.mjs` imports the real
+6 scripts use it (`test-adapters`, `test-ssr-parser`, `test-tray`, `test-pet`,
+`test-gesture`, `test-read-model`); `test-quality.mjs` imports the real
 `.ts` directly via Node's type stripping; **only `test-percent.mjs` still inlines.**
 Convert it if you touch it.
 
@@ -143,6 +143,9 @@ reviewer inverted six behaviours (concurrency, retry, mandatory header, key mapp
 server-side tokens, a range table) and **all 49 assertions stayed green**. The suite was
 real, just blind above the parser layer. This is a required step, not a nicety.
 
+Procedure, the exact-red-set rule, and two ways it silently fails: see
+*Proving an assertion can fail* under **Testing Requirements**.
+
 ### Don't: put a function into a `window` test hook
 
 `PetBall.tsx:143-146` documents it: the payload crosses `executeJavaScript`, so it must be
@@ -153,13 +156,13 @@ for this reason.
 
 ## Testing Requirements
 
-### The ten unit suites
+### The nine unit suites
 
 `npm test` chains them with `&&` in a fixed order, so the first failure short-circuits
 (`package.json:27`):
 
 ```
-percent → ssr → quality → tray → pet → projection → gesture → adapters → structure → read-model
+percent → ssr → quality → tray → pet → gesture → adapters → structure → read-model
 ```
 
 | Script | Lines | Loads real source | Covers |
@@ -169,13 +172,12 @@ percent → ssr → quality → tray → pet → projection → gesture → adap
 | `test-quality.mjs` | 128 | direct `.ts` import | cache policy, staleness, network errors |
 | `test-tray.mjs` | 119 | `loadTs` | tray wording, offline/cache prefixes |
 | `test-pet.mjs` | 104 | `loadTs` | identity model, serialization, migration |
-| `test-projection.mjs` | 138 | `loadTs` + real `three` | NDC half-span, cross-checked against three's matrix |
 | `test-gesture.mjs` | 226 | `loadTs` ×2 + `fs` | clip catalog consistency, scheduling |
 | `test-adapters.mjs` | 1160 | `loadTs` ×12 | golden samples A–N, production net R, fan-out S, store T, parity U |
 | `test-structure.mjs` | 74 | static file reads | 13 architectural guards |
 | `test-read-model.mjs` | 127 | `loadTs` ×2 | read model + formatting |
 
-**The script convention** (uniform in all 10): a `//` header stating
+**The script convention** (uniform in all 9): a `//` header stating
 `用法：node scripts/<name>.mjs` plus what it covers; then `let pass = 0; let fail = 0`; then
 local `eq()`/`ok()` helpers that compare with `JSON.stringify`; then flat `console.log`
 section headers; then a summary; then `process.exit(fail ? 1 : 0)`.
@@ -213,21 +215,82 @@ point: the closed set is deliberate.
 Different contract from the unit scripts: **results are JSON on stdout and the exit code is
 not the signal** (`qa/modes.ts:14-15`: "UI 断言以 JSON 打到 stdout，**不设置退出码** —— 失败与否由调用方解析").
 
+> **⚠️ `npx electron . --X` 跑的是 `out/`，不是 `src/`.**
+>
+> `package.json` 是 `"main": "./out/main/index.js"`，Electron 入口从不读 TypeScript。
+> **任何源码改动之后、electron QA 之前必须 `npm run build`** —— 否则这一轮跑的是上一次的
+> 构建产物，绿灯毫无意义。（此坑曾静默作废一整轮「验证」：改动后的源码已生效、
+> `--uitest` 却仍在测 5 小时前的 `out/`，两轮报告都以为自己在测新代码。）
+
+| | |
+|---|---|
+| ✅ 正确 | `npm run build` **单独一行** → `BD_USER_DATA=/tmp/x npx electron . --uitest` |
+| ❌ 错误 | `BD_USER_DATA=/tmp/x npm run build && npx electron . --uitest` —— env 只传给 `npm run build`，electron 那次继承**默认** userData，报 20+ 条假失败 |
+| ❌ 错误 | 改了 `src/` 直接跑 `npx electron . --uitest` —— 测的是旧 bundle |
+| 新鲜度判据 | `ls -l out/main/index.js` 的 mtime 必须**晚于**最后一个改动的源文件 |
+
+`npm run uitest` / `npm run shots` / `npm run smoke` 三个包装脚本**自带 build**。
+**`--ballshot` 没有 npm 脚本**，必须显式先 build。
+
 | Command | Handler | Env vars |
 |---|---|---|
 | `npm run smoke` | `qa/modes.ts:49` `runSmoke` | `SMOKE_WAIT_MS` (6000), `BD_TRACE` |
-| `npm run uitest` | `qa/uitest.ts` — 82 assertions | `BD_TRACE`, `BALANCEDECK_AUTOSTART_DIR` (forced to a temp dir) |
+| `npm run uitest` | `qa/uitest.ts` — 109 assertions (2026-09-28) | `BD_TRACE`, `BALANCEDECK_AUTOSTART_DIR` (forced to a temp dir) |
 | `npm run shots` | `qa/shots.ts` → `/tmp/balancedeck-shots/` | none |
 | `npm run details:test` | `qa/modes.ts:119` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_COOKIE` |
 | `--ballshot` (direct) | `qa/ballshot.ts` | `BD_PET`, `BD_PET_ID`, `BD_PETS`, `BD_FAKE_DATA`, `BD_SKIP_COLLAPSE`, `BD_ONLY`, `BD_TOGGLE`, `BD_ISOLATE`, `BD_SETTINGS`, `BD_SKINS`, `BD_DEBUG_RING` |
 
 Parse uitest output by counting `"ok` and grepping `fail`; do **not** trust `$?`.
 
+> **Warning**：JSON 打印完整后进程有时**不自行退出**（已知 flake，与磁盘剩余 ~4GB 有关）。
+> 判据是「**键数齐全 + `execErrors` 已打印**」，随后手动杀进程；**既不许把挂起当失败，
+> 也不许把这一轮丢掉不报**。`$?` 不可信，这条在挂起时尤其成立。
+
 **Locating controls in `--uitest` must be by class name, never by option value.** Settings has
 several `<select>`s and the "播报间隔" one also has an option valued `10`, so a
 "first select with an option `10`" selector kept mutating the voice interval and reporting
 `intervalSaved: fail` for weeks while the product was fine (`uitest.ts:247-251`, fixed in
 `e7d782b`). **Add a class when you need a hook; there is no attribute-based selector layer.**
+
+### Proving an assertion can fail — break-once, with an exact red set
+
+An assertion that cannot be broken is a **fake guard**. The proof is mandatory, per assertion:
+
+1. write → run → **green** (proves it is not always-red)
+2. break **only the tested behaviour** → run → **red** (proves it is not always-green)
+3. restore → run → **green**
+4. record *the break + the actual red output* next to the assertion's checklist entry
+
+**The red set must equal exactly that batch's declared target set.** One extra red means the
+blast radius was not controlled — the batch proves nothing about its intended target and must be
+redone with a narrower break. Batching several assertions into one run is fine *only* when each
+target has a break that isolates it.
+
+**Two ways this fails, both seen in practice:**
+
+- **The break that cannot turn it red.** "Do not assign `display.current = target` at the end of
+  the animation" was the documented break for *exact final value* — but at `easeOut`'s `t = 1`
+  the interpolation is *exactly* `target`, so the assertion stayed green and proved nothing. The
+  fix was a different break (`commit(target * 0.97)`), which necessarily reddens the other
+  readout-comparing assertions: declare them as co-targets of the same batch instead of
+  pretending isolation.
+- **A baseline that looks moved.** Before claiming a change "moved the baseline to go green",
+  run `git show HEAD:<file> | grep <field>`. A field that **does not exist in HEAD** is a first
+  draft written in this round, not an established expectation — correcting it is not weakening
+  it. Established fields never change; align the new draft to the authoritative ones instead
+  (`overlay` came from a `--ballshot` diag and was authoritative; `idx`/`caption` did not, and
+  the two could not describe the same frame).
+
+**Synthetic events.** React handlers (`onWheel`, `onClick`, …) fire from
+`el.dispatchEvent(new WheelEvent('wheel', {deltaY: 100, bubbles: true}))`.
+`:active` does **not** — it is driven by the UA compositor, so dispatching it never lights the
+selector; use `webContents.sendInputEvent` for press feedback.
+
+**A grep gate vs. a string you must assert on.** After deleting a UI literal, a test may need it
+verbatim to assert its absence while the gate forbids it in `src/`. Build it in the test file
+(`'\u663e\u793a' + '\u7528\u91cf\u73af'`) — runtime-identical, invisible to grep.
+**Required proof**: with the feature restored, the grep gate *and* the assertion must go red in
+the **same** run. Concatenate only in the test, never in product code.
 
 ### `test-adapters.mjs` — the injected-request suite
 

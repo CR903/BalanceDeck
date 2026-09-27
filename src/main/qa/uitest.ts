@@ -59,6 +59,214 @@ export async function runUiTest(
     return 'sent'
   })()`
 
+  // ─── 09-27-dot-ring-scroll 的夹具与球上探针 ────────────────────────────────
+  //
+  // 真实数据随机器而变（有没有多窗口套餐、有没有余额供应商都不由测试说了算），
+  // 所以下面的断言一律**自己推快照**。夹具全部 `official` + 新鲜时间戳 —— 不触发
+  // 可信度角标，人物形态的 overlay 基线里没有角标（多一个元素整条比对就红）。
+  const isoNow = (): string => new Date().toISOString()
+  /** `limit` 可缺省 —— AC3.3 要的正是「套餐窗口算不出比例」这一种（无 limit → windowPercent 为 null） */
+  type FixWin = { name: string; used: number; limit?: number; unit: string; percent?: number }
+  const fw = (name: string, percent: number): FixWin => ({ name, used: 1, limit: 10, unit: 'usd', percent })
+  const planFix = (id: string, name: string, windows: FixWin[]): Record<string, unknown> => ({
+    id,
+    name,
+    kind: 'coding',
+    builtin: true,
+    mark: 'opencode',
+    status: 'ok',
+    dataQuality: 'official',
+    dataAt: isoNow(),
+    updatedAt: isoNow(),
+    windows
+  })
+  /** 三窗口套餐：10% / 20% / 30%，窗口名就是产品里那三个时限 → 短标签 5H / W / M */
+  const FIX_PLAN3 = [planFix('fix-plan3', 'Fix 三窗', [fw('5 小时', 10), fw('本周', 20), fw('本月', 30)])]
+  const FIX_PLAN3_VALS = ['10%', '20%', '30%']
+  const FIX_PLAN3_LBL = ['5H', 'W', 'M']
+  /** 单窗口套餐：AC3.4 的「切了等于没切」与 AC3.6 的「不出现短标签」都靠它 */
+  const FIX_PLAN1 = [planFix('fix-plan1', 'Fix 单窗', [fw('5 小时', 13.7)])]
+  /** 充值余额（AC2.1：连轨道都不画） */
+  const FIX_BAL: Record<string, unknown>[] = [
+    {
+      id: 'fix-bal',
+      name: 'Fix 余额',
+      kind: 'balance',
+      builtin: true,
+      mark: 'deepseek',
+      status: 'ok',
+      dataQuality: 'official',
+      dataAt: isoNow(),
+      updatedAt: isoNow(),
+      windows: [{ name: '账户余额', used: 1288.5, unit: 'cny' }]
+    }
+  ]
+  /** 两位供应商（换人 / 轮播都得 ≥2 才有行为）：A 三窗口、B 两窗口 */
+  const FIX_AB = [
+    planFix('fix-a', 'Fix A', [fw('5 小时', 11), fw('本周', 22), fw('本月', 33)]),
+    planFix('fix-b', 'Fix B', [fw('5 小时', 44), fw('本周', 55)])
+  ]
+  /** 换人后应当落到 `windows[0]`（PRD §6 定的 Q1=B）→ 各自的首窗口读数 */
+  const FIX_AB_FIRST: Record<string, string> = { 'Fix A': '11%', 'Fix B': '44%' }
+  /** 套餐但**算不出比例**的窗口（既无 percent 也无 limit → windowPercent 返回 null）：
+   *  AC3.3 要的正是它 —— 轨道仍在、没有填充弧、中心是金额而不是 0% */
+  const FIX_NOLIMIT = [planFix('fix-nolimit', 'Fix 无比例', [{ name: '5 小时', used: 1288.5, unit: 'cny' }])]
+
+  /**
+   * 推夹具。**先推一个空数组**，两件事：
+   *  ① 窗口索引经夹紧效应回到 0（`winCount===0 → setWinIdx(0)`），每个场景起点一致；
+   *  ② 供应商数量变过，秒级轮播的 `lastAdvance` 才会重置 —— 否则上一轮的时间戳会
+   *     穿透进来，「手动后暂停 8 秒」的时序就没法断言（AC4.3 要 ±1 秒的精度）。
+   */
+  const pushFix = async (snaps: unknown[]): Promise<void> => {
+    await exec('window.api.debugPush([], false)')
+    await sleep(150)
+    await exec(`window.api.debugPush(${JSON.stringify(snaps)}, false)`)
+    await sleep(500)
+  }
+
+  type BallProbe = {
+    err: string
+    ring: string | null
+    track: boolean
+    fill: boolean
+    dash: string | null
+    trackStroke: string | null
+    fillStroke: string | null
+    value: string | null
+    winLabel: string | null
+    title: string
+    label: string | null
+    idx: number
+    winIdx: number
+    winCount: number
+  }
+  const badProbe = (err: string): BallProbe => ({
+    err,
+    ring: null,
+    track: false,
+    fill: false,
+    dash: null,
+    trackStroke: null,
+    fillStroke: null,
+    value: null,
+    winLabel: null,
+    title: '',
+    label: null,
+    idx: -1,
+    winIdx: -1,
+    winCount: -1
+  })
+  /**
+   * 一次 exec 把球上的证据取全：环的三层 DOM、环心读数、短标签、tooltip（=当前供应商）、
+   * 以及 `__bd_ball` 的索引观测点。`err` 非空时所有断言都要连它一起报 —— 否则
+   * 「探针挂了」和「行为正确」都长成默认值，会变成永真的兜底。
+   */
+  const ballProbe = async (): Promise<BallProbe> => {
+    const raw = await exec(`(()=>{
+      const dot=document.querySelector('.petball-fallback')
+      const hit=document.querySelector('.petball-hit')
+      const b=window.__bd_ball?.()
+      const track=dot?dot.querySelector('.dot-ring-track'):null
+      const fill=dot?dot.querySelector('.dot-ring-fill'):null
+      const wl=dot?dot.querySelector('.dot-winlabel'):null
+      const dv=dot?dot.querySelector('.dot-value'):null
+      const lb=document.querySelector('.petball-label')
+      return JSON.stringify({
+        ring: dot?dot.getAttribute('data-ring'):null,
+        track: !!track, fill: !!fill,
+        dash: fill?getComputedStyle(fill).strokeDasharray:null,
+        trackStroke: track?getComputedStyle(track).stroke:null,
+        fillStroke: fill?getComputedStyle(fill).stroke:null,
+        value: dv?dv.textContent:null,
+        winLabel: wl?wl.textContent:null,
+        title: hit?hit.title:'',
+        label: lb?lb.textContent:null,
+        idx: b&&typeof b.idx==='number'?b.idx:-1,
+        winIdx: b&&typeof b.winIdx==='number'?b.winIdx:-1,
+        winCount: b&&typeof b.winCount==='number'?b.winCount:-1
+      })
+    })()`)
+    if (typeof raw !== 'string') return badProbe('exec-failed')
+    try {
+      const p = JSON.parse(raw) as BallProbe
+      return { ...p, err: '' }
+    } catch {
+      return badProbe(`parse:${raw.slice(0, 60)}`)
+    }
+  }
+
+  /** 合成一次滚轮：React 的 onWheel 是普通事件监听，`dispatchEvent` 会真的走到（`:active` 那种 UA 合成的才不行） */
+  const wheelJs = (dx: number, dy: number): string =>
+    `(()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
+      b.dispatchEvent(new WheelEvent('wheel',{deltaX:${dx},deltaY:${dy},bubbles:true}))
+      return 'ok'})()`
+  /** 走一步（>250ms 冷却，且 >150ms 断流线，两步不会被粘成一个手势） */
+  const wheelStep = async (dx: number, dy: number): Promise<void> => {
+    await exec(wheelJs(dx, dy))
+    await sleep(320)
+  }
+  /** 把窗口索引推到 target（单窗口供应商是空操作，循环到 maxSteps 就停） */
+  const setWindowTo = async (target: number, maxSteps: number): Promise<number> => {
+    for (let i = 0; i <= maxSteps; i++) {
+      const p = await ballProbe()
+      if (p.winIdx === target) return p.winIdx
+      if (i === maxSteps) break
+      await wheelStep(0, 100)
+    }
+    return (await ballProbe()).winIdx
+  }
+
+  /**
+   * 右键菜单：**截获菜单项标签，但不弹原生菜单**。
+   *
+   * 菜单是主进程 `pet:menu` 现场拼的（渲染层只给模型），从渲染层读不到标签 ——
+   * 所以临时替换 `Menu.buildFromTemplate`：截下 items，用一个只回调 callback 的
+   * 假菜单顶替，popup 一调就 resolve，不留一个没人关的原生菜单在屏幕上。
+   * 传 `clickLabel` 时顺带点中那一项（这里用它切「隐藏余额」，不必展开面板）。
+   *
+   * 三种失败都会返回哨兵串（`<patch-failed>` / `<not-called>`）——断言必须把它们
+   * 当红处理：静默变成空数组的话，「菜单里没有这项」在**根本没截到**时也成立。
+   */
+  const runPetMenu = async (clickLabel?: string): Promise<string[]> => {
+    const { Menu } = await import('electron')
+    const orig = Menu.buildFromTemplate
+    let captured: string[] = ['<not-called>']
+    const patched = (items: Electron.MenuItemConstructorOptions[]): Electron.Menu => {
+      captured = items.map((i) => (i.type === 'separator' ? '---' : String(i.label ?? '')))
+      const hit = clickLabel ? items.find((i) => i.label === clickLabel) : undefined
+      const fire = hit?.click as unknown as (() => void) | undefined
+      return {
+        popup: (opts?: { callback?: () => void }) => {
+          if (fire) fire()
+          opts?.callback?.()
+        }
+      } as unknown as Electron.Menu
+    }
+    let patchedOk = true
+    try {
+      ;(Menu as unknown as { buildFromTemplate: typeof patched }).buildFromTemplate = patched
+    } catch {
+      patchedOk = false
+    }
+    try {
+      await exec(`(()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
+        const rc=b.getBoundingClientRect()
+        b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
+        return 'ok'})()`)
+      await sleep(600)
+    } finally {
+      if (patchedOk) {
+        try {
+          ;(Menu as unknown as { buildFromTemplate: typeof orig }).buildFromTemplate = orig
+        } catch {
+          // 还原失败也得让原调用方拿到 captured（菜单标签仍可用）
+        }
+      }
+    }
+    return patchedOk ? captured : ['<patch-failed>']
+  }
+
   // 等首轮采集真正拿到数据（API + 本地库解析 + 控制台 cookie，最长 30s）
   for (let i = 0; i < 60; i++) {
     const n = (await exec('window.api.getState().then(s=>s.snapshots.length)')) as number
@@ -362,12 +570,28 @@ export async function runUiTest(
   // 面板不再常驻宠物卡（用户要求）：确认已移除
   r.petCardRemoved = (await exec("!!document.querySelector('.pet-card')")) ? 'fail:still-there' : 'ok'
 
-  // 设置页「数字助理」分区：选一位 / 改名 / 三个开关（养成互动已下线）
+  // 设置页「数字助理」分区：选一位 / 改名 / 两个开关（养成互动已下线）
   await exec(footerClick('设置'))
   await sleep(700)
   r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 2"))
     ? 'ok'
     : 'fail:no-section'
+  // R1（AC1.1）设置侧：那个已删除的用量环开关整行必须已经拆掉。**只记串不报键** ——
+  // petRingRemoved 是「设置页 + 右键菜单」两半合成的一条断言（拆开就把 14 条对不上），
+  // 菜单那一半要到球上才截得到（菜单标签在主进程现拼，渲染层读不到），最后统一合报。
+  //
+  // 死开关文案由两段拼出来：步 8 的门要求 `grep -rn "<该文案>" src/ README.md DESIGN.md`
+  // **零命中**（产品代码不许再出现这串字），而这条断言恰恰要证明它不存在 —— 拼接在
+  // 运行时与整串完全等价，grep 则匹配不到连续字面量。
+  const deadRingLabel = '显示' + '用量环'
+  const ringRowGone = String(
+    await exec(`(()=>{
+      const sec=document.querySelector('.pet-sec')
+      if(!sec) return 'fail:no-pet-sec'
+      const rows=[...sec.querySelectorAll('.enable-row')].map(r=>(r.textContent||'').trim())
+      return rows.some(t=>t.includes(${JSON.stringify(deadRingLabel)})) ? 'fail:'+rows.join(' | ') : 'ok'
+    })()`)
+  )
   // 角色缩略图由 3D 素材渲染（异步）：等它们出来
   for (let i = 0; i < 40; i++) {
     if ((await exec("document.querySelectorAll('.pet-chip img').length === 2")) === true) break
@@ -409,6 +633,16 @@ export async function runUiTest(
     }
   }
 
+  // 从这里开始会反复推夹具（人物形态的滚轮守卫、基线比对，以及球上的 11 条断言），
+  // 而 60 秒一轮的真实采集随时可能把夹具覆盖掉 —— 那种红查不出原因。
+  // ⚠ 改频率会 reconfigure → refreshNow（**推夹具之前**只能做这一件事），等它收尾。
+  await exec("window.api.setExtras({refreshInterval:'300'})")
+  await sleep(300)
+  for (let i = 0; i < 60; i++) {
+    if ((await exec('window.api.getState().then(s=>!!s.scanning)')) !== true) break
+    await sleep(300)
+  }
+
   // 开关语义：默认未设置 = 球形态；点一次 → 开启桌面宠物（'1'）；再点 → 关闭（'0'）
   await petSwitch('1')
   r.petToggleSaved = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
@@ -430,6 +664,34 @@ export async function runUiTest(
       ? 'fail:2d-dot-in-figure'
       : 'ok'
     : 'fail:no-caption-value'
+  // ── R6：人物形态下滚轮**什么都不做**（onWheel 首行的 figure 早退，design §9 标的
+  // 最易漏处）。人物形态没有可见的窗口索引，只能靠 `__bd_ball` 的 idx/winIdx 渲染期
+  // 镜像观测；夹具必须推满「2 位供应商 × 各自多窗口」—— 单供应商/单窗口下推进本来
+  // 就是空操作，这条会**恒绿**（那正是它最容易写废的形态）。
+  await pushFix(FIX_AB)
+  const figBefore = await ballProbe()
+  // 胶囊里的轮播点数 = 供应商数：它 ≥2 才证明「换人」这一轴真的有可推进的东西
+  const figDots = Number(await exec('document.querySelectorAll(".petball-dots i").length'))
+  // 每一步都记投递结果：`no-hit`（压根没派发出去）必须算红 —— 否则「事件没送到」
+  // 和「守卫挡住了」长得一模一样，这条会退化成恒绿（R7）。
+  const figWheels: string[] = []
+  const figWheel = async (dx: number, dy: number): Promise<void> => {
+    figWheels.push(String(await exec(wheelJs(dx, dy))))
+    await sleep(320)
+  }
+  await figWheel(100, 0) // 左右 ×1：换一位供应商（×2 会绕回同一位 → 观测全相等、恒绿）
+  await figWheel(0, 100) // 上下 ×2：切时限窗口
+  await figWheel(0, 100)
+  const figAfter = await ballProbe()
+  let figWhy = ''
+  if (figWheels.some((w) => w !== 'ok')) figWhy = `fail:dispatch=${figWheels.join(',')}`
+  else if (figBefore.err || figAfter.err) figWhy = `fail:probe=${figBefore.err || figAfter.err}`
+  else if (figBefore.winCount <= 1 || figDots < 2)
+    figWhy = `fail:precondition winCount=${figBefore.winCount},dots=${figDots}`
+  else if (figAfter.idx !== figBefore.idx) figWhy = `fail:idx ${figBefore.idx}->${figAfter.idx}`
+  else if (figAfter.winIdx !== figBefore.winIdx) figWhy = `fail:winIdx ${figBefore.winIdx}->${figAfter.winIdx}`
+  else if (figAfter.label !== figBefore.label) figWhy = `fail:label ${figBefore.label}->${figAfter.label}`
+  r.petFigureNoWheel = figWhy || 'ok'
   // 人物形态的可见集里必须真的有**人物**：FBX 蒙皮网格（dump 里的节点名形如
   // f014_hipoly_81_bones_opacity，--ballshot 的 diag 实证）。同时球壳/装饰带/用量环那类
   // 球几何（Sphere/Torus/Tube）一条都不许剩。
@@ -532,6 +794,141 @@ export async function runUiTest(
   // 人物形态下窗口高度也必须保持竖版（长按/右键都不许把窗口改回横向）
   r.petFigureHeightKept = bounds().height === FIGURE_VIEW.height ? 'ok' : `fail:${bounds().height}`
 
+  // ── AC6.1：人物形态的确定性字段与步 0 基线**逐位**相同（基线比对，这条不弄坏）───
+  //
+  // 基线口径 = `BD_PET=1 BD_PET_ID=aria npx electron . --ballshot` 的 diag，全部是
+  // **窗口坐标系**（canvas 是 [缓冲宽,缓冲高,client宽,client高]，不是屏幕坐标）：
+  //   win[213,293] stage[213,293] canvas[426,586,213,293]
+  //   overlay [["petball-caption",68,245,145,289]]
+  //   rect{x:26.880806326334206,y:39.53742447368828,width:159.23838734733158,height:212.83465409088166}
+  //   center{x:106.5,y:145.9547515191291} stride 26.8 petReady true
+  //   胶囊文案 "13.7% / Claude Code"
+  //
+  // ⚠ overlay 与胶囊文案必须出自**同一帧**（2026-09-27 探针查明，曾经劈叉过）：
+  // ballshot 的 diag 帧在折叠后 ~6s 轮播跳到了 idx1「Claude Code」—— 它的标签实测
+  // 59.28px，+左右 padding 9px → 胶囊 77px → 恰好 68..145；而 idx0「OpenCode Go」
+  // 的标签是 64.24px → 胶囊 82px → 65..148，**永远**落不到基线那个盒。两个环境的
+  // 文字度量完全一致（ballshot 与 uitest 都是 dpr 2、同一套 CSS，探针同值），所以
+  // 这里等轮播跳一位、与 ballshot 基线**同帧同供应商**再量，而不是量刚挂载的 idx0。
+  //
+  // 三个前置，差一个就是**假红**（假红比没断言更糟）：
+  //  ① 角色必须是 Aria —— 上面 petSwitch 已经把默认角色换掉了，ray 的 walk 是
+  //    `m_walk_neutral` 另一套素材，stride 不保证同值，得先换回来；
+  //  ② 数据必须是演示快照 —— 胶囊的宽由「13.7% / Claude Code」撑出来，换个供应商或
+  //    窗口宽度就变；角标同理（演示数据 dataAt 新鲜 → 没有可信度角标）；
+  //  ③ 必须是**收起后的新挂载** —— 轮播的 lastAdvance 才重新起算（6s 一跳），
+  //    等到 idx==1 立即量，在 12s 的下一跳之前完成。
+  // 冷启动时素材解析可能超过 6 秒的轮播窗口，所以留 3 轮重试（第二轮起素材已缓存）。
+  const FIG_BASE = JSON.stringify({
+    win: [213, 293],
+    stage: [213, 293],
+    canvas: [426, 586, 213, 293],
+    overlay: [['petball-caption', 68, 245, 145, 289]],
+    rect: {
+      x: 26.880806326334206,
+      y: 39.53742447368828,
+      width: 159.23838734733158,
+      height: 212.83465409088166
+    },
+    center: { x: 106.5, y: 145.9547515191291 },
+    stride: 26.8,
+    petReady: true,
+    idx: 1,
+    pet: 'aria',
+    caption: '13.7% / Claude Code'
+  })
+  // 字段与 --ballshot 的 diag 逐字对齐（那条 diag 就是基线的出处），多出 idx/pet/caption
+  // 三个观测点：前两个决定「这一轮值不值得比」，第三个证明胶囊里是基线那位供应商。
+  const figFieldsJs = `JSON.stringify({
+    win: [window.innerWidth, window.innerHeight],
+    stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
+    canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
+    overlay: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-badge,.petball-toast')]
+      .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
+    rect: window.__bd_ball?.()?.rect ?? null,
+    center: window.__bd_ball?.()?.center ?? null,
+    stride: window.__bd_ball?.()?.stride ?? -1,
+    petReady: window.__bd_ball?.()?.petReady === true,
+    idx: window.__bd_ball?.()?.idx ?? -1,
+    pet: document.querySelector('.petball')?.dataset.pet ?? '',
+    caption: (document.querySelector('.petball-caption')?.innerText||'').trim().split('\\n').join(' / ')
+  })`
+  let needAria = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''")) !== 'aria'
+  let figGot = ''
+  let figWhy2 = ''
+  for (let attempt = 1; attempt <= 3 && !figGot; attempt++) {
+    await exec('window.api.expand()')
+    await sleep(800)
+    if (needAria) {
+      // 设置页的「换一位」按 PETS 顺序渲染，Aria 恒为第一个；用 title 兜底下标漂移
+      await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()")
+      await sleep(700)
+      await exec("[...document.querySelectorAll('.pet-chip')].find(c=>/^Aria/.test(c.title||''))?.click()")
+      await sleep(600)
+      await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
+      await sleep(500)
+      needAria = false
+    }
+    await pushFix(demoSnapshot()) // 推空再推：winCount 归零会把 winIdx 夹回 0
+    await exec('window.api.collapse()')
+    await sleep(1400)
+    let ready = false
+    for (let i = 0; i < 25; i++) {
+      if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) {
+        ready = true
+        break
+      }
+      await sleep(400)
+    }
+    // 自报家门泡泡必须散尽：基线的 overlay 里只有胶囊这一项
+    for (let i = 0; i < 20; i++) {
+      if (!(await exec("!!document.querySelector('.petball-bubble')"))) break
+      await sleep(300)
+    }
+    // 等轮播跳到基线那一帧（idx1 Claude Code，见 FIG_BASE 上方的探针结论）：
+    // 新挂载 lastAdvance 归零 → 6s 一跳，每 500ms 观测一次，[6s,12s) 内必然看到 idx==1
+    let idxNow = -1
+    for (let i = 0; i < 30; i++) {
+      idxNow = Number(await exec('window.__bd_ball?.()?.idx ?? -1'))
+      if (idxNow === 1) break
+      await sleep(500)
+    }
+    if (idxNow !== 1) {
+      // 一直没到基线帧（素材解析拖过了一个轮播窗口）→ 下一轮重来
+      figWhy2 = `retry:idx=${idxNow}@${attempt}`
+      continue
+    }
+    const raw = await exec(figFieldsJs)
+    if (typeof raw !== 'string') {
+      figWhy2 = `fail:exec-failed@${attempt}`
+      continue
+    }
+    if (!ready) {
+      figWhy2 = `fail:model-not-ready@${attempt}`
+      continue
+    }
+    let obj: { idx?: number; pet?: string } = {}
+    try {
+      obj = JSON.parse(raw) as { idx?: number; pet?: string }
+    } catch {
+      figWhy2 = `fail:parse@${attempt}:${raw.slice(0, 60)}`
+      continue
+    }
+    if (obj.pet !== 'aria') {
+      // 角色没换成（或这一轮还挂着旧角色）：下一轮从设置页再换一次
+      figWhy2 = `retry:pet=${obj.pet}`
+      needAria = true
+      continue
+    }
+    if (obj.idx !== 1) {
+      // 取数与量帧之间又跳了一位 → 胶囊里不是基线帧那个供应商，这轮作废
+      figWhy2 = `retry:idx=${obj.idx}`
+      continue
+    }
+    figGot = raw
+  }
+  r.petFigureUnchanged = figGot ? (figGot === FIG_BASE ? 'ok' : `fail:${figGot}`) : `fail:${figWhy2 || 'no-capture'}`
+
   // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
   await exec(`(()=>{
     const b=document.querySelector('.petball-hit'); if(!b) return
@@ -568,36 +965,45 @@ export async function runUiTest(
   const ballDot = await exec("!!document.querySelector('.petball-fallback')")
   r.petBall3d =
     !ballCanvas && ballDot ? 'ok' : `fail:canvas=${!!ballCanvas},dot=${!!ballDot}`
-  // 环可见 + 环心有读数：track 的 stroke 必须真的算出来（不是 SVG 默认的 none）。
+  // 环心有读数 + 环按 kind 分流（本任务第 2 步把环拆成「套餐才有环」）：
+  //   · plan  —— track 的 stroke 必须真的算出来（不是 SVG 默认的 none），有百分比读数时
+  //              fill 的 stroke 与 dasharray 都要查：dasharray 承载弧长，为 0 就等于没画弧。
+  //              （唯一例外：读数就是 `0%`，目标弧长本来就是 0 —— 这时要查的是 fill **在**）
+  //   · balance —— 连 track 都不许有（AC2.1）：余额只留素圆盘 + 金额
   // 这修的是一个**已存在的 bug** —— 2026-09-27 之前 .dot-ring-track 全项目零规则，
   // 且两个 <circle> 都不写 stroke 属性（SVG 默认 none），所以 WebGL 失败时环是隐形的。
   //
   // 只查 track 不够（2026-09-27 复核）：轨道是 16% 透明度的灰，几乎看不见 ——
-  // 「弧根本没画」时它照样成立。所以 fill 的 stroke 与 dasharray 都要查：
-  // dasharray 承载弧长，为 0 就等于没画弧。
+  // 「弧根本没画」时它照样成立。所以 fill 的 stroke 与 dasharray 都要查。
+  //
+  // kind 由 PetBall 的 data-ring 提供（与 L1 同一个表达式）。断言**必须**先分 kind：
+  // 本机数据里球形态常落在 5H = 0% 的窗口上，「dash > 0」对它天然不成立，而余额供应商
+  // 连 track 都没有 —— 混成一条布尔只会得到永真的兜底（或每次都红的假警报）。
   const ringDom = String(
     await exec(`(()=>{
       const dot=document.querySelector('.petball-fallback')
       if(!dot) return 'fail:no-dot'
       const track=dot.querySelector('.dot-ring-track')
-      if(!track) return 'fail:no-track'
       const fill=dot.querySelector('.dot-ring-fill')
       const value=dot.querySelector('.dot-value')
       const fs=fill?getComputedStyle(fill):null
       return JSON.stringify({
-        track: getComputedStyle(track).stroke,
+        ring: dot.getAttribute('data-ring') || '',
+        track: track ? getComputedStyle(track).stroke : 'no-track',
         fill: fs ? fs.stroke : 'no-fill',
         dash: fs ? fs.strokeDasharray : 'no-fill',
         value: value ? value.textContent : ''
       })
     })()`)
   )
+  let ringKind = ''
   let trackStroke = 'none'
   let fillStroke = 'no-fill'
   let fillDash = 'no-fill'
   let ringValue = ''
   try {
-    const d = JSON.parse(ringDom) as { track: string; fill: string; dash: string; value: string }
+    const d = JSON.parse(ringDom) as { ring: string; track: string; fill: string; dash: string; value: string }
+    ringKind = d.ring
     trackStroke = d.track
     fillStroke = d.fill
     fillDash = d.dash
@@ -605,18 +1011,28 @@ export async function runUiTest(
   } catch {
     // ringDom 是 fail:... —— 下面统一报出去
   }
-  r.petBallCenterValue =
-    ringDom.startsWith('fail:')
-      ? ringDom
-      : trackStroke !== 'none' &&
-          trackStroke !== '' &&
-          fillStroke !== 'none' &&
-          fillStroke !== '' &&
-          fillDash !== 'none' &&
-          parseFloat(fillDash) > 0 &&
-          ringValue !== ''
-        ? 'ok'
-        : `fail:track=${trackStroke},fill=${fillStroke},dash=${fillDash},value='${ringValue}'`
+  const realStroke = (v: string): boolean => v !== 'none' && v !== '' && v !== 'no-track' && v !== 'no-fill'
+  const pctLike = /^-?\d+(\.\d+)?%$/.test(ringValue)
+  const ringWhy = ringDom.startsWith('fail:')
+    ? ringDom
+    : !ringValue
+      ? `fail:value='${ringValue}'`
+      : ringKind === 'plan'
+        ? !realStroke(trackStroke)
+          ? `fail:plan-track=${trackStroke}`
+          : pctLike && !realStroke(fillStroke)
+            ? `fail:plan-fill=${fillStroke}`
+            : pctLike && ringValue !== '0%' && !(parseFloat(fillDash) > 0)
+              ? `fail:plan-dash=${fillDash}`
+              : ''
+        : ringKind === 'balance'
+          ? trackStroke !== 'no-track'
+            ? `fail:balance-track=${trackStroke}`
+            : fillStroke !== 'no-fill'
+              ? `fail:balance-fill=${fillStroke}`
+              : ''
+          : `fail:ring='${ringKind}'`
+  r.petBallCenterValue = ringWhy || 'ok'
   r.petBallRingDiag = ringDom
   // 命中区（W7）：球形态的拖拽/点击靠 .petball-hit 的矩形，必须贴合 56×56 的环。
   // 之前没有任何断言守着它 —— 命中区一旦退回整窗（213×293）就是隐形的可点击区，
@@ -641,55 +1057,314 @@ export async function runUiTest(
             return `fail:unparsed=${hitRect}`
           }
         })()
-  // 「显示用量环」（ui:petRing）不是死开关：关掉后 2D 环只剩轨道 + 中心数字。
-  // 走**真实入口**（设置页那个开关的 onClick，与右键菜单同一个 togglePetRing）——
-  // 不开测试专用钩子，也不用 setExtras 走后门（那只改存储，React 状态不会变，断言会假红）。
-  const ringProbe = async (): Promise<{ fill: boolean; track: boolean; value: string } | string> =>
-    ((await exec(`(()=>{
-      const dot=document.querySelector('.petball-fallback')
-      if(!dot) return 'no-dot'
-      // 直接返回对象（executeJavaScript 会结构化克隆回来）；返回 JSON 字符串的话
-      // 下面 typeof x !== 'string' 那道错误分支会把它误判成失败
-      return {
-        fill: !!dot.querySelector('.dot-ring-fill'),
-        track: !!dot.querySelector('.dot-ring-track'),
-        value: dot.querySelector('.dot-value')?.textContent ?? ''
-      }
-    })()`)) as { fill: boolean; track: boolean; value: string } | string)
-  const flipRing = async (): Promise<void> => {
-    await gotoView('settings')
-    await exec(
-      "[...document.querySelectorAll('.pet-sec .enable-row')].find(r=>r.textContent.includes('显示用量环'))?.querySelector('.switch')?.click()"
-    )
-    await sleep(500)
-    await gotoView('collapse')
+
+  // ─── 09-27-dot-ring-scroll：球上的 12 条断言（另 2 条人物形态的在上面）────────
+  //
+  // 纪律：每条都必须能被「先弄坏一次」弄红 —— 所以断言一律自带前置条件（探针报错、
+  // data-ring 不对、winCount 不够、句柄缺 idx 都算红），不写恒绿兜底。夹具按
+  // 三窗套餐 → 单窗套餐 → 余额 → 双供应商 的顺序推满，每步之间互不干扰。
+  //
+  // 右键菜单那一半只在这里截得到：菜单标签是主进程现拼的，渲染层读不到。
+  const menuLabels = await runPetMenu()
+  const menuWhy = menuLabels.includes('<not-called>') || menuLabels.includes('<patch-failed>')
+    ? `fail:menu=${menuLabels.join(',')}`
+    : menuLabels.some((l) => l.includes(deadRingLabel))
+      ? `fail:${menuLabels.join(',')}`
+      : ''
+  const removedWhy = [ringRowGone !== 'ok' ? ringRowGone : '', menuWhy].filter(Boolean).join(' | ')
+  r.petRingRemoved = removedWhy || 'ok'
+
+  // 「隐藏余额」只能从右键菜单切（App 只在挂载时读一次 extras，setExtras 推不进 React）
+  const readHide = async (): Promise<boolean> =>
+    (await exec("window.api.getExtras(['ui:hideBalance']).then(e=>e['ui:hideBalance']==='1')")) === true
+  const hideWasOn = await readHide()
+  const setHide = async (want: boolean): Promise<string> => {
+    if ((await readHide()) === want) return 'ok'
+    const labels = await runPetMenu('隐藏余额')
+    if (!labels.includes('隐藏余额')) return `fail:menu=${labels.join(',')}` // 哨兵串也不含它 → 一并算红
+    for (let i = 0; i < 12; i++) {
+      if ((await readHide()) === want) return 'ok'
+      await sleep(300)
+    }
+    return 'fail:timeout'
+  }
+
+  const titleName = (t: string): string => t.split(' · ')[0] // tooltip 首段 = 供应商名
+  const dotValue = async (): Promise<string> =>
+    String(await exec("document.querySelector('.petball-fallback .dot-value')?.textContent ?? ''"))
+  /** 目标弧长（与 JSX 同式）：dasharray 第一段必须落在它 ±0.5px 内 */
+  const dashFor = (pct: number): number => (2 * Math.PI * 22 * Math.min(100, Math.max(0, pct))) / 100
+  const dashNear = (dash: string | null, pct: number): boolean => {
+    const first = parseFloat(String(dash ?? '').trim().split(/[\s,]+/)[0] ?? '')
+    return Number.isFinite(first) && Math.abs(first - dashFor(pct)) <= 0.5
+  }
+  /** 推夹具 + 等读数补间收尾：push 也会让 target 变化（走 600ms 动画），直接读会拿到中间态 */
+  const pushSettle = async (snaps: unknown[]): Promise<void> => {
+    await pushFix(snaps)
     await sleep(600)
   }
-  const ringOn = await ringProbe()
-  await flipRing()
-  const ringOff = await ringProbe()
-  await flipRing()
-  const ringBack = await ringProbe()
-  if (typeof ringOn !== 'string' && typeof ringOff !== 'string' && typeof ringBack !== 'string') {
-    // ⚠ 「开着时必须有弧」这一条是**load-bearing 的**：只查「关掉后没有弧」的话，
-    //   弧**永远不画**（或开关整个没接线）时它照样绿 —— 2026-09-27 故意弄坏一次时实测过。
-    //   没有百分比读数（pct 为 null）时本来就不该有弧，所以只在读到百分号时要求它存在。
-    const pctReading = /%/.test(ringOn.value)
-    r.petRingToggle =
-      ringOff.track &&
-      !ringOff.fill &&
-      ringOff.value === ringOn.value &&
-      ringBack.fill === ringOn.fill &&
-      (!pctReading || ringOn.fill)
-        ? 'ok'
-        : `fail:on=${JSON.stringify(ringOn)},off=${JSON.stringify(ringOff)},back=${JSON.stringify(ringBack)}`
-  } else {
-    r.petRingToggle = `fail:on=${ringOn},off=${ringOff},back=${ringBack}`
+  /** 走一步并等动画落定（320ms 冷却 + 500ms 补间 > COUNTUP_MS=600） */
+  const wheelSettled = async (dx: number, dy: number): Promise<void> => {
+    await wheelStep(dx, dy)
+    await sleep(500)
   }
-  // 偏好真的落盘了吗（对齐 intervalSaved 的做法）：只验 DOM 的话，「开关改了内存里的
-  // React state、忘了写 extras」也能一路绿 —— 而下次启动就恢复成默认，用户会以为开关坏了。
-  const ringSaved = String(await exec("window.api.getExtras(['ui:petRing']).then(e=>e['ui:petRing']??'')"))
-  r.petRingSaved = ringSaved === '1' ? 'ok' : `fail:ui:petRing=${ringSaved}`
+
+  // ── 场景一：三窗口套餐 10% / 20% / 30%（短标签 5H / W / M）─────────────────
+  await pushSettle(FIX_PLAN3)
+  const g0 = await ballProbe()
+  let ringOnWhy = '' // petRingAlwaysOn：套餐必有轨道 + 填充弧 + 弧长
+  let winCycleWhy = '' // petWindowCycle 的多窗口半边（单窗口那半在场景二合报）
+  let winLabelWhy = '' // petWinLabel 的多窗口半边
+  if (g0.err) {
+    ringOnWhy = winCycleWhy = winLabelWhy = `fail:probe=${g0.err}`
+  } else {
+    // 环三层（L1 有无 / L2 轨道 / L3 弧长），缺一层都算红
+    if (g0.ring !== 'plan') ringOnWhy = `fail:ring=${g0.ring}`
+    else if (!g0.track) ringOnWhy = 'fail:no-track'
+    else if (g0.trackStroke == null || !realStroke(g0.trackStroke)) ringOnWhy = `fail:track=${g0.trackStroke}`
+    else if (!g0.fill) ringOnWhy = 'fail:no-fill'
+    else if (g0.fillStroke == null || !realStroke(g0.fillStroke)) ringOnWhy = `fail:fill=${g0.fillStroke}`
+    else if (!dashNear(g0.dash, 10)) ringOnWhy = `fail:dash=${g0.dash}`
+    if (g0.winCount !== 3) winCycleWhy = `fail:winCount=${g0.winCount}`
+    else if (g0.winIdx !== 0) winCycleWhy = `fail:winIdx0=${g0.winIdx}`
+    else if (g0.value !== FIX_PLAN3_VALS[0]) winCycleWhy = `fail:v0=${g0.value}`
+    else if (!dashNear(g0.dash, 10)) winCycleWhy = `fail:dash0=${g0.dash}`
+    if (g0.winLabel !== FIX_PLAN3_LBL[0]) winLabelWhy = `fail:lbl0=${g0.winLabel}`
+  }
+  r.petRingAlwaysOn = ringOnWhy || 'ok'
+  await wheelSettled(0, 100)
+  const g1 = await ballProbe()
+  if (!winCycleWhy) {
+    if (g1.err) winCycleWhy = `fail:probe=${g1.err}`
+    else if (g1.winIdx !== 1) winCycleWhy = `fail:winIdx1=${g1.winIdx}`
+    else if (g1.value !== FIX_PLAN3_VALS[1]) winCycleWhy = `fail:v1=${g1.value}`
+    else if (!dashNear(g1.dash, 20)) winCycleWhy = `fail:dash1=${g1.dash}`
+  }
+  if (!winLabelWhy && g1.winLabel !== FIX_PLAN3_LBL[1]) winLabelWhy = `fail:lbl1=${g1.winLabel}`
+  await wheelSettled(0, 100)
+  const g2 = await ballProbe()
+  if (!winCycleWhy) {
+    if (g2.err) winCycleWhy = `fail:probe=${g2.err}`
+    else if (g2.winIdx !== 2) winCycleWhy = `fail:winIdx2=${g2.winIdx}`
+    else if (g2.value !== FIX_PLAN3_VALS[2]) winCycleWhy = `fail:v2=${g2.value}`
+    else if (!dashNear(g2.dash, 30)) winCycleWhy = `fail:dash2=${g2.dash}`
+  }
+  if (!winLabelWhy && g2.winLabel !== FIX_PLAN3_LBL[2]) winLabelWhy = `fail:lbl2=${g2.winLabel}`
+  // AC5.1：30% → 10% 回绕，渲染期镜像把显示值归零 → 8 次采样必须截到严格落在 (0,10)
+  // 的中间态；「直接落定」时采到的全是 0% / 10%，这条就红。
+  await exec(wheelJs(0, 100))
+  const mids: string[] = []
+  let midOk = false
+  for (let i = 0; i < 8; i++) {
+    await sleep(45)
+    const v = await dotValue()
+    mids.push(v)
+    const n = parseFloat(v)
+    if (Number.isFinite(n) && n > 0 && n < 10) midOk = true
+  }
+  r.petCountUp = midOk ? 'ok' : `fail:samples=${mids.join('/')}`
+  // AC5.2：动画收尾必须精确落目标值（easeOut 尾帧插值会留尾差）
+  await sleep(700)
+  const g3 = await ballProbe()
+  r.petCountUpExact = g3.err
+    ? `fail:probe=${g3.err}`
+    : g3.value === FIX_PLAN3_VALS[0]
+      ? 'ok'
+      : `fail:${g3.value} want=${FIX_PLAN3_VALS[0]}`
+  // AC4.4 惯性两段：① 一个手势里连发 30 个 deltaY:40 只准跳 1 格；
+  // ② 断流后的残量必须清掉 —— 否则残量会让下一次 10px 轻扫立刻过阈值（静默误切一格）。
+  const i0 = await ballProbe()
+  const tightOk = String(
+    await exec(`(()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
+      for(let i=0;i<30;i++) b.dispatchEvent(new WheelEvent('wheel',{deltaX:0,deltaY:40,bubbles:true}))
+      return 'ok'})()`)
+  )
+  const i1 = await ballProbe()
+  let inertiaWhy =
+    tightOk !== 'ok'
+      ? `fail:dispatch=${tightOk}`
+      : i0.err || i1.err
+        ? `fail:probe=${i0.err || i1.err}`
+        : i0.winCount <= 1
+          ? `fail:winCount=${i0.winCount}`
+          : i1.winIdx !== (i0.winIdx + 1) % i0.winCount
+            ? `fail:tight ${i0.winIdx}->${i1.winIdx}`
+            : ''
+  await sleep(300) // 让上一手势断流（>GESTURE_GAP），进残量那一段
+  const pacedOk = String(
+    await exec(`(async()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
+      for(let i=0;i<6;i++){b.dispatchEvent(new WheelEvent('wheel',{deltaX:0,deltaY:100,bubbles:true})); await new Promise(r=>setTimeout(r,40))}
+      return 'ok'})()`)
+  )
+  const i2 = await ballProbe()
+  if (!inertiaWhy) {
+    inertiaWhy =
+      pacedOk !== 'ok'
+        ? `fail:dispatch=${pacedOk}`
+        : i2.err
+          ? `fail:probe=${i2.err}`
+          : i2.winIdx !== (i1.winIdx + 1) % i1.winCount
+            ? `fail:paced ${i1.winIdx}->${i2.winIdx}`
+            : ''
+  }
+  await sleep(800) // 手势早已断流：残量若没清，下面这 10px 会直接过阈值
+  await exec(wheelJs(0, 10))
+  const i3 = await ballProbe()
+  if (!inertiaWhy) {
+    inertiaWhy = i3.err ? `fail:probe=${i3.err}` : i3.winIdx !== i2.winIdx ? `fail:residual ${i2.winIdx}->${i3.winIdx}` : ''
+  }
+  r.petWheelInertia = inertiaWhy || 'ok'
+
+  // ── 场景二：单窗口套餐 —— 切了等于没切（AC3.4），且不出现短标签（AC3.6）──────
+  await pushSettle(FIX_PLAN1)
+  const h0 = await ballProbe()
+  const h1Val = '13.7%' // fmtPercent(13.7)
+  let singleWhy = ''
+  let singleLabelWhy = ''
+  if (h0.err) {
+    singleWhy = singleLabelWhy = `fail:probe=${h0.err}`
+  } else {
+    if (h0.winCount !== 1) singleWhy = `fail:winCount=${h0.winCount}`
+    else if (h0.value !== h1Val) singleWhy = `fail:value=${h0.value}`
+    if (h0.winLabel !== null) singleLabelWhy = `fail:lbl0=${h0.winLabel}`
+  }
+  await wheelSettled(0, 100)
+  await wheelSettled(0, 100)
+  const h1 = await ballProbe()
+  if (!singleWhy) {
+    if (h1.err) singleWhy = `fail:probe=${h1.err}`
+    else if (h1.winIdx !== 0) singleWhy = `fail:winIdx=${h1.winIdx}`
+    else if (h1.value !== h1Val) singleWhy = `fail:value=${h1.value}`
+  }
+  if (!singleLabelWhy && h1.winLabel !== null) singleLabelWhy = `fail:lbl1=${h1.winLabel}`
+  // 多窗口半边 + 单窗口半边合成一条（拆开 14 条就对不上了）
+  r.petWindowCycle = winCycleWhy || singleWhy || 'ok'
+  r.petWinLabel = winLabelWhy || singleLabelWhy || 'ok'
+
+  // ── 场景三：充值余额 —— 连轨道都不画（AC2.1）；隐藏余额时不出现数字（AC5.3）──
+  await pushSettle(FIX_BAL)
+  const balDom = String(
+    await exec(`(()=>{const d=document.querySelector('.petball-fallback'); if(!d) return 'fail:no-dot'
+      return JSON.stringify({ring:d.getAttribute('data-ring')||'', n:d.querySelectorAll('[class*="dot-ring"]').length})})()`)
+  )
+  let balWhy = ''
+  try {
+    const b = JSON.parse(balDom) as { ring: string; n: number }
+    if (b.ring !== 'balance') balWhy = `fail:ring=${b.ring}` // 前置条件：真的是余额供应商
+    else if (b.n !== 0) balWhy = `fail:nodes=${b.n}`
+  } catch {
+    balWhy = `fail:probe=${balDom}`
+  }
+  r.petNoRingOnBalance = balWhy || 'ok'
+  const hideOn = await setHide(true)
+  await sleep(500)
+  const hv1 = await dotValue()
+  await sleep(400)
+  const hv2 = await dotValue()
+  const hideBack = await setHide(hideWasOn)
+  r.petHideBalanceNoAnim =
+    hideOn !== 'ok'
+      ? `fail:${hideOn}`
+      : hv1 !== '••••' || hv2 !== '••••'
+        ? `fail:${hv1}/${hv2}`
+        : hideBack !== 'ok'
+          ? `fail:restore=${hideBack}`
+          : 'ok'
+
+  // ── 场景四：双供应商 —— 换人唯一入口、手动后轮播暂停、恢复后窗口归零 ─────────
+  await pushSettle(FIX_AB)
+  const a0 = await ballProbe()
+  let holdWhy = ''
+  let advWhy = ''
+  let provWhy = ''
+  if (a0.err) {
+    holdWhy = advWhy = provWhy = `fail:probe=${a0.err}`
+  } else if (a0.winCount <= 1) {
+    holdWhy = advWhy = provWhy = `fail:precondition winCount=${a0.winCount}`
+  } else if ((await setWindowTo(1, 5)) !== 1) {
+    holdWhy = advWhy = provWhy = 'fail:setwin'
+  } else {
+    await wheelSettled(100, 0) // 手动换人 = 唯一入口（窗口同帧归零）+ 启动 8 秒暂停
+    const m0 = await ballProbe()
+    if (m0.err || m0.idx < 0) {
+      holdWhy = advWhy = provWhy = `fail:probe=${m0.err || 'no-handle'}`
+    } else {
+      // ① AC4.3：换人后 7 秒内 idx 不许推进（14 × 500ms 采样）
+      for (let i = 1; i <= 14; i++) {
+        await sleep(500)
+        const idx = Number(await exec('window.__bd_ball?.()?.idx ?? -1'))
+        if (idx !== m0.idx) {
+          holdWhy = `fail:idx ${m0.idx}->${idx} @${(i * 0.5).toFixed(1)}s`
+          break
+        }
+      }
+      // ② 暂停结束后轮播恢复；换人必须走唯一入口 → 窗口回到 windows[0]，读数是新供应商首窗
+      let adv: BallProbe | null = null
+      for (let i = 0; i < 16 && !adv; i++) {
+        await sleep(500)
+        const p = await ballProbe()
+        if (!p.err && p.idx !== m0.idx) adv = p
+      }
+      if (!adv) {
+        advWhy = 'fail:no-advance-in-8s'
+      } else {
+        await sleep(700) // 等换人后的读数补间落定再取值
+        const fin = await ballProbe()
+        const nm = titleName(fin.title)
+        advWhy = fin.err
+          ? `fail:probe=${fin.err}`
+          : fin.winIdx !== 0
+            ? `fail:winIdx=${fin.winIdx}`
+            : FIX_AB_FIRST[nm] !== fin.value
+              ? `fail:${nm}=${fin.value} want=${FIX_AB_FIRST[nm]}`
+              : ''
+      }
+      // ③ 左右滚 = 换人：窗口必须归零、读数落到新供应商的 windows[0]（标题变 = 真换了人）
+      const c0 = await ballProbe()
+      const n0 = titleName(c0.title)
+      if (c0.err) provWhy = `fail:probe=${c0.err}`
+      else if ((await setWindowTo(1, 5)) !== 1) provWhy = 'fail:setwin'
+      else {
+        await wheelSettled(100, 0)
+        const c1 = await ballProbe()
+        const n1 = titleName(c1.title)
+        provWhy = c1.err
+          ? `fail:probe=${c1.err}`
+          : n1 === n0
+            ? `fail:same=${n1}`
+            : c1.winIdx !== 0
+              ? `fail:winIdx=${c1.winIdx}`
+              : FIX_AB_FIRST[n1] !== c1.value
+                ? `fail:${n1}=${c1.value} want=${FIX_AB_FIRST[n1]}`
+                : ''
+      }
+    }
+  }
+  r.petWheelHold = holdWhy || 'ok'
+  r.petCarouselResetsWindow = advWhy || 'ok'
+  r.petProviderCycle = provWhy || 'ok'
+
+  // ── 场景五：套餐窗口算不出比例（AC3.3）—— L2「轨道与 pct 解耦」的唯一证明 ──────
+  // 上面几个夹具的 plan 全都带 percent，所以「无 limit 的窗口仍有轨道」若不单推一个
+  // 这样的窗口，就只能指望真实数据恰好出现它时被 petBallCenterValue 顺带查到 ——
+  // 那是运气，不是护栏（AC3.3 此前正是这种未被断言覆盖的状态，check 复核补上）。
+  // 结果并进 petRingAlwaysOn（同一句「套餐必有轨道」的另一半），断言条目数不变。
+  await pushSettle(FIX_NOLIMIT)
+  const np0 = await ballProbe()
+  let noPctWhy = ''
+  if (np0.err) noPctWhy = `fail:probe=${np0.err}`
+  else if (np0.ring !== 'plan') noPctWhy = `fail:ring=${np0.ring}`
+  else if (np0.winCount !== 1) noPctWhy = `fail:winCount=${np0.winCount}`
+  else if (!np0.track) noPctWhy = 'fail:no-track' // ← AC3.3 的核心：算不出比例也要有轨道
+  else if (np0.trackStroke == null || !realStroke(np0.trackStroke)) noPctWhy = `fail:track=${np0.trackStroke}`
+  else if (np0.fill) noPctWhy = 'fail:fill-without-pct' // 算不出比例绝不画弧，更不许画 0% 的假弧
+  else if (np0.value !== '¥1.3k') noPctWhy = `fail:value=${np0.value}` // 中心是金额，不是 0%
+  else if (np0.winLabel !== null) noPctWhy = `fail:lbl=${np0.winLabel}` // 单窗口不该出现短标签
+  if (!ringOnWhy && noPctWhy) ringOnWhy = noPctWhy
+  r.petRingAlwaysOn = ringOnWhy || 'ok' // 复写：场景一写过一次，这里补上 AC3.3 那一半
+  // 收尾：隐藏余额已在场景三还原；采集频率拉回默认（setExtras 会 reconfigure → 立刻补一轮真实数据）
+  await exec("window.api.setExtras({refreshInterval:'60'})")
+
   // 泡泡的回归护栏挪到了形态翻转处（见 petBallOff 紧后面那条），不在这里查：
   // 收尾时泡泡那 4.2s 存活期早就过了，那时候查是**永真**的 —— 实测只差一行 IPC 的
   // 耗时就会从「抓得到」翻成「抓不到」。此处留着记录，免得后来的人又把它挪回来。

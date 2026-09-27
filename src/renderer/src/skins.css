@@ -1728,6 +1728,27 @@ textarea {
   font-size: 10px;
   letter-spacing: -0.02em;
 }
+/* 当前时限的短标签（5H / W / M，取值来自 shared/tray-text 的 shortWindowLabel()）。
+   多时限供应商切窗口时它是**唯一**的标识 —— 没有它，中心数字从 5.2% 跳到 33% 时
+   用户不知道自己停在 5 小时还是本周，「挨个显示」就是盲切（PRD D3 已拍板：要）。
+   只在 s.windows.length > 1 时渲染：单窗口写个 5H 是噪音。
+
+   几何（56×56，圆心 28,28，环外缘 r = 22 + 5/2 = 24.5）：文本盒在左下角，
+   离圆心最近的是它的**右上角** (x1, y0)，须满足 (28-x1)² + (y0-28)² > 24.5²。
+   font-size 9px、贴左下角（left/bottom 各 0）时墨迹约 x ≤ 12、y ≥ 47.7：
+   √(16² + 19.7²) = 25.4 > 24.5，余量 ≈ 0.9px —— 全设计最紧的一处。
+   ⚠ 实拍压环就退到 8px（余量 ≈ 2.4px），**不许**把标签挪进环内换空间（会盖住读数）。 */
+.petball.no3d .dot-winlabel {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  color: var(--fg-dim);
+  pointer-events: none;
+}
 .petball.no3d.lvl-warn .dot-value {
   color: var(--warn);
 }

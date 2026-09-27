@@ -17,7 +17,7 @@
 | [Component Guidelines](./component-guidelines.md) | Component/props conventions, token-driven CSS, skins, the three severity spellings | ✅ 已填 |
 | [Hook Guidelines](./hook-guidelines.md) | No custom hooks; effect cleanup, ref-mirror pattern, three.js lifecycle | ✅ 已填 |
 | [State Management](./state-management.md) | No state library; lifting rules, the `extras` store, timers | ✅ 已填 |
-| [Quality Guidelines](./quality-guidelines.md) | No linter; `tsc` + 10 assertion scripts + QA harness; review checklist | ✅ 已填 |
+| [Quality Guidelines](./quality-guidelines.md) | No linter; `tsc` + 9 assertion scripts + QA harness; review checklist | ✅ 已填 |
 | [Type Safety](./type-safety.md) | tsconfig split, literal unions + `Record` tables, no validation lib, `as` conventions | ✅ 已填 |
 
 Sister layer: [`../adapters/`](../adapters/index.md) — executable contract for the

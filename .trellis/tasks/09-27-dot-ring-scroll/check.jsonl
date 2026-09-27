@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "步 7 要对 14 条断言逐条执行「先弄坏一次确认会红」，质量门与测试规范归它管"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "撤「显示用量环」横跨 shared/types → preload → main/ipc → App → PetSection → PetBall → uitest 七处链路，漏一处要么编译失败要么静默失效，须按跨层链路核对"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复核三层环判定（balance 连 track 都不画、plan 无 limit 时仍有 track）是否落在正确分支，人物形态 dot2d=false 时不得受任何改动影响"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "复核 winIdx 与 idx 的落位/夹紧语义、动画起点的两条规则（切索引从 0、刷新从旧值），以及绝不新增持久化键的约束"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "复核 rAF 动画的取消与卸载 cleanup、轮播秒级 tick 的时间戳语义（AC4.3 要求第 9 秒起恢复）、滚轮 handler 的 figure 早退"}

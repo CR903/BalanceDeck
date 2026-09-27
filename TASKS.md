@@ -607,3 +607,42 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
       评审实测把串行改回并发测试仍全绿。已在代码注释里写明
 - 顺带发现未接入：`/console/api/billing/status` 有 `availableMicroCents`（$5.00 可用额度）
   与 `renewalAuthorizationRequired`（页面提示需在 Oct 21 前重新授权支付方式）
+
+## 2026-09-28 第二十三轮：2D 小圆环套餐分流 + 滚轮切窗口 + 数字递增（`09-27-dot-ring-scroll`）
+
+接第二十二轮前一任务 `09-27-ball-form-dot` 的 56×56 小圆环，只改它的信息呈现与交互，
+不动形态本身。PRD / 设计 / 执行计划在 `.trellis/tasks/09-27-dot-ring-scroll/`。
+
+- [x] **R1 撤掉「显示用量环」**：设置行、右键菜单项、`showRing` prop、`ui:petRing` 读写
+      全链路删除（孤儿键留着不写清理代码）。门 `grep -rn "显示用量环" src/ README.md DESIGN.md`
+      与 `grep -rn "showRing" src/` 均 **0 命中**
+- [x] **R2 只有套餐有环**：新增 `shared/quality.ts` 的 `isPlan()`，`CardView.tsx:557` 与
+      球共用同一口径（卡片说余额、球不会说套餐）；`kind === 'balance'` 连轨道都不画
+- [x] **环的三层判定**（L1 有环 / L2 轨道与 `pct` 解耦 / L3 填充弧才要 `pct`）：
+      L2 解耦是为了 AC3.3 —— 无 `limit` 的窗口仍要有轨道，否则被读成「这个供应商没环」
+- [x] **R3 多窗口 `winIdx` + R4 滚轮**：上下切时限、左右切供应商；换人唯一入口
+      `advanceProvider()`（`setIdx` + `setWinIdx(0)`，自动轮播与横向步进共用），
+      不用 effect 重置（会先画一帧旧窗口再打回）；轮播改 1 秒 tick + `holdUntil`/`lastAdvance`
+      两个时间戳，手动操作后停 8 秒、第 9 秒起恢复
+- [x] **防惯性三常量**：`THRESHOLD=60` / `COOLDOWN=250` / **`GESTURE_GAP=150`**（断流清残量，
+      必须写在累加之前 —— 否则惯性手势剩 1000+px 残量，下一次 1px 轻扫就误切一格）
+- [x] **R5 数字递增**：`Reading` 两态（`k:'lit'` 非数值直接落定，`k:'num'` 走 600ms easeOut）。
+      切窗口/切供应商从 0 涨，平时刷新从旧值补；收尾 `display.current = target` 精确赋值
+      （末帧插值会留 `40.999999` 尾差）。`hideBalance` 的 `••••` 从不构建数字（AC5.3）
+- [x] **R6 人物形态零改动**：`if (figure) return` 放在 `onWheel` 第一行（人物形态也渲染
+      `.petball-hit`，漏这句人物下滚轮也会切窗口）。人物 8 个 PRD 字段与基线**逐位相同**：
+      `win[213,293]` / `stage[213,293]` / `canvas[426,586,213,293]` /
+      `overlay[["petball-caption",68,245,145,289]]` / `rect{26.880806326334206,39.53742447368828,159.23838734733158,212.83465409088166}` /
+      `center{106.5,145.9547515191291}` / `stride 26.8` / `petReady true`（另 `idx 1`、`pet aria`）
+- [x] **14 条新断言 + 逐条「先弄坏一次」**：13 条各弄坏一次各红一次、1 条
+      （`petFigureUnchanged`）是基线比对不弄坏。纪律是**红集必须恰好等于该批声明的目标集**，
+      多红一条即该批作废：B1 初版连带红 2 条 → 作废重设计成 **G1–G6 六批**，
+      每批实测红集都恰好等于声明（详见 `implement.md` 的批次表与逐条 `fail:` 输出）。
+      两条手法被实测推翻后换法：`petRingAlwaysOn` 不能隐藏 track/fill（会连带红
+      `petBallCenterValue`），只能破坏弧长百分比；`petCountUpExact` 的「末帧不赋值」
+      在 `t=1` 时恰好精确、**断言恒绿**（假护栏），改 `commit(target*0.97)` 才证到
+- [x] **终跑全绿**：`BD_USER_DATA=/tmp/bd-ud npx electron . --uitest` → **109 键 / 0 fail /
+      consoleErrors none / execErrors none**；`npm run typecheck` 与 `npm test`（48 项）均过
+- [x] **文档与截图**：`README.md` / `DESIGN.md` / `CONTEXT.md` 已同步；`docs/pet-dot.png`
+      换成新实拍（放大确认 9px 的 `5H` 短标签**不压环**，余量 1.3px），
+      `docs/pet-3d.png` 未动
