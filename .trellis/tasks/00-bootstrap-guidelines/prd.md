@@ -21,8 +21,31 @@ the rest conversationally.
 
 ## Status (update the checkboxes as you complete each item)
 
-- [ ] Fill frontend guidelines
-- [ ] Add code examples
+- [x] Fill frontend guidelines
+- [x] Add code examples
+
+**完成记录（2026-09-27）**
+
+6 个文件全部从空壳填成真实规范，共约 3,150 行。做法与要求一致：
+不照抄理想形态，而是**派 explore 子代理从代码里取证**（三个并行方向：渲染层、
+类型与配置、`src/main` 与 `scripts/`），每条结论都带 `file:line` 与原文摘录。
+
+写入前抽查了 **39 条最吃重的事实**（index.ts 行数、`as any` 恰好 4 处且全在一个 global、
+`useMemo` 9 处、无 `React.memo`、无自定义 hook、`typecheck` 不在 `npm test` 里、
+`test-structure` 的 `qa/` 目录闭集断言、…）—— 39/39 核实。抽查脚本本身也写错过一次
+（把 `ui:hideBalance` 的编码猜成 `collapsed ? '1' : ''`，实际是 `next ? '1' : ''`），
+说明这类校验值得做。产品代码零改动，typecheck + 10 套件 0 失败。
+
+刻意记录的**不一致**（而不是悄悄抹平），因为它们是"别照抄这里"的信号：
+两处独立 `AppState`、两处 skin 状态、三种 props 写法、三种严重度类名拼法、
+`extras` 两种布尔编码（`'1'/'0'` vs `'1'/''`）、`quality.ts` 把 `DataQuality` 放宽成 `string`、
+`Unit` 格式化在两处实现且对 `request` 的取整不同、5 处该用 `as unknown as {}` 却写了 `as any`、
+`test-percent.mjs` 仍在测内联副本、`@shared/*` alias 声明了但无人使用、
+`tsconfig.web.json` include 了一个不存在的文件。
+
+`frontend/index.md` 顶部补了「最该知道的 4 件事」摘要，并说明语言约定
+（本层英文，与既有 `spec/guides/` 一致；产品文档与 `adapters/` 层是中文，
+这个不一致记在 index 里，留待后续统一）。
 
 ---
 

@@ -1,59 +1,271 @@
 # Component Guidelines
 
-> How components are built in this project.
-
----
-
-## Overview
-
-<!--
-Document your project's component conventions here.
-
-Questions to answer:
-- What component patterns do you use?
-- How are props defined?
-- How do you handle composition?
-- What accessibility standards apply?
--->
-
-(To be filled by the team)
+> How components are built in this project. React 18, plain CSS, **no** UI framework,
+> no `React.memo`, no context, no state library.
+>
+> Renderer inventory: 9 `.tsx` files, ~2,900 lines of component code, one 2,366-line stylesheet.
 
 ---
 
 ## Component Structure
 
-<!-- Standard structure of a component file -->
+**One screen per file, flat.** There is no `features/` tree. File → exported component is 1:1:
 
-(To be filled by the team)
+| File | Lines | Export |
+|---|---|---|
+| `App.tsx` | 423 | `export default function App` — the only default export in the renderer |
+| `CardView.tsx` | 606 | `export function CardView` |
+| `SettingsView.tsx` | 753 | `export function SettingsView` |
+| `PetBall.tsx` | 545 | `export function PetBall` |
+| `DetailView.tsx` | 293 | `export function DetailView` |
+| `PetSection.tsx` | 213 | `export function PetSection` |
+| `ProviderMark.tsx` | 87 | `export function ProviderMark` |
+| `components.tsx` | 253 | six named primitives: `Ring`, `MiniBar`, `Bar`, `StatusDot`, `Icon`, `IconButton` |
+
+**Return type is always annotated `React.JSX.Element`** (or `| null` for early-return components):
+
+```tsx
+// src/renderer/src/components.tsx:8
+export function Ring({ pct, lvl, size = 68, stroke = 6, dim = false }: { pct: number; lvl: Level; size?: number; stroke?: number; dim?: boolean }): React.JSX.Element {
+```
+
+```tsx
+// src/renderer/src/CardView.tsx:25 — the nullable variant
+function QualityChip({ s }: { s: ProviderSnapshot }): React.JSX.Element | null {
+```
+
+**No `React.FC`, no `React.FunctionComponent`, no `PropsWithChildren`.** Most files do not
+import `React` at all — `React.JSX` comes from the global namespace. Only `components.tsx:1`
+and `ProviderMark.tsx:1` do `import type React from 'react'`, and `main.tsx:1` imports the
+value for `StrictMode`.
+
+**No component accepts `children`.** Every component is self-closing; the largest one
+(`SettingsView`, 753 lines) is 456 lines of straight JSX. Do not introduce `children` when
+adding a component — pass a node prop if you must.
+
+**One class component**, the error boundary, and it is load-bearing:
+
+```tsx
+// src/renderer/src/App.tsx:22-24
+/** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
+  state = { err: null as Error | null }
+```
 
 ---
 
 ## Props Conventions
 
-<!-- How props should be defined and typed -->
+Three styles coexist. **Inline anonymous object type in the destructured parameter** is the
+dominant one — use it for new sub-components:
 
-(To be filled by the team)
+```tsx
+// src/renderer/src/CardView.tsx:127
+function BalanceCard({ s, now, hide }: { s: ProviderSnapshot; now: number; hide: boolean }): React.JSX.Element {
+```
+
+Use a **named `export interface XxxProps`** when a component has more than ~5 props:
+
+```tsx
+// src/renderer/src/PetBall.tsx:23-36
+export interface PetBallProps {
+  pet: PetState
+  /** 收起态是否为「个性人物」形态（关闭 = 默认的悬浮球，省显存/不加载角色素材） */
+  figure: boolean
+  ...
+  /** 是否显示用量环（ui:petRing，右键菜单可关；球形态可见，人物形态本就没有环） */
+  showRing?: boolean
+}
+```
+
+Intersect to reuse another component's props rather than re-listing them:
+
+```tsx
+// src/renderer/src/SettingsView.tsx:281-298
+export function SettingsView({ onBack, onDataChanged, ..., ...petProps }: {
+  onBack: () => void
+  ...
+} & PetSectionProps): React.JSX.Element {
+// and the blind forward at :653
+<PetSection {...petProps} />
+```
+
+**Rules that hold everywhere:**
+- Callbacks are `on*`, always explicitly typed, never `React.Dispatch`:
+  `onOpen: (id: string) => void`, `onMenu: () => Promise<string | null>`.
+- A prop is optional **only** when it is destructured with a default (`size = 68`,
+  `showRing = true`) or is genuinely nullable (`models?`, `onClick?`).
+- Per-prop JSDoc in Chinese is used on non-obvious props and is worth writing:
+  ```tsx
+  // src/renderer/src/SettingsView.tsx
+  /** 该供应商是否已静音（不参与语音播报） */
+  muted: boolean
+  ```
+- **Document props by their persisted key** when one exists: `figure` → `ui:pet`,
+  `alwaysTop` → `ui:alwaysOnTop`. The comment above is what lets a reader find the storage.
 
 ---
 
 ## Styling Patterns
 
-<!-- How styles are applied (CSS modules, styled-components, Tailwind, etc.) -->
+**One stylesheet, imported exactly once**, and it is token-driven:
 
-(To be filled by the team)
+```tsx
+// src/renderer/src/main.tsx:4
+import './skins.css'
+```
+
+```css
+/* skins.css:1-5 — the file's own contract */
+BalanceDeck — 设计系统
+令牌驱动：所有组件消费语义变量；皮肤 = 覆盖令牌（新增皮肤零代码）。
+风格：macOS 原生质感 —— 克制的层次、克制的色彩、克制的动效。
+```
+
+**How a skin works** — a `[data-skin='…']` attribute on the app root redefines CSS variables;
+5 built-ins (`aero`, `dark`, `minimal`, `candy`, `ink`) plus a
+`@media (prefers-color-scheme: dark)` block. External skins are raw CSS text injected inline:
+
+```tsx
+// src/renderer/src/App.tsx:369-370
+<div className="app" data-skin={skin}>
+  {skinCss && <style>{skinCss}</style>}
+```
+
+Tokens are resolved on **`.app`, not `body`** — the stylesheet says so explicitly at
+`skins.css:202-204` because getting it wrong is a common breakage.
+
+**three.js reads the same custom properties** via `getComputedStyle`, so the 3D layer follows
+skins without any code change per skin:
+
+```ts
+// src/renderer/src/pet3d/tokens.ts:86-88
+export function readSkinTokens(el: HTMLElement): SkinTokens {
+  try {
+    const cs = getComputedStyle(el)
+```
+
+Skin changes reach the 3D layer three ways: a 60 ms re-read on `[pet.id, ready]`
+(`PetBall.tsx:137-140`), a `MutationObserver` on `.app`'s `data-skin` (`PetBall.tsx:177-183`),
+and `handle.setSkin()` from the `ui:skin` IPC push.
+
+**Class naming** is a loose widget-prefix convention, **not** BEM — there is no `__element` or
+`--modifier` anywhere. Ad-hoc 2–8 letter prefixes, measured from 305 top-level selectors:
+
+| Prefix | Widget |
+|---|---|
+| `pcard-` | home card |
+| `prow-` | settings provider row |
+| `dwin-` | detail window |
+| `wmodels-` | models inside a window |
+| `model-` | models on the detail page |
+| `petball-` | collapsed 3D surface |
+| `pet-` | settings assistant section |
+| `pmark-` | provider icon |
+
+Unprefixed shared vocabulary: `.app`, `.ring`, `.bar`, `.section`, `.field`, `.switch`,
+`.icon-btn`, `.tag`, `.sk-line`, `.saved-flash`, `.err-boundary`, …
+
+**Severity has three separate spellings** — know which one you are in before adding a fourth:
+
+| Spelling | Where | Source of truth |
+|---|---|---|
+| `lvl-${level}` | cards, detail, ball, ring/bar | `Level` union in `format.ts:55` |
+| `dotLevel(): string` returning `'lvl-muted'` | settings list dots (`SettingsView.tsx:50-53`) | returns a bare `string`, not `Level` |
+| bare `.ok` / `.warn` / `.danger` | home status line (`CardView.tsx:506`) | `skins.css:314-322` |
+
+`wmodels-` and `model-` are near-identical grids that deliberately do **not** share a naming
+family, but do share a `grid-template-columns: 1fr auto 44px` rule.
+
+**A class with no CSS rule is a test hook.** `SettingsView.tsx:680` `className="refresh-interval"`
+has no rule in `skins.css`; it exists only so `--uitest` can target it
+(`qa/uitest.ts:251`), and the reason is written at `uitest.ts:247`. If you add a test-only
+class, say so in a comment.
 
 ---
 
 ## Accessibility
 
-<!-- A11y requirements and patterns -->
+There is no ARIA layer, and the reason is architectural, not negligence: this is a
+**transparent, frameless, always-on-top window** where hit-testing is done manually.
 
-(To be filled by the team)
+- The window is `frame: false, transparent: true, alwaysOnTop`, with `contextIsolation: true,
+  nodeIntegration: false` (`overlay.ts:150-154`).
+- Click-through is implemented by the **main process** deciding whether a point lands in the
+  hit rect, not by CSS `pointer-events`. The renderer only reports geometry:
+  ```ts
+  // src/main/ipc.ts:278-284
+  ipcMain.on('pet:hitbox', (_e, rect: {…} | null) => { … })
+  ```
+- `IconButton` forwards the raw event so the caller can `setPointerCapture` — pointer state is
+  managed imperatively (`PetBall.tsx:339`).
+- Interactive elements that would normally carry `aria-label` carry `title` instead
+  (e.g. the refresh button, `uitest`'s `b.title === '返回'`).
+
+**When adding a control:** give it a `title` (it doubles as the `--uitest` selector) and an
+explicitly typed `onClick`. Do not introduce `role`/`aria-*` expecting it to change behaviour —
+it will not, because the window is mouse-transparent by default.
 
 ---
 
 ## Common Mistakes
 
-<!-- Component-related mistakes your team has made -->
+### Don't: label a number with the wrong provenance
 
-(To be filled by the team)
+```tsx
+// WRONG — tokens now come from the server, the label still says "local machine"
+<span className="model-tokens">本机 {fmtAmount(m.tokens, 'token')}</span>
+
+// RIGHT — derive from the row's own `source`; say "mixed" when it is mixed
+{m.source === 'console' ? '服务端' : '本机'} {fmtAmount(m.tokens, 'token')}
+```
+
+Introduced 2026-09-26 when the opencode console began supplying tokens. The UI rendered
+"控制台每月" above "本机 880.1M". **Search for every string naming a data source when you
+change where data comes from:** `grep -rn "本机\|官方" src/renderer/`.
+
+### Don't: give a missing value a plausible-looking zero
+
+`quota` / `percent` are `undefined` for console-sourced rows and the renderer shows `—`:
+
+```tsx
+{m.percent != null ? fmtPercent(m.percent) : '—'}
+```
+
+Filling them with `0` rendered `$0 / 0%`, which is a claim, not a gap.
+
+### Don't: create state that already lives in `App`
+
+`PetBall` keeps its **own** `AppState` subscription instead of receiving the prop. That is a
+documented exception, not a pattern to copy — see `state-management.md`.
+
+### Don't: call `setState` from an unmount cleanup
+
+```tsx
+// src/renderer/src/PetBall.tsx:116-120
+return () => {
+  handle?.dispose()
+  sceneRef.current = null
+  setReady(false)          // ← runs during unmount
+}
+```
+
+Works today; it is the kind of thing that produces a React warning the moment the tree
+reparents. Clear refs in cleanup, move state resets into an effect body.
+
+### Don't: put a bare `switch` on a severity class into TSX
+
+The home status line is a 7-deep nested ternary (`CardView.tsx:478-490`). It is the worst
+construct in the renderer. Use `read-model.ts`'s `snapshotLevel` / `worstWindow` instead.
+
+### Don't: extend the dead pet CSS
+
+`skins.css:2105-2366` (262 lines) targets the removed SVG-sprite pets
+(`mochi`/`shiba`/`dino`/`penguin`/`slime`); `.dot-badge` and `.dot-btn.stale` likewise.
+`PetBall.tsx:408` still sets `data-pet={pet.id}` but only `.petball` consumes it. Do not
+write new rules in that region.
+
+## Related
+
+- State & timers: [`state-management.md`](./state-management.md) · [`hook-guidelines.md`](./hook-guidelines.md)
+- Vocabulary: [`../../../CONTEXT.md`](../../../CONTEXT.md)
