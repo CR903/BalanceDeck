@@ -8,14 +8,46 @@
 | 步 | 内容 | 状态 | 门 |
 |---|---|---|---|
 | 0 | 实测：拉下 specular 贴图看清楚 + 订正 PRD 过期前提 | ✅ 完成 | 见 `prd.md`「关键发现」与「开工前修订」 |
-| 1 | 基线截图（改动前的实拍） | ⬜ | 有可对比的 `before` |
-| 2 | `specular-to-roughness.mjs` 纯 JS 转换脚本 + 单测 | ⬜ | 纯函数测试过；生成图有实际方差 |
+| 1 | 基线截图（改动前的实拍） | ✅ 完成 | `docs/baseline/` 7 张（aria/ray + aria×5 皮肤） |
+| 2 | `specular-to-roughness.mjs` 纯 JS 转换脚本 + 单测 | 🔄 进行中 | 纯函数测试过；生成图有实际方差 |
 | 3 | 采集链路放行 specular + 批量生成派生图 | ⬜ | 两只角色各 2 张 `*_rough.png` |
 | 4 | `human.ts` 接 `roughnessMap` + 材质级差异化（R1/R2） | ⬜ | 材质不再全等；缺图时退回常数不报错 |
 | 5 | `rig.ts` 加 `LIGHT_RIG` + `applyLightRig` 单一入口（R3） | ⬜ | 换肤后打光不回弹 |
 | 6 | `test-human-mat.mjs` 三条非主观断言（R6） | ⬜ | 纳入 `npm test` |
 | 7 | 走查截图对比 + 逐皮肤一致性 | ⬜ | 主观项交用户确认 |
 | 8 | 文档同步（`DESIGN.md` / `TASKS.md`） | ⬜ | 记录体积变化与新素材 |
+
+## 步 1 完成记录（2026-09-27）
+
+基线入 `docs/baseline/`（提交进仓库，否则下次无法复现对比）：
+
+| 文件 | 命令 |
+|---|---|
+| `figure-aria-before.png` / `figure-ray-before.png` | `BD_PET=1 BD_PET_ID=<id> npx electron . --ballshot` |
+| `figure-aria-skin-<s>-before.png` ×5 | `BD_PET=1 BD_PET_ID=aria BD_SKINS=1 npx electron . --ballshot` |
+
+**基线观察（步 4/5 的对照判据）**：
+
+- aria（灰西装）与 ray（藏青西装）的皮肤 / 头发 / 布料质感**区分度很低**，
+  整体偏"塑料片"。根因是三个材质分组的参数**完全相同**：
+  `roughness 0.62 / metalness 0 / envMapIntensity 0.9`（`pet3d/human.ts:95-98`）
+- 逐皮肤对比（`aero` vs `ink`）人物观感**几乎无差** —— 这正是 R3 的症状：
+  3D 场景虽然读皮肤令牌（`pet3d/tokens.ts:86-88`），但人物自身材质占了主导观感
+- 实测窗口 **213×293**（`shared/pet-view.ts` 的 `FIGURE_VIEW`），
+  与 PRD 修订后的 R4 一致（原写 320×230，已过期）
+
+**踩到的两个坑（已记）**：
+
+1. `pet-N.png` 会被下一轮 ballshot **覆盖**。连跑多个角色/皮肤时必须立刻 `cp` 成
+   有语义的名字，否则前一轮的基线就没了。
+2. `BD_SKINS=1` **单独**跑拍的是**球形态**（`wantPet` 需要 `BD_PET=1` 或非空 `BD_PET_ID`
+   才为真，`qa/ballshot.ts:37`），对人物材质基线毫无用处。逐皮肤必须同时给
+   `BD_PET=1 BD_PET_ID=aria`。
+
+**上游贴图格式实测**（决定步 2 的编解码范围）：
+`f014_{body,head}_specular.tga` 经 `sips -s format png` 后是
+**2048×2048 / 8-bit / colorType=2(RGB) / 非隔行** —— 最简单的情形，
+纯 JS 编解码够用（`filter` 五种仍要全实现，因为源可能是任何 filter 类型）。
 
 ## 步 1：基线截图
 
