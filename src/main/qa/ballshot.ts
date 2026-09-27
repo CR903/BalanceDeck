@@ -1,7 +1,9 @@
-// --ballshot：只拍收起态 3D 悬浮球（含命中环），迭代 3D 观感时用，十几秒出图。
+// --ballshot：只拍收起态（默认球形态 = 2D 小圆环；BD_PET=1 是个性人物的 3D 场景），十几秒出图。
 //
 // 环境变量开关（见 README 脚本表）：BD_PET=1 宠物形态 / BD_PETS=1 逐只角色 /
 // BD_PET_ID=<id> 指定角色 / BD_FAKE_DATA=0 不注入演示数据。
+// ⚠ BD_ONLY / BD_ISOLATE / BD_DEBUG_RING 读 3D 场景（window.__bd_ball），**仅人物形态有效**；
+//   球形态下会打一行说明而不是静默无效。
 //
 // 注：函数体保留了它当年在 app.whenReady 回调里的缩进（块内含多行模板串，
 // 统一去缩进会改到被注入代码的内容 —— 缩进不影响语义，就不动它了）。
@@ -102,10 +104,26 @@ export async function runBallshot(): Promise<void> {
         await new Promise((r) => setTimeout(r, 400))
       }
     }
+    // ─── 下面这几个开关都读 window.__bd_ball()（3D 场景）→ **仅人物形态有效** ───
+    // 球形态 2026-09-27 回到 2D 小圆环，不再创建场景，__bd_ball() 的字段全是 null/[]。
+    // 静默无效的开关是最坏的形态（用的人只会以为它坏了），所以每个都在球形态下打一行说明。
+    const hasScene = (await win.webContents.executeJavaScript(
+      '!!(window.__bd_ball?.()?.petReady === true)',
+      true
+    )) as boolean
+    const needScene = (name: string): void => {
+      if (!hasScene) {
+        process.stdout.write(
+          `⚠ BD_${name} 需要 3D 场景，球形态下没有（球形态是 2D 小圆环，见 PetBall 的守卫）。` +
+            `加 BD_PET=1 走人物形态。\n`
+        )
+      }
+    }
     // BD_ONLY=<名字子串>：只留下匹配的物体、其余全隐藏，用来单独量某个物体的 ink box。
-    // 为什么需要：球形态的整景 ink box 被玻璃球壳主导，配 BD_ONLY=<人物网格名> 才量得到人物本体。
+    // 为什么需要：人物形态的整景 ink box 里人物与地面阴影混在一起，配 BD_ONLY=<人物网格名> 才量得到人物本体。
     const only = process.env.BD_ONLY
     if (only !== undefined) {
+      needScene('ONLY')
       const n = await win.webContents.executeJavaScript(
         `(()=>{const b=window.__bd_ball?.();if(!b)return -1;let k=0;
            b.dump.forEach((d,i)=>{if(!d.name.toLowerCase().includes(${JSON.stringify(
@@ -126,7 +144,8 @@ export async function runBallshot(): Promise<void> {
                stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
                canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
                // 覆盖层实际占位（R8）：任一元素越出窗口就是被 .petball 的 overflow:hidden 切了
-               overlay: [...document.querySelectorAll('.petball-caption,.petball-bubble,.petball-badge,.petball-toast,.petball-center-value')]
+               // 球形态的 2D 小圆环是 56×56 窗口里的唯一内容，也列进来核对它没被切
+               overlay: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-badge,.petball-toast')]
                  .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
                ball: window.__bd_ball?.() ?? null
              })`,
@@ -160,6 +179,10 @@ export async function runBallshot(): Promise<void> {
     }
     // BD_ISOLATE=1：逐个隐藏场景物体各拍一张（定位"多出来的东西"）
     if (process.env.BD_ISOLATE === '1') {
+      needScene('ISOLATE')
+      if (!hasScene) {
+        process.stdout.write('  （跳过：没有场景可逐个隔离）\n')
+      } else {
       const n = Number(
         await win.webContents.executeJavaScript('window.__bd_ball().dump.length', true)
       )
@@ -170,6 +193,7 @@ export async function runBallshot(): Promise<void> {
         writeFileSync(`/tmp/balancedeck-shots/iso-${i}.png`, img.toPNG())
         await win.webContents.executeJavaScript(`window.__bd_hide(${i}, true)`, true)
         process.stdout.write(`iso-${i}\n`)
+      }
       }
     }
     // BD_SETTINGS=1：拍设置页宠物分区（核对 3D 缩略图）
@@ -182,7 +206,8 @@ export async function runBallshot(): Promise<void> {
       await new Promise((r) => setTimeout(r, 4200))
       await shot('settings-pet')
       process.stdout.write(
-        'petInfo: ' +
+        (hasScene ? '' : '⚠ petInfo 需要 3D 场景（球形态下字段全为 null/[]，加 BD_PET=1 走人物形态）\n') +
+          'petInfo: ' +
           String(await win.webContents.executeJavaScript('JSON.stringify(window.__bd_ball?.() ?? null)', true)) +
           '\n'
       )
@@ -229,6 +254,7 @@ export async function runBallshot(): Promise<void> {
       process.stdout.write('ballState: ' + JSON.stringify(petIgnoreState()) + '\n')
     }
     if (process.env.BD_DEBUG_RING === '1') {
+      needScene('DEBUG_RING')
       process.stdout.write(
         'ballDiag: ' + String(await win.webContents.executeJavaScript('JSON.stringify(window.__bd_ball?.() ?? null)', true)) + '\n'
       )

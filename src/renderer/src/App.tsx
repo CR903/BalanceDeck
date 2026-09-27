@@ -211,7 +211,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petRing', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
-      // 默认是 3D 悬浮球；只有用户显式开启（'1'）才是个性人物形态
+      // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
       setPetRing(e['ui:petRing'] !== '0')

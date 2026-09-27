@@ -128,7 +128,7 @@ export function PetSection({
           <button
             type="button"
             className={'switch' + (petOn ? ' on' : '')}
-            title={petOn ? '关闭后收起态只有悬浮球' : '开启后收起态是这个人，站在桌面上'}
+            title={petOn ? '关闭后收起态是那个小圆环' : '开启后收起态是这个人，站在桌面上'}
             onClick={() => onTogglePetBall(!petOn)}
           >
             <span className="knob" />
@@ -137,7 +137,7 @@ export function PetSection({
         <div className="settings-note">
           {petOn
             ? '开启中：收起后是这个人站在桌面上（无球壳、无进度环），读数显示在脚下；出场会从窗口外走进来，平时会随机做几个小动作。单击展开、拖动移动、右键菜单。'
-            : '关闭中：收起后是 3D 悬浮球（玻璃球 + 用量环，不加载人物素材）。'}
+            : '关闭中：收起后是一个 56×56 的小圆环（环心一个数，不加载人物素材、不占显存）。'}
         </div>
 
         <div className="enable-row">
@@ -145,7 +145,7 @@ export function PetSection({
           <button
             type="button"
             className={'switch' + (petRing ? ' on' : '')}
-            title={petRing ? '关闭后球上不显示 KPI 环' : '开启后在球上显示用量环（个性人物形态没有环）'}
+            title={petRing ? '关闭后圆环上不显示用量弧' : '开启后在圆环上显示用量弧（个性人物形态没有环）'}
             onClick={() => onTogglePetRing(!petRing)}
           >
             <span className="knob" />

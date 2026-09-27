@@ -5,7 +5,7 @@
 // 运行模式、截图走查、750 行 UI 断言全挤在一起，改启动流程时要在测试代码里翻。
 // 纪律：新增断言请放在 uitest.ts，不要在 index.ts 里长回来。
 
-// --shots：设计走查截图（主页 / 详情 / 设置 / 各皮肤 / 3D 悬浮球 / 断网缓存态）。
+// --shots：设计走查截图（主页 / 详情 / 设置 / 各皮肤的收起态 / 断网缓存态）。
 // 产物在 /tmp/balancedeck-shots/。
 import { app } from 'electron'
 import { join } from 'path'
@@ -94,7 +94,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('.advanced')?.scrollIntoView({block:'center'})")
   await sleep(500)
   await shoot('6-settings-advanced')
-  // ─── 收起态：3D 悬浮球（默认形态）／个性人物（可选形态）─────────────────────
+  // ─── 收起态：2D 小圆环（默认形态）／个性人物（3D，可选形态）─────────────────
   const openSettings = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()"
   const backBtn = "[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()"
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
@@ -116,14 +116,18 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
       }
     }
     await sleep(600)
-    for (let i = 0; i < 32; i++) {
-      const box = (await exec('window.__bd_ball?.()?.measure?.box ?? null')) as {
-        width: number
-        height: number
-      } | null
-      if (box && box.width > 4 && box.height > 4) break
-      await sleep(250)
-      if (i === 31) console.log('[shots] 画布迟迟没有像素，可能拍出空图')
+    // 等 WebGL 首帧**只对人物形态有意义**：球形态是纯 DOM 的 2D 小圆环，没有场景、
+    // `__bd_ball().measure` 恒为 null，硬等 8 秒只会空等并打一条假的「画布迟迟没有像素」。
+    if ((await exec("!!document.querySelector('.pet3d-canvas')")) === true) {
+      for (let i = 0; i < 32; i++) {
+        const box = (await exec('window.__bd_ball?.()?.measure?.box ?? null')) as {
+          width: number
+          height: number
+        } | null
+        if (box && box.width > 4 && box.height > 4) break
+        await sleep(250)
+        if (i === 31) console.log('[shots] 画布迟迟没有像素，可能拍出空图')
+      }
     }
     // 再等**两帧真正合成**。关键区别：measure() 是"按需渲染 + 读回缓冲"，它证明缓冲里有像素，
     // 却不代表页面已经合成过这一帧 —— 而 capturePage 抓的是**合成结果**。
@@ -145,13 +149,11 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(backBtn)
   await sleep(500)
 
-  // ① 球形态（默认）：球 + 用量环 + 环心数值。
-  // 不能只睡固定时长：窗口一收下 DOM 就先渲染（泡泡已经在了），而 WebGL 首帧要等
-  // 环境贴图（PMREM）生成完 —— 软渲染器上能到秒级，拍早了就是一张只有泡泡的空画布。
+  // ① 球形态（默认）：2D 小圆环（56×56，纯 DOM，不建 WebGL 场景）。
   await exec(collapseBtn)
   await settle(BALL_VIEW)
   await shoot('5-ball', { frames: 3 })
-  // 各皮肤下的球体（回归"只有毛玻璃皮肤有立体效果"）
+  // 各皮肤下的圆环（环色/底色都走令牌，逐皮肤必须都对）
   for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
     await exec(`window.api.setSkin('${id}')`)
     await sleep(1100)

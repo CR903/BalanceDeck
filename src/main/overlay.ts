@@ -3,7 +3,7 @@ import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { BALL_VIEW, FIGURE_VIEW } from '../shared/pet-view'
 
-// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 3D 悬浮球／个性人物。
+// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成小圆环／个性人物。
 // 位置持久化在 userData/state.json。
 //
 // 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view，窗口尺寸与机位同源）：
@@ -12,7 +12,7 @@ import { BALL_VIEW, FIGURE_VIEW } from '../shared/pet-view'
 //   · 用户拖动主体即拖动窗口（位置持久化）。
 
 const EXPANDED = { width: 384, height: 600 }
-/** 收起态：3D 悬浮球（默认形态；球 + 数值胶囊，窗口贴合球体） */
+/** 收起态：2D 小圆环（默认形态；56×56，环心一个数，无 WebGL） */
 const COLLAPSED_BALL = BALL_VIEW
 /** 收起态：个性人物（人物独立站着，竖版窗口才装得下全身并把脸放大） */
 const COLLAPSED_FIGURE = FIGURE_VIEW
@@ -142,7 +142,7 @@ export function createOverlay(): BrowserWindow {
     resizable: false,
     // 原生窗口阴影：展开态（圆角卡片）打开；收起态关闭 —— 收起态是 GPU 合成的
     // 透明窗口，macOS 会按**窗口矩形**投一层方框阴影（实机表现为「主体外面有个四方形框」），
-    // 球的立体感由场景内的接触阴影负责。
+    // 人物的立体感由场景内的接触阴影负责。
     hasShadow: !state.collapsed,
     fullscreenable: false,
     minimizable: false,
@@ -174,7 +174,7 @@ export function createOverlay(): BrowserWindow {
     win = null
   })
 
-  // BD_DEBUG_RING=1：渲染层显示命中环（自检用，核对球体投影与点击穿透判定）
+  // BD_DEBUG_RING=1：渲染层显示命中环（自检用，核对投影与点击穿透判定；**仅人物形态有投影**）
   const query = process.env.BD_DEBUG_RING === '1' ? { bddebug: '1' } : undefined
   if (process.env.ELECTRON_RENDERER_URL) {
     const url = process.env.ELECTRON_RENDERER_URL + (query ? '?bddebug=1' : '')
@@ -380,6 +380,9 @@ function cursorInsideHit(cursor: Electron.Point, b: Electron.Rectangle): boolean
   // Electron 的 getBounds / 光标点与渲染层 CSS 像素同为 DIP，直接相减即可
   const x = cursor.x - b.x
   const y = cursor.y - b.y
+  // pad=3：命中区是渲染层按投影/量出来的浮点矩形，取整后边缘会差一两个像素；
+  // 不留这点余量的话，贴着环边点会时灵时不灵。宁可多 3px 也不漏 —— 多出来的部分
+  // 本来就在环的透明边距里，点下去仍然展开。
   const pad = 3
   return x >= hitbox.x - pad && x <= hitbox.x + hitbox.width + pad && y >= hitbox.y - pad && y <= hitbox.y + hitbox.height + pad
 }

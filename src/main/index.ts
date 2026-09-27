@@ -64,7 +64,7 @@ app.whenReady().then(async () => {
     return
   }
 
-  // --ballshot：只拍收起态 3D 悬浮球（含命中环），见 ./qa/ballshot
+  // --ballshot：只拍收起态（默认球形态 = 2D 小圆环；BD_PET=1 是个性人物），见 ./qa/ballshot
   if (process.argv.includes('--ballshot')) {
     await runBallshot()
     return

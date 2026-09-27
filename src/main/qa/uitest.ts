@@ -43,7 +43,7 @@ export async function runUiTest(
     }
   }
   const bounds = (): Electron.Rectangle => win.getBounds()
-  /** 收起态窗口很小（球 200×210 / 人物 213×293），主体就在正中：点击 = 点命中层中心 */
+  /** 收起态窗口很小（圆环 56×56 / 人物 213×293），主体就在正中：点击 = 点命中层中心 */
   const ballCenterJs = `(()=>{
     const c=document.querySelector('.petball'); if(!c) return null
     const rc=c.getBoundingClientRect()
@@ -103,8 +103,12 @@ export async function runUiTest(
   r.dotDom = (await exec("!!document.querySelector('.petball') && !!document.querySelector('.petball-hit')"))
     ? 'ok'
     : 'fail'
-  r.ball3d = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
-  r.ballValue = String(await exec("document.querySelector('.petball-value')?.textContent ?? ''"))
+  // 诊断串：球形态的读数在 2D 小圆环的环心（.dot-value），人物形态在下方胶囊（.petball-value）
+  r.ballValue = String(
+    await exec(
+      "document.querySelector('.petball-fallback .dot-value')?.textContent ?? document.querySelector('.petball-value')?.textContent ?? ''"
+    )
+  )
 
   // 拖拽：>8px 判拖拽，不展开；窗口位置变化；随后圆点仍在
   const before = bounds()
@@ -168,7 +172,10 @@ export async function runUiTest(
   await sleep(2500)
   await exec(footerClick('收起'))
   await sleep(700)
-  r.refreshThenCollapse = bounds().width === 200 ? 'ok' : `fail:${bounds().width}`
+  // 尺寸取常量而不是字面量：这里曾写死 200（球形态窗口宽），改成 2D 小圆环的 56 之后
+  // 它会一直红 —— 而红的原因在断言里，看不出是断言过时了。
+  r.refreshThenCollapse =
+    bounds().width === BALL_VIEW.width ? 'ok' : `fail:${bounds().width}!=${BALL_VIEW.width}`
   await exec(dotClickJs())
   await sleep(900)
   r.refreshThenExpand = bounds().width > 300 ? 'ok' : 'fail'
@@ -349,7 +356,7 @@ export async function runUiTest(
     })()`)
   )
 
-  // ─── 宠物：设置页互动 + 3D 悬浮球（桌面宠物）+ 鼠标穿透 ─────────────────────
+  // ─── 宠物：设置页互动 + 收起态圆环／个性人物 + 鼠标穿透 ─────────────────────
   // 用户原本是否开着「桌面宠物」（'1' 才算开；默认关闭 = 3D 球形态）
   const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
   // 面板不再常驻宠物卡（用户要求）：确认已移除
@@ -417,16 +424,28 @@ export async function runUiTest(
   }
   r.petModel = (await exec('window.__bd_ball?.()?.petReady === true')) ? 'ok' : 'fail:model-not-loaded'
   r.petSvgIdle = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''"))
-  r.petCenterValue = (await exec("!!document.querySelector('.petball-center-value')"))
-    ? 'fail:should-be-caption'
-    : 'ok'
-  // 人物形态的可见集：球壳/暗边/高光（Sphere）、装饰带与用量环（Torus）、进度弧（Tube）
-  // 都必须不可见 —— 「不要球形、不要进度条」的回归护栏（dump 的 visible 已含父级可见性）
+  // 读数必须在**下方胶囊**里，不在环心 —— 人物形态没有 2D 小圆环，那个环心数字是球形态的东西
+  r.petCenterValue = (await exec("!!document.querySelector('.petball-caption .petball-value')"))
+    ? (await exec("!!document.querySelector('.petball-fallback')"))
+      ? 'fail:2d-dot-in-figure'
+      : 'ok'
+    : 'fail:no-caption-value'
+  // 人物形态的可见集里必须真的有**人物**：FBX 蒙皮网格（dump 里的节点名形如
+  // f014_hipoly_81_bones_opacity，--ballshot 的 diag 实证）。同时球壳/装饰带/用量环那类
+  // 球几何（Sphere/Torus/Tube）一条都不许剩。
+  //
+  // ⚠ 这一条 2026-09-27 重写过：原断言只有后半句（"可见集里没有球几何"），而球形态的
+  // 3D 球被删干净后那条正则**永不可能命中** —— 它会恒绿，是一条假护栏（R7）。
+  // 现在以前半句（人物真的在）为主、后半句为辅，合起来才既能证真也能防球几何复活。
   const figDump = (await exec('window.__bd_ball?.()?.dump ?? []')) as
-    | { type: string; visible: boolean }[]
+    | { name: string; type: string; visible: boolean }[]
     | null
+  const humanBits = (figDump ?? []).filter((m) => m.visible && /bones_opacity/.test(m.name))
   const ballBits = (figDump ?? []).filter((m) => m.visible && /Sphere|Torus|Tube/.test(m.type))
-  r.petFigureOnly = ballBits.length === 0 ? 'ok' : `fail:${ballBits.map((m) => m.type).join(',')}`
+  r.petFigureOnly =
+    humanBits.length > 0 && ballBits.length === 0
+      ? 'ok'
+      : `fail:human=${humanBits.length},ballBits=${ballBits.map((m) => m.type).join(',') || 'none'}`
   // 人物要占满竖版窗口（「脸得看得清」的诉求）：命中区与真实 ink box 双口径。
   // ⚠ 必须等它**静息**再量：人物现在会做动作（走动/张望/伸懒腰），侧身走动时投影自然窄得多，
   // 拿动作中的帧去量会得到一个跟"脸看不清"无关的小盒子。
@@ -529,21 +548,151 @@ export async function runUiTest(
   r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
   await gotoView('collapse')
   r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.figure === '0'")) ? 'ok' : 'fail:figure-on'
-  r.petBallWindow = bounds().width === BALL_VIEW.width && bounds().height === BALL_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
-  r.petBall3d =
-    (await exec("!!document.querySelector('.pet3d-canvas')")) &&
-    !(await exec("!!document.querySelector('.petball-fallback')"))
-      ? 'ok'
-      : 'fail:no-canvas'
-  // 球形态：数值回到环心（宠物形态才放球下方胶囊）
-  r.petBallCenterValue = (await exec("!!document.querySelector('.petball-center-value')")) ? 'ok' : 'fail:no-center-value'
-  // 球形态**不该**出现人物的自报家门泡泡（2026-09-27 用户反馈的 bug 的回归护栏）。
-  // 触发方式是切换角色/形态，所以这里切一次角色再等它有机会冒泡。
-  await exec("window.api.setExtras({ 'ui:petState': JSON.stringify({ version: 1, id: 'ray', name: 'Ray', createdAt: Date.now() }) })")
-  await sleep(700)
+  // 球形态**不该**冒出人物的自报家门泡泡（2026-09-27 用户反馈的 bug 的回归护栏）。
+  //
+  // 必须紧贴 `petBallOff` —— 上面那行读到 data-figure 翻成 0 的那一刻，PetBall 的
+  // 自报家门 effect（依赖 [pet.id, figure]）刚好跑过，泡泡是**新生**的。此处离它
+  // 不到一次 exec，稳。
+  //
+  // 别挪到收尾：曾经那版靠收尾处的 setExtras「触发」，实测是假的 —— 探针显示泡泡在
+  // setExtras **之前**就在了，data-pet 也早就是 ray（uitest 前面点角色卡片换的，
+  // App 只在挂载时读一次 extras，setExtras 根本推不进 React）。那一版真正生效的是
+  // 「恰好落在 4.2s 存活期尾部」，删掉一行 IPC 就永真了。假护栏比没护栏更糟。
   r.petBallNoBubble = !(await exec("!!document.querySelector('.petball-bubble')"))
     ? 'ok'
     : `fail:bubble=${await exec("document.querySelector('.petball-bubble')?.innerText || ''")}`
+  r.petBallWindow = bounds().width === BALL_VIEW.width && bounds().height === BALL_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  // 球形态是**纯 2D**：没有 canvas（不创建 WebGL 上下文），有 .petball-fallback 那枚 2D 小圆环。
+  // 这一条 2026-09-27 反转过：原断言要求球形态**有** canvas（那时是 3D 球），与新设计正好相反。
+  const ballCanvas = await exec("!!document.querySelector('.pet3d-canvas')")
+  const ballDot = await exec("!!document.querySelector('.petball-fallback')")
+  r.petBall3d =
+    !ballCanvas && ballDot ? 'ok' : `fail:canvas=${!!ballCanvas},dot=${!!ballDot}`
+  // 环可见 + 环心有读数：track 的 stroke 必须真的算出来（不是 SVG 默认的 none）。
+  // 这修的是一个**已存在的 bug** —— 2026-09-27 之前 .dot-ring-track 全项目零规则，
+  // 且两个 <circle> 都不写 stroke 属性（SVG 默认 none），所以 WebGL 失败时环是隐形的。
+  //
+  // 只查 track 不够（2026-09-27 复核）：轨道是 16% 透明度的灰，几乎看不见 ——
+  // 「弧根本没画」时它照样成立。所以 fill 的 stroke 与 dasharray 都要查：
+  // dasharray 承载弧长，为 0 就等于没画弧。
+  const ringDom = String(
+    await exec(`(()=>{
+      const dot=document.querySelector('.petball-fallback')
+      if(!dot) return 'fail:no-dot'
+      const track=dot.querySelector('.dot-ring-track')
+      if(!track) return 'fail:no-track'
+      const fill=dot.querySelector('.dot-ring-fill')
+      const value=dot.querySelector('.dot-value')
+      const fs=fill?getComputedStyle(fill):null
+      return JSON.stringify({
+        track: getComputedStyle(track).stroke,
+        fill: fs ? fs.stroke : 'no-fill',
+        dash: fs ? fs.strokeDasharray : 'no-fill',
+        value: value ? value.textContent : ''
+      })
+    })()`)
+  )
+  let trackStroke = 'none'
+  let fillStroke = 'no-fill'
+  let fillDash = 'no-fill'
+  let ringValue = ''
+  try {
+    const d = JSON.parse(ringDom) as { track: string; fill: string; dash: string; value: string }
+    trackStroke = d.track
+    fillStroke = d.fill
+    fillDash = d.dash
+    ringValue = d.value
+  } catch {
+    // ringDom 是 fail:... —— 下面统一报出去
+  }
+  r.petBallCenterValue =
+    ringDom.startsWith('fail:')
+      ? ringDom
+      : trackStroke !== 'none' &&
+          trackStroke !== '' &&
+          fillStroke !== 'none' &&
+          fillStroke !== '' &&
+          fillDash !== 'none' &&
+          parseFloat(fillDash) > 0 &&
+          ringValue !== ''
+        ? 'ok'
+        : `fail:track=${trackStroke},fill=${fillStroke},dash=${fillDash},value='${ringValue}'`
+  r.petBallRingDiag = ringDom
+  // 命中区（W7）：球形态的拖拽/点击靠 .petball-hit 的矩形，必须贴合 56×56 的环。
+  // 之前没有任何断言守着它 —— 命中区一旦退回整窗（213×293）就是隐形的可点击区，
+  // 用户会发现自己「点空处也算点到了宠物」。
+  const hitRect = String(await exec(`(()=>{
+      const h=document.querySelector('.petball-hit')
+      if(!h) return 'fail:no-hit'
+      const b=h.getBoundingClientRect()
+      return JSON.stringify({w:Math.round(b.width),h:Math.round(b.height)})
+    })()`))
+  r.petBallHitRect =
+    hitRect.startsWith('fail:')
+      ? hitRect
+      : (() => {
+          try {
+            const b = JSON.parse(hitRect) as { w: number; h: number }
+            // 允许 2px 抖动：主进程按投影上报，浮点取整会差一两个像素
+            return Math.abs(b.w - BALL_VIEW.width) <= 2 && Math.abs(b.h - BALL_VIEW.height) <= 2
+              ? 'ok'
+              : `fail:${b.w}x${b.h}`
+          } catch {
+            return `fail:unparsed=${hitRect}`
+          }
+        })()
+  // 「显示用量环」（ui:petRing）不是死开关：关掉后 2D 环只剩轨道 + 中心数字。
+  // 走**真实入口**（设置页那个开关的 onClick，与右键菜单同一个 togglePetRing）——
+  // 不开测试专用钩子，也不用 setExtras 走后门（那只改存储，React 状态不会变，断言会假红）。
+  const ringProbe = async (): Promise<{ fill: boolean; track: boolean; value: string } | string> =>
+    ((await exec(`(()=>{
+      const dot=document.querySelector('.petball-fallback')
+      if(!dot) return 'no-dot'
+      // 直接返回对象（executeJavaScript 会结构化克隆回来）；返回 JSON 字符串的话
+      // 下面 typeof x !== 'string' 那道错误分支会把它误判成失败
+      return {
+        fill: !!dot.querySelector('.dot-ring-fill'),
+        track: !!dot.querySelector('.dot-ring-track'),
+        value: dot.querySelector('.dot-value')?.textContent ?? ''
+      }
+    })()`)) as { fill: boolean; track: boolean; value: string } | string)
+  const flipRing = async (): Promise<void> => {
+    await gotoView('settings')
+    await exec(
+      "[...document.querySelectorAll('.pet-sec .enable-row')].find(r=>r.textContent.includes('显示用量环'))?.querySelector('.switch')?.click()"
+    )
+    await sleep(500)
+    await gotoView('collapse')
+    await sleep(600)
+  }
+  const ringOn = await ringProbe()
+  await flipRing()
+  const ringOff = await ringProbe()
+  await flipRing()
+  const ringBack = await ringProbe()
+  if (typeof ringOn !== 'string' && typeof ringOff !== 'string' && typeof ringBack !== 'string') {
+    // ⚠ 「开着时必须有弧」这一条是**load-bearing 的**：只查「关掉后没有弧」的话，
+    //   弧**永远不画**（或开关整个没接线）时它照样绿 —— 2026-09-27 故意弄坏一次时实测过。
+    //   没有百分比读数（pct 为 null）时本来就不该有弧，所以只在读到百分号时要求它存在。
+    const pctReading = /%/.test(ringOn.value)
+    r.petRingToggle =
+      ringOff.track &&
+      !ringOff.fill &&
+      ringOff.value === ringOn.value &&
+      ringBack.fill === ringOn.fill &&
+      (!pctReading || ringOn.fill)
+        ? 'ok'
+        : `fail:on=${JSON.stringify(ringOn)},off=${JSON.stringify(ringOff)},back=${JSON.stringify(ringBack)}`
+  } else {
+    r.petRingToggle = `fail:on=${ringOn},off=${ringOff},back=${ringBack}`
+  }
+  // 偏好真的落盘了吗（对齐 intervalSaved 的做法）：只验 DOM 的话，「开关改了内存里的
+  // React state、忘了写 extras」也能一路绿 —— 而下次启动就恢复成默认，用户会以为开关坏了。
+  const ringSaved = String(await exec("window.api.getExtras(['ui:petRing']).then(e=>e['ui:petRing']??'')"))
+  r.petRingSaved = ringSaved === '1' ? 'ok' : `fail:ui:petRing=${ringSaved}`
+  // 泡泡的回归护栏挪到了形态翻转处（见 petBallOff 紧后面那条），不在这里查：
+  // 收尾时泡泡那 4.2s 存活期早就过了，那时候查是**永真**的 —— 实测只差一行 IPC 的
+  // 耗时就会从「抓得到」翻成「抓不到」。此处留着记录，免得后来的人又把它挪回来。
   await exec(dotClickJs())
   await sleep(1000)
   r.petBallExpand = bounds().width > 300 ? 'ok' : `fail:${bounds().width}`

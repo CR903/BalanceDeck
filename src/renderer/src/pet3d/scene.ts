@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { PetId } from '../../../shared/pet'
-import { BALL_VIEW, FIGURE_VIEW } from '../../../shared/pet-view'
+import { FIGURE_VIEW } from '../../../shared/pet-view'
 import type { HumanInstance } from './human'
 import { BASE_CLIPS, hasClip, type HumanClip } from './clips'
 import {
@@ -23,13 +23,10 @@ import {
   type GesturePlan,
   type Pose
 } from './gesture'
-import { readSkinTokens, shade, type Rgb, type SkinTokens } from './tokens'
-import { sphereNdcHalf } from './projection'
+import { readSkinTokens, type SkinTokens } from './tokens'
 import {
   BALL_CENTER_Y,
   BALL_RADIUS,
-  BAND_R,
-  BAND_TUBE,
   CAM_FOV,
   FORMS,
   GROUND_Y,
@@ -37,30 +34,25 @@ import {
   HUMAN_HALF_W,
   HUMAN_HEIGHT,
   HUMAN_YAW,
-  RING_HALO_TUBE,
-  RING_R,
-  RING_TUBE,
-  SHELL_EDGE_R,
-  type FormRig,
-  type PetForm
+  type FormRig
 } from './rig'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态 3D 场景：悬浮球（默认形态）／个性人物（可选形态）
+// 收起态「个性人物」形态的 3D 场景
 //
-// 两种形态共用同一套渲染，只有「窗口尺寸 + 机位 + 球体装饰是否可见」不同（见 rig.ts 的 FORMS）：
-//   · 球形态：玻璃球 + 环形仪表，球内有角色但不显示；
-//   · 个性人物：**没有球壳、没有用量环**，只有人物独立站在窗口中央（读数走窗口下方的胶囊）。
+// **这里没有球形态**：2026-09-27 球形态回到 2D 小圆环（56×56 窗口，SVG 环 + 环心读数），
+// 不再创建 WebGL 上下文 —— 本文件里曾有的玻璃球壳 / 暗边 / 高光 / 装饰带 / 管状用量环
+// 那 126 行几何及其材质、投影、换色逻辑已随那次改动删除。剩下的只有人物与它脚下的地面。
 //
 // 谁在动、怎么动：**动作编排**（见 gesture.ts）—— 出场从场外走入、平时随机做小动作，
 // 位置与偏航都由动作目录的体态轨迹给出，场景只负责把 Pose 落到节点上。
-// 两种形态都不做自主漫游：人物占满竖版画布时横向只剩 ±3 个世界单位可动，既看不出「在走」，
+// 人物形态不做自主漫游：它占满竖版画布时横向只剩 ±3 个世界单位可动，既看不出「在走」，
 // 又必然裁掉张臂的肩膀（原 walker.ts 的随机漫游状态机已随之删除）。
 //
 // 渲染质量：ACES 色调映射 + RoomEnvironment 环境光照（PBR 材质的关键）+
-//   实时软阴影（角色投在地面上）+ 玻璃球壳的菲涅尔亮边与镜面高光。
+//   实时软阴影（人物投在地面上）。
 //
-// 单位：球外径 56（球心 y = BALL_CENTER_Y），角色脚踩 GROUND_Y。
+// 单位：角色脚踩 GROUND_Y，场景里唯一的长度刻度。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // 机位/轮廓常量见 ./rig —— 单一来源，命中框投影与单测都从那里取
@@ -77,24 +69,8 @@ interface HumanRuntime {
   rootMotion: () => number
 }
 
-export interface BallFrame {
-  /** 环形进度 0–100（null = 无数据） */
-  percent: number | null
-  /** 严重度（决定环色） */
-  level: 'ok' | 'warn' | 'danger' | 'muted'
-  /** 环心主文字（如 70.7%） */
-  value: string
-  /** 副文字（供应商名） */
-  label: string
-  /** 轮播位置指示 */
-  pager: { count: number; index: number } | null
-  /** 是否显示用量环（右键菜单可关） */
-  showRing?: boolean
-}
-
 export interface Pet3dHandle {
   canvas: HTMLCanvasElement
-  setFrame: (f: BallFrame) => void
   setPet: (id: PetId) => void
   /**
    * 播一个动作（进场/退场/打招呼…），**resolve 于该动作播完**。
@@ -105,7 +81,7 @@ export interface Pet3dHandle {
   /** 手动推进一步并渲染（测试用；常规由内部 rAF 驱动） */
   tick: (dt: number) => void
   setPaused: (paused: boolean) => void
-  /** 命中区在窗口内的矩形（CSS 像素）：球形态 = 球的投影，人物形态 = 人物的投影 */
+  /** 命中区在窗口内的矩形（CSS 像素）= 人物包围盒的投影 */
   hitRect: () => { x: number; y: number; width: number; height: number }
   /** 命中区中心投影到窗口 CSS 坐标（覆盖层的锚点） */
   hitCenter: () => { x: number; y: number }
@@ -134,15 +110,15 @@ export interface Pet3dHandle {
   dispose: () => void
 }
 
-const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
-
-export function createPet3dScene(
-  host: HTMLElement,
-  id: PetId,
-  opts: { form?: PetForm } = {}
-): Pet3dHandle {
-  const form: PetForm = opts.form ?? 'ball'
-  const rig: FormRig = FORMS[form]
+/**
+ * 建人物形态的 3D 场景。
+ *
+ * ⚠ **只有个性人物形态会走到这里**：球形态是 2D 小圆环（shared/pet-view 的 BALL_VIEW），
+ * 调用方在 PetBall 的 effect 里就跳过了 —— 因为本函数无条件 `new THREE.WebGLRenderer`
+ * （省显存是硬要求，「建一个空场景」省不下来）。所以这里没有 form 参数，也没有 FORMS 查表。
+ */
+export function createPet3dScene(host: HTMLElement, id: PetId): Pet3dHandle {
+  const rig: FormRig = FORMS.figure
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
   const canvas = document.createElement('canvas')
   canvas.className = 'pet3d-canvas'
@@ -222,14 +198,15 @@ export function createPet3dScene(
     return g
   }
 
-  // ─── 球的容器（球壳 + 环 + 阴影承接面都挂在球心）────────────────────────────
-  // 人物形态下球体装饰整体隐藏（见 applyForm），但两个「地面」物体保留 ——
-  // 它们表达的是「角色踩在地上」，与球壳无关。
-  const shellGroup = new THREE.Group()
-  shellGroup.position.set(0, BALL_CENTER_Y, 0)
-  scene.add(shellGroup)
+  // ─── 地面：角色脚踩的那两块 ─────────────────────────────────────────────────
+  // ⚠ 这里曾挂着整个球壳 + 装饰带 + 管状用量环（球形态 3D 球）。2026-09-27 球形态回到
+  // 2D 小圆环、不再建场景，那 126 行球几何连同它的材质/投影/高光游走一并删除。
+  // 保留的这两块表达的是「角色踩在地上」，与球壳无关 —— 删掉它们人物就悬空了。
+  const groundGroup = new THREE.Group()
+  groundGroup.position.set(0, BALL_CENTER_Y, 0)
+  scene.add(groundGroup)
 
-  // 球内底面：承接角色的实时阴影（ShadowMaterial 只画阴影，不遮住球内空间）
+  // 地面：承接角色的实时阴影（ShadowMaterial 只画阴影，不遮住空间）
   const shadowFloor = new THREE.Mesh(
     track(new THREE.PlaneGeometry(BALL_RADIUS * 1.7, BALL_RADIUS * 1.7)),
     new THREE.ShadowMaterial({ opacity: 0.34, color: 0x0b0d12 })
@@ -238,7 +215,7 @@ export function createPet3dScene(
   shadowFloor.position.y = -BALL_RADIUS + 7
   shadowFloor.receiveShadow = true
   shadowFloor.visible = shadows
-  shellGroup.add(shadowFloor)
+  groundGroup.add(shadowFloor)
 
   // 软阴影贴图（角色脚下的环境遮蔽，补足实时阴影的硬度）。
   // 几何做成 1×1、世界尺寸由 rig.shadowW 经 scale 给出 —— 两种形态的铺开直径差 2.6 倍。
@@ -261,138 +238,10 @@ export function createPet3dScene(
   blob.rotation.x = -Math.PI / 2
   blob.position.y = -BALL_RADIUS + 7.25
   blob.scale.setScalar(rig.shadowW)
-  shellGroup.add(blob)
-
-  // ─── 玻璃球壳 ───────────────────────────────────────────────────────────────
-  const shellMat = new THREE.MeshPhysicalMaterial({
-    color: 0xdfe8f5,
-    transparent: true,
-    opacity: 0.12,
-    roughness: 0.06,
-    metalness: 0,
-    clearcoat: 1,
-    clearcoatRoughness: 0.04,
-    envMapIntensity: 1.1,
-    depthWrite: false,
-    side: THREE.DoubleSide
-  })
-  const shell = new THREE.Mesh(track(new THREE.SphereGeometry(BALL_RADIUS, 40, 28)), shellMat)
-  shell.renderOrder = 8
-  shellGroup.add(shell)
-
-  const rimMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.34,
-    side: THREE.BackSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending
-  })
-  const rimShell = new THREE.Mesh(track(new THREE.SphereGeometry(BALL_RADIUS * 1.012, 32, 22)), rimMat)
-  rimShell.renderOrder = 9
-  shellGroup.add(rimShell)
-
-  // 皮肤色暗边（不是黑边）：浅色壁纸/浅色皮肤下靠它立住轮廓
-  const edgeMat = new THREE.MeshBasicMaterial({
-    color: 0x33363d,
-    transparent: true,
-    opacity: 0.14,
-    side: THREE.BackSide,
-    depthWrite: false
-  })
-  const edgeShell = new THREE.Mesh(track(new THREE.SphereGeometry(SHELL_EDGE_R, 32, 22)), edgeMat)
-  edgeShell.renderOrder = 8
-  shellGroup.add(edgeShell)
-
-  const specMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false })
-  const spec = new THREE.Mesh(track(new THREE.SphereGeometry(3.6, 16, 12)), specMat)
-  spec.scale.set(1.7, 1, 0.55)
-  spec.position.set(-BALL_RADIUS * 0.36, BALL_RADIUS * 0.52, BALL_RADIUS * 0.72)
-  shellGroup.add(spec)
-  const specSm = new THREE.Mesh(track(new THREE.SphereGeometry(1.5, 12, 10)), specMat)
-  specSm.position.set(BALL_RADIUS * 0.42, -BALL_RADIUS * 0.42, BALL_RADIUS * 0.62)
-  specSm.scale.set(1.4, 0.7, 0.5)
-  shellGroup.add(specSm)
-
-  const bandMat = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.26,
-    roughness: 0.2,
-    metalness: 0.2,
-    envMapIntensity: 1,
-    depthWrite: false
-  })
-  const band = new THREE.Mesh(track(new THREE.TorusGeometry(BAND_R, BAND_TUBE, 8, 48)), bandMat)
-  band.rotation.set(1.05, 0.35, 0.4)
-  band.renderOrder = 9
-  shellGroup.add(band)
-
-  // ─── 环形仪表（球面正前方的管状进度环）──────────────────────────────────────
-  const ringGroup = new THREE.Group()
-  ringGroup.position.set(0, BALL_CENTER_Y, 0)
-  scene.add(ringGroup)
-  const trackMat = new THREE.MeshBasicMaterial({ color: 0x8a8a94, transparent: true, opacity: 0.42, depthWrite: false })
-  const trackRing = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_TUBE * 0.62, 10, 96)), trackMat)
-  trackRing.renderOrder = 10
-  ringGroup.add(trackRing)
-
-  const fillMat = new THREE.MeshBasicMaterial({ color: 0x30d158 })
-  let fillMesh: THREE.Mesh | null = null
-  let fillGeo: THREE.TubeGeometry | null = null
-  const capMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-  let cap: THREE.Mesh | null = null
-
-  /** 进度弧：从 12 点方向顺时针（与 2D 圆点一致） */
-  const buildFill = (pct: number): void => {
-    const frac = clamp01(pct / 100)
-    if (fillMesh) {
-      ringGroup.remove(fillMesh)
-      fillGeo?.dispose()
-      fillMesh = null
-      fillGeo = null
-    }
-    if (cap) {
-      ringGroup.remove(cap)
-      cap = null
-    }
-    if (frac <= 0.001) return
-    const start = Math.PI / 2
-    const sweep = -Math.PI * 2 * frac
-    const segments = Math.max(10, Math.round(96 * frac))
-    const pts: THREE.Vector3[] = []
-    for (let i = 0; i <= segments; i++) {
-      const a = start + (sweep * i) / segments
-      pts.push(new THREE.Vector3(Math.cos(a) * RING_R, Math.sin(a) * RING_R, 0))
-    }
-    const curve = new THREE.CatmullRomCurve3(pts)
-    fillGeo = new THREE.TubeGeometry(curve, Math.max(8, segments), RING_TUBE, 10, false)
-    fillMesh = new THREE.Mesh(fillGeo, fillMat)
-    fillMesh.renderOrder = 11
-    ringGroup.add(fillMesh)
-    if (frac > 0.02 && frac < 0.995) {
-      cap = new THREE.Mesh(track(new THREE.SphereGeometry(RING_TUBE * 1.15, 12, 10)), capMat)
-      const a = start + sweep
-      cap.position.set(Math.cos(a) * RING_R, Math.sin(a) * RING_R, 0)
-      cap.renderOrder = 12
-      ringGroup.add(cap)
-    }
-  }
-
-  const haloMat = new THREE.MeshBasicMaterial({
-    color: 0x000000,
-    transparent: true,
-    opacity: 0.1,
-    depthWrite: false,
-    side: THREE.BackSide
-  })
-  const halo = new THREE.Mesh(track(new THREE.TorusGeometry(RING_R, RING_HALO_TUBE, 8, 80)), haloMat)
-  halo.renderOrder = 6
-  ringGroup.add(halo)
+  groundGroup.add(blob)
 
   // ─── 人物（世界坐标里的独立容器）────────────────────────────────────────────
-  // 角色放在**世界坐标**（不是球壳的子节点）：球壳与用量环只按球心定位，角色脚踩地面。
-  // 人物形态下球体装饰整体隐藏，这个容器就是窗口里唯一可见的东西。
+  // 角色放在**世界坐标**（不是地面的子节点）：地面的两块承接面只按球心刻度定位，角色脚踩地面。
   const petGroup = new THREE.Group()
   petGroup.position.y = GROUND_Y
   // 模型固有朝向修正：只在建场景时写一次（人物形态不做走动，没有逐帧偏航）
@@ -419,9 +268,9 @@ export function createPet3dScene(
   const attachPet = async (want: PetId): Promise<void> => {
     const token = ++loadToken
     try {
-        // 真人系：骨骼模型 + mixer，失败只留球体（与 legacy 同样的兜底姿态）
+        // 真人系：骨骼模型 + mixer，失败只留地面阴影（功能不丢）
         // 动态导入：human.ts 静态依赖 FBXLoader + SkeletonUtils（约 200KB），
-        // 只有真的要用数字人形态时才值得付这个下载/解析成本（默认形态是悬浮球）。
+        // 只有真的开「个性人物」时才值得付这个下载/解析成本（默认形态是 2D 小圆环，不建本场景）。
         const { instantiateHuman } = await import('./human')
         const inst = await instantiateHuman(want, HUMAN_HEIGHT)
         if (token !== loadToken) {
@@ -431,7 +280,6 @@ export function createPet3dScene(
         disposeCurrentPet()
         actions.clear()
         petHolder = inst.group
-        petHolder.visible = rig.ball === false
         petGroup.add(petHolder)
         // 基础剪辑已在 instantiateHuman 里装载：把它们的 action 收进本地表（首帧即可播）
         for (const clip of BASE_CLIPS) {
@@ -458,13 +306,11 @@ export function createPet3dScene(
         void queue('enter')
         return
     } catch (e) {
-      // 素材加载失败：只留球体，不影响 KPI（再次切换角色会重试）
+      // 素材加载失败：只留地面阴影，不影响 KPI（再次切换角色会重试）
       console.error('[pet3d] 人物模型加载失败：', e)
     }
   }
-  // 球形态**不加载**人物素材：默认形态启动时既不下载 human 分包、也不解析 5 个 FBX
-  // （开「个性人物」时 PetBall 会按新形态重建场景，那时才加载）。
-  if (!rig.ball) void attachPet(petId)
+  void attachPet(petId)
 
   // ─── 状态 ───────────────────────────────────────────────────────────────────
   let clock = 0
@@ -486,86 +332,38 @@ export function createPet3dScene(
    */
   let travelMinX = 0
   let travelMaxX = 0
-  let frame: BallFrame = { percent: null, level: 'muted', value: '', label: '', pager: null }
-  let ringOn = true
   let tokens: SkinTokens = readSkinTokens(host)
   let paused = false
   let raf = 0
   let last = performance.now()
-  /** 命中区（CSS 像素）：球形态 = 球的投影，人物形态 = 人物的投影 */
+  /** 命中区（CSS 像素）= 人物包围盒的投影 */
   let hitBox = { x: 0, y: 0, width: 0, height: 0 }
-  /** 窗口尺寸兜底：与主进程形态表同源（shared/pet-view，见 FORMS） */
-  const view = form === 'ball' ? BALL_VIEW : FIGURE_VIEW
-  /** 悬停浮沉幅度（世界单位）：人物形态下 0.6 ≈ 5px，读作「悬浮」而不是「抖动」 */
+  /** 窗口尺寸兜底：与主进程形态表同源（shared/pet-view） */
+  const view = FIGURE_VIEW
+  /** 悬停浮沉幅度（世界单位）：0.6 ≈ 5px，读作「悬浮」而不是「抖动」 */
   const BOB_AMP = 0.6
 
   const applyTokens = (): void => {
     tokens = readSkinTokens(host)
     const t = tokens
-    const shellRgb = t.dark ? shade(t.shell, 0.18) : shade(t.shell, -0.04)
-    shellMat.color.setRGB(shellRgb.r, shellRgb.g, shellRgb.b)
-    shellMat.opacity = t.dark ? 0.14 : 0.12
-    bandMat.color.setRGB(shellRgb.r, shellRgb.g, shellRgb.b)
-    bandMat.opacity = t.dark ? 0.24 : 0.26
-    rimMat.opacity = t.dark ? 0.22 : 0.38
-    specMat.opacity = t.gloss
-    trackMat.color.setRGB(t.track.r, t.track.g, t.track.b)
-    trackMat.opacity = t.dark ? 0.5 : 0.42
-    haloMat.opacity = t.dark ? 0.16 : 0.1
-    const edge = t.fg
-    edgeMat.color.setRGB(edge.r * 0.6, edge.g * 0.6, edge.b * 0.6)
-    edgeMat.opacity = t.dark ? 0.22 : 0.14
     // 没有实时阴影时，脚下的软阴影贴图要更明确一点
     blobMat.opacity = (t.dark ? 0.5 : 0.36) * (shadows ? 1 : 1.5)
     scene.environmentIntensity = t.dark ? 0.4 : 0.55
     ambient.intensity = t.dark ? 0.18 : 0.26
-    refreshColors()
-  }
-
-  const levelRgb = (lvl: BallFrame['level']): Rgb => {
-    if (lvl === 'danger') return tokens.danger
-    if (lvl === 'warn') return tokens.warn
-    if (lvl === 'muted') return tokens.muted
-    return tokens.ok
-  }
-
-  const refreshColors = (): void => {
-    const rgb = levelRgb(frame.level)
-    fillMat.color.setRGB(rgb.r, rgb.g, rgb.b)
-    capMat.color.setRGB(Math.min(1, rgb.r + 0.3), Math.min(1, rgb.g + 0.3), Math.min(1, rgb.b + 0.3))
-  }
-
-  // ─── 形态可见性 ─────────────────────────────────────────────────────────────
-  /**
-   * 形态 → 可见性。球形态：玻璃球 + 环 + 装饰带（人物隐藏）；人物形态：只有人物与脚下的阴影。
-   * 一处收口，避免「球壳忘了隐藏」这类只在某条路径上出现的残留（dump() 可核对实际可见集）。
-   */
-  const applyForm = (): void => {
-    const ballOn = rig.ball
-    for (const m of [shell, rimShell, edgeShell, spec, specSm, band]) m.visible = ballOn
-    ringGroup.visible = ballOn && ringOn
-    if (petHolder) petHolder.visible = !ballOn
   }
 
   // ─── 尺寸与投影 ─────────────────────────────────────────────────────────────
   /**
-   * 命中区 = 可见物在窗口里的投影（CSS 像素）：
-   *   · 球形态：球心投影 ± 球投影半径（含悬停浮沉，球固定在 x=0、z=0 所以是常量）；
-   *   · 人物形态：人物包围盒八角的投影外接矩形 —— 世界盒是常量，故矩形也是常量，
-   *     不必每帧量 Box3（浮沉的 ±BOB_AMP 一并算进盒高，见下）。
-   * 覆盖层（数值胶囊/泡泡/角标）的锚点也取它，两种形态同一套锚点口径。
+   * 命中区 = 人物包围盒八角的投影外接矩形（CSS 像素）—— 世界盒是常量，故矩形也是常量，
+   * 不必每帧量 Box3（浮沉的 ±BOB_AMP 一并算进盒高，见下）。
+   * 覆盖层（数值胶囊/泡泡/角标）的锚点也取它。
+   *
+   * 球形态不再有这一段：它不建场景，命中区由 PetBall 按 2D 小圆环的实测方块上报
+   * （窗口 56×56 整块，见 PetBall 的 reportHit）。
    */
   const updateHitRect = (): void => {
     const w = host.clientWidth || view.width
     const h = host.clientHeight || view.height
-    if (rig.ball) {
-      const c = new THREE.Vector3(0, BALL_CENTER_Y, 0)
-      const v = c.clone().project(camera)
-      const { ny } = sphereNdcHalf(camera.position.distanceTo(c), BALL_RADIUS, CAM_FOV, w / h)
-      const r = ny * (h / 2) * 0.98
-      hitBox = { x: ((v.x + 1) / 2) * w - r, y: ((1 - v.y) / 2) * h - r, width: r * 2, height: r * 2 }
-      return
-    }
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity
@@ -600,7 +398,7 @@ export function createPet3dScene(
     renderer.setPixelRatio(softRenderer ? Math.min(dpr, 1.25) : dpr)
     camera.aspect = w / h
     camera.updateProjectionMatrix()
-    // 两种形态都不走动 → 命中区是常量，视口一变重算即可（不必每帧投影）
+    // 人物形态不自主漫游 → 命中区是常量，视口一变重算即可（不必每帧投影）
     updateHitRect()
   }
   const ro = new ResizeObserver(resize)
@@ -694,12 +492,12 @@ export function createPet3dScene(
 
   /**
    * 入队一个动作（后到的覆盖先到的：只有最后一次意图有意义）。
-   * 球形态或**场景已销毁**时立刻兑现 —— 否则 App 的"退场播完再换人/再收成球"
+   * **场景已销毁**时立刻兑现 —— 否则 App 的"退场播完再换人/再收起"
    * 会拿着一个永远不会 resolve 的 Promise 干等（展开态下 PetBall 已卸载，是真会发生的）。
    */
   const queue = (id: GestureId): Promise<void> =>
     new Promise((resolve) => {
-      if (rig.ball || disposed) {
+      if (disposed) {
         resolve()
         return
       }
@@ -747,17 +545,10 @@ export function createPet3dScene(
       human.cancelRootMotion()
     }
 
-    // 玻璃高光轻微游走（有光在动的感觉；人物形态下球壳不可见，跳过）
-    if (rig.ball) {
-      spec.position.x = -BALL_RADIUS * 0.36 + Math.sin(clock * 0.4) * 1.6
-      spec.position.y = BALL_RADIUS * 0.52 + Math.cos(clock * 0.35) * 1.2
-    }
-
     renderer.render(scene, camera)
   }
 
-  // 观测点：帧率与最长一帧间隔。人物形态把人物放大了 3.5 倍（像素多 4 倍），
-  // 软渲染器（无 GPU）下这是「看着卡不卡」的现场证据 —— 猜不如量。
+  // 观测点：帧率与最长一帧间隔（软渲染器 / 无 GPU 下这是「看着卡不卡」的现场证据 —— 猜不如量）。
   let fps = 0
   let fpsFrames = 0
   let fpsSince = performance.now()
@@ -780,20 +571,9 @@ export function createPet3dScene(
   raf = requestAnimationFrame(loop)
 
   applyTokens()
-  applyForm()
-  buildFill(frame.percent ?? 0)
 
   const handle: Pet3dHandle = {
     canvas,
-    setFrame: (f) => {
-      const pctChanged = (f.percent ?? -1) !== (frame.percent ?? -1)
-      const levelChanged = f.level !== frame.level
-      ringOn = f.showRing !== false
-      frame = f
-      if (pctChanged) buildFill(f.percent ?? 0)
-      if (levelChanged || pctChanged) refreshColors()
-      applyForm()
-    },
     setPet: (want) => {
       if (want === petId) return
       petId = want
@@ -923,9 +703,7 @@ export function createPet3dScene(
       for (const g of sceneGeo) g.dispose()
       sceneGeo.length = 0
       blobTex.dispose()
-      for (const m of [shellMat, rimMat, edgeMat, specMat, bandMat, trackMat, fillMat, capMat, haloMat, blobMat]) {
-        m.dispose()
-      }
+      blobMat.dispose()
       envRT?.dispose()
       pmrem.dispose()
       renderer.dispose()

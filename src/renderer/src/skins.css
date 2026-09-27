@@ -1455,9 +1455,11 @@ textarea {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   收起态：3D 悬浮球（桌面宠物）
-   WebGL 负责球体、角色与用量环；这里的 DOM 只做「文字与命中层」——
-   透明窗口里 DOM 文字最清晰，命中层负责把鼠标事件限制在球上（其余穿透）。
+   收起态（桌面宠物）
+   两种形态，两套东西：
+     · 球形态（默认）：纯 DOM 的 2D 小圆环（.petball.no3d 那一块，56×56）；
+     · 个性人物：WebGL 画人物，这里的 DOM 只做「文字与命中层」——
+       透明窗口里 DOM 文字最清晰，命中层负责把鼠标事件限制在人物上（其余穿透）。
    ═══════════════════════════════════════════════════════════════════════════════ */
 .petball {
   position: relative;
@@ -1486,29 +1488,6 @@ textarea {
   cursor: grabbing;
 }
 
-/* 球形态：百分比回到环心（原「3D 圆球」形态的读数位置） */
-.petball-center-value {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-size: 20px;
-  font-weight: 760;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  color: #fff;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7), 0 0 14px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
-}
-.petball-center-value.small {
-  font-size: 15px;
-}
-.petball.lvl-warn .petball-center-value {
-  color: #ffc46b;
-}
-.petball.lvl-danger .petball-center-value {
-  color: #ff8a80;
-}
-
 /* 球下方数值：胶囊底衬 + 白字，任何皮肤/壁纸下都读得清 */
 .petball-caption {
   position: absolute;
@@ -1529,10 +1508,8 @@ textarea {
   pointer-events: none;
   white-space: nowrap;
 }
-.petball-caption.sub {
-  padding: 2px 8px 3px;
-  gap: 0;
-}
+/* `.petball-caption.sub` 已删（2026-09-27）：`sub` 变体只用于球形态那枚更瘦的胶囊，
+   而球形态的读数在 2D 小圆环的环心里，胶囊不再在球形态出现。 */
 .petball-value {
   font-size: 15px;
   font-weight: 750;
@@ -1579,14 +1556,9 @@ textarea {
   color: #ff8a80;
 }
 
-/* 悬停：轻微放大给人一种「被注意到」的反馈（球体本身由 WebGL 画） */
-.petball.hover .petball-stage {
-  transform: scale(1.03);
-  transition: transform 240ms var(--ease);
-}
-.petball-stage {
-  transition: transform 320ms var(--ease);
-}
+/* 悬停/按压反馈已删（2026-09-27）：`.petball.hover .petball-stage` 的缩放是为 3D 球准备的
+   （球画在那块 canvas 上），球形态不再有 canvas 后它成了空操作。
+   球形态的按压反馈改由 .petball-fallback 的 :active 承担（见下面，首版就有）。 */
 
 /* 缓存/估算标记 */
 .petball-badge {
@@ -1601,18 +1573,15 @@ textarea {
   color: rgba(255, 255, 255, 0.9);
   pointer-events: none;
 }
-
-/* 互动反馈（撸一把 / 升级 / 吃饱了） */
-@keyframes petball-pop {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(4px) scale(0.94);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
-  }
+/* 球形态的角标缩到 10px：56×56 窗口里，环的 stroke 外缘在 r=24.5，空角沿对角线只有 15.1px，
+   15px 的角标必然压弧（实测盖在环上）或被 .petball 的 overflow:hidden 裁掉。 */
+.petball.no3d .petball-badge {
+  width: 10px;
+  height: 10px;
 }
+
+/* 互动反馈（撸一把 / 升级 / 吃饱了）—— 已删（2026-09-27）：@keyframes petball-pop
+   随养成互动下线就没有任何 animation 引用了（全项目零命中）。 */
 
 /* 真人系语音泡泡（打招呼 / 余额播报）：比 toast 大一号、最多两行，锚在球上方 */
 .petball-bubble {
@@ -1682,14 +1651,16 @@ textarea {
   pointer-events: none;
 }
 
-/* ─── 2D 兜底圆点（关闭桌面宠物 / WebGL 不可用）───────────────────────────── */
+/* ─── 2D 小圆环（球形态的正常呈现 / 人物形态 WebGL 不可用时的兜底）─────────── */
 .petball.no3d .petball-fallback {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 60px;
-  height: 60px;
+  /* 56×56：与 shared/pet-view 的 BALL_VIEW 及 SVG 的 viewBox 同数。
+     原来这里是 60×60 —— 球形态窗口正好 56×56，60 会溢出四角被 .petball 的 overflow 切掉。 */
+  width: 56px;
+  height: 56px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -1701,12 +1672,43 @@ textarea {
     inset 0 0 0 1px var(--dot-rim),
     inset 0 -6px 12px var(--dot-bottom),
     0 6px 18px rgba(0, 0, 0, 0.28);
+  /* 按压反馈：首版（`d5a028e` 的 .dot-btn:active）就有的缩放。注意 translate 必须一起带上 ——
+     这条规则靠 transform 定位居中，写成 scale 会把圆环甩到左上角。
+
+     ⚠ 触发条件不能写成 `.petball-fallback:active`：.petball 是 pointer-events:none，
+     指针事件全被盖在上面的 .petball-hit（pointer-events:auto）吃掉，fallback 永远拿不到
+     :active —— 那样写规则是死的，而注释却在宣称「有按压反馈」（2026-09-27 复核发现）。
+     命中层在球形态下与 fallback 同为 56×56，所以改用 :has() 让命中层的
+     按压态驱动视觉层，纯 CSS、无需 JS 状态。 */
+  transition: transform var(--dur) var(--ease);
+}
+.petball.no3d:has(.petball-hit:active) .petball-fallback {
+  transform: translate(-50%, -50%) scale(0.94);
 }
 .petball.no3d .petball-fallback svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+}
+/* 环。⚠ 这两条是 2026-09-27 补回的：JSX 里两个 <circle> 都不写 stroke 属性，
+   SVG 默认 stroke:none，而 .dot-ring-track 此前全项目零规则 —— 结果是 WebGL 失败时
+   用户只看到一个纯色圆盘加数字，**环根本没画出来**。 */
+.petball.no3d .dot-ring-track {
+  stroke: var(--track);
+}
+.petball.no3d .dot-ring-fill {
+  stroke: var(--ok);
+  transition: stroke-dasharray 600ms var(--ease), stroke var(--dur) var(--ease);
+}
+.petball.no3d.lvl-warn .dot-ring-fill {
+  stroke: var(--warn);
+}
+.petball.no3d.lvl-danger .dot-ring-fill {
+  stroke: var(--danger);
+}
+.petball.no3d.lvl-muted .dot-ring-fill {
+  stroke: var(--fg-faint);
 }
 .petball.no3d .dot-value {
   position: relative;
@@ -1716,15 +1718,24 @@ textarea {
   letter-spacing: -0.03em;
   line-height: 1;
   color: var(--fg);
+  max-width: 42px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .petball.no3d .dot-value.small {
   font-size: 10px;
+  letter-spacing: -0.02em;
 }
 .petball.no3d.lvl-warn .dot-value {
   color: var(--warn);
 }
 .petball.no3d.lvl-danger .dot-value {
   color: var(--danger);
+}
+.petball.no3d.lvl-muted .dot-value {
+  color: var(--fg-dim);
 }
 .petball.no3d .petball-value {
   color: var(--fg);
@@ -2066,24 +2077,9 @@ textarea {
 }
 
 /* ─── 收起态圆点的缓存标记 ───────────────────────────────────────────────── */
-.dot-badge {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--warn);
-  color: var(--bg-solid);
-}
-.dot-btn.stale .dot-ring-fill {
-  opacity: 0.5;
-}
-.dot-btn.stale .dot-value {
-  opacity: 0.78;
-}
+/* 已删（2026-09-27）：`.dot-badge` 与 `.dot-btn.stale` 的两条规则。
+   `.dot-btn` 这个类既无 CSS 规则也无任何 TSX 引用，是 `d5a028e` 的 CollapsedDot 留下的
+   孤儿；`.dot-badge` 的角标由 .petball-badge 承担。留着它们只会让人以为还有这条路径。 */
 
 /* ─── 设置页：列表行与选择器里的图标 ─────────────────────────────────────── */
 .prow-head .pmark {

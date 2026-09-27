@@ -66,6 +66,16 @@ BD_SKINS=1              npx electron . --ballshot   # 逐皮肤打光基线
 产物在 `/tmp/balancedeck-shots/`。基线图**提交进仓库的 `docs/`**（现有先例：
 `docs/pet-3d.png` / `docs/dot-pet.png`），否则下次没法复现对比。
 
+> ⚠️ **2026-09-27 更新：`docs/pet-3d.png` / `docs/dot-pet.png` 都已过期，别拿它们当基线。**
+> `09-27-ball-form-dot` 把球形态整体退回了 2D 小圆环：`docs/pet-3d.png` 画的是
+> 「玻璃球套人物」那一版（球形态已不存在），`docs/dot-pet.png` 是 200×200 的白底空图。
+> 新的球形态基线是 **`docs/pet-dot.png`**（56×56 的 SVG 环 + 环心百分比）。
+> **本任务（human-realism）只动人物形态**，所以步 7 的对比对象应当是**人物形态**的实拍
+> （`BD_PET=1 BD_PET_ID=aria npx electron . --ballshot`），别跟球形态的图比 ——
+> 两者窗口尺寸（56×56 vs 213×293）、渲染路径（无 WebGL vs three.js）都不一样。
+> ⚠️ 人物形态的截图**不能跨轮做像素比对**：同一轮 ballshot 的三张图互差 13–15%
+> （每张捕到不同动画帧）。要比就比确定性字段（`win`/`canvas`/`rect`/`center`/`stride`/`overlay`）。
+
 ## 步 2：specular → roughness 转换脚本
 
 - [ ] `scripts/lib/png.mjs`（新增）：纯 JS PNG 读/写。解码走 `zlib.inflate` +

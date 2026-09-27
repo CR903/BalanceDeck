@@ -1,28 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot } from '../../shared/types'
 import { type PetId, type PetState } from '../../shared/pet'
-import { FIGURE_VIEW } from '../../shared/pet-view'
+import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
-import { createPet3dScene, type BallFrame, type Pet3dHandle } from './pet3d/scene'
+import { createPet3dScene, type Pet3dHandle } from './pet3d/scene'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态 = 3D 悬浮物，两种形态（见 shared/pet-view 与 pet3d/rig.ts 的 FORMS）
+// 收起态，两种形态（尺寸见 shared/pet-view）：
 //
-//   · 球形态（默认）：玻璃球 + 环形仪表 + 球心读数，窗口 200×210 贴合球体；
-//   · 个性人物：**只有人物**独立站在窗口中央（无球壳、无用量环），窗口 320×440 竖版，
-//     读数走窗口下方的胶囊。
+//   · 球形态（默认）：**2D 小圆环** —— 56×56 窗口、SVG 环、环心一个数；
+//     纯 DOM，不建 3D 场景、不占显存、不加载任何角色素材（首版设计，`d5a028e`）。
+//   · 个性人物：three.js 场景，**只有人物**独立站在 213×293 竖版窗口中央
+//     （无球壳、无用量环），读数走窗口下方的胶囊。
 //
-// 共同点：鼠标穿透（主进程按 scene 上报的命中区轮询）、单击展开、拖动移动、右键菜单。
+// 共同点：鼠标穿透（主进程按渲染层上报的命中区轮询）、单击展开、拖动移动、右键菜单。
 // 定位是**数字助理**：没有喂食/亲密度那套养成互动（2026-09-21 下线）。
 //
-// 设计依据见 DESIGN.md「收起态：3D 悬浮球 / 个性人物」。
+// 设计依据见 DESIGN.md「收起态」。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface PetBallProps {
   pet: PetState
-  /** 收起态是否为「个性人物」形态（关闭 = 默认的悬浮球，省显存/不加载角色素材） */
+  /** 收起态是否为「个性人物」形态（关闭 = 默认的 2D 小圆环，省显存/不加载角色素材） */
   figure: boolean
   onExpand: () => void
   onDragStart: (grab: { x: number; y: number }) => void
@@ -31,7 +32,7 @@ export interface PetBallProps {
   onMenu: () => Promise<string | null>
   onRename: (name: string) => void
   hideBalance: boolean
-  /** 是否显示用量环（ui:petRing，右键菜单可关；球形态可见，人物形态本就没有环） */
+  /** 是否显示用量环（ui:petRing，右键菜单可关）：球形态控制 2D 环的填充弧，人物形态本就没有环 */
   showRing?: boolean
 }
 
@@ -48,8 +49,9 @@ export function PetBall({
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const hitRef = useRef<HTMLDivElement | null>(null)
+  /** 2D 小圆环本体：命中区按它的实测方块上报（球形态它就是整块窗口） */
+  const fallbackRef = useRef<HTMLDivElement | null>(null)
   const sceneRef = useRef<Pet3dHandle | null>(null)
-  const frameRef = useRef<BallFrame | null>(null)
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
   const [idx, setIdx] = useState(0)
   const [ready, setReady] = useState(false)
@@ -58,7 +60,7 @@ export function PetBall({
   const [nameDraft, setNameDraft] = useState('')
   /** 真人系语音泡泡（打招呼 / 余额播报，比 toast 大、停留更久，最多两行） */
   const [bubble, setBubble] = useState('')
-  /** 测试观测点：命中环（--uitest / --shots 打开，用于核对球体投影与命中判定） */
+  /** 测试观测点：命中环（--uitest / --shots 打开，用于核对人物投影与命中判定；球形态无投影） */
   const debugRing = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('bddebug')
   const [ringBox, setRingBox] = useState({ x: 0, y: 0, w: 0, h: 0 })
   /** 命中区中心（DOM 覆盖层对准它；两种形态都由 scene 按投影给出） */
@@ -96,35 +98,38 @@ export function PetBall({
     bubbleTimer.current = window.setTimeout(() => setBubble(''), ms)
   }
 
-  // ─── 3D 场景（挂载一次；换角色走 setPet，皮肤变化走 setSkin）────────────────
+  // ─── 3D 场景（仅个性人物形态；挂载一次，换角色走 setPet，皮肤变化走 setSkin）────
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    // 形态决定机位与窗口（见 shared/pet-view 与 pet3d/rig.ts 的 FORMS）；球形态不加载角色素材
+    // 球形态**不建场景**。不是「建一个空场景」：createPet3dScene 在 scene.ts:151 无条件
+    // `new THREE.WebGLRenderer`，省显存是这一版的硬要求（2026-09-27 用户原话：默认状态下
+    // 桌面只有一个安静的小环，不占显存、不加载任何 3D 资源）。所以由调用方跳过构造，
+    // 而不是给场景加一个「什么都不渲染」的形态 —— 后者照样占着 GPU 上下文。
+    if (!figure) return
     let handle: Pet3dHandle | null = null
     try {
-      handle = createPet3dScene(host, petRef.current.id, { form: figure ? 'figure' : 'ball' })
+      handle = createPet3dScene(host, petRef.current.id)
     } catch (e) {
-      // WebGL 不可用（老显卡/驱动异常）→ 退回 2D 圆点，功能不丢
+      // WebGL 不可用（老显卡/驱动异常）→ 退回 2D 小圆环，功能不丢
       setFailed(true)
-      console.error('[pet3d] 初始化失败，退回 2D 圆点：', e)
+      console.error('[pet3d] 初始化失败，退回 2D 小圆环：', e)
       return
     }
     sceneRef.current = handle
     setReady(true)
-    frameRef.current && handle.setFrame(frameRef.current)
+    // 上一轮失败留下的 failed 必须复位，否则「人物→球→人物」再来一次时，
+    // 即便这次 WebGL 正常，也会被上一次的 failed 钉在 2D 兜底上（人物形态看得见人，
+    // 但走的是 2D 环）。failed 只在 catch 里置 true，不复位就是单向棘轮。
+    setFailed(false)
     return () => {
       handle?.dispose()
       sceneRef.current = null
       setReady(false)
     }
-    // 形态切换要换机位与窗口尺寸，直接重建场景最省心（换角色走 handle 的 setPet）
+    // 形态切换要换窗口尺寸，直接重建场景最省心（换角色走 handle 的 setPet）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [figure])
-
-  useEffect(() => {
-    if (ready && frameRef.current) sceneRef.current?.setFrame(frameRef.current)
-  }, [ready, hideBalance])
 
   // 角色切换：换人 + 自报家门（进场动作由场景在模型就位那一刻自己播，见 scene.ts）
   //
@@ -166,8 +171,7 @@ export function PetBall({
       clipParseMs: sceneRef.current?.clipParseMs() ?? 0,
       measure: sceneRef.current?.measure() ?? null,
       petReady: sceneRef.current?.petReady() ?? false,
-      dump: sceneRef.current?.dump() ?? [],
-      frame: frameRef.current
+      dump: sceneRef.current?.dump() ?? []
     })
     w.__bd_hide = (i, on) => sceneRef.current?.hideIndex(i, on)
     // 动作触发口（测试用）：--uitest 要能在收起态下驱动一次退场，核对"真的走出去了"
@@ -196,10 +200,17 @@ export function PetBall({
   const reportHit = useCallback(() => {
     const handle = sceneRef.current
     if (!handle) {
-      // 2D 圆点：窗口正中一个 60×60 的可点区域
-      const w = hostRef.current?.clientWidth ?? FIGURE_VIEW.width
-      const h = hostRef.current?.clientHeight ?? FIGURE_VIEW.height
-      window.api.setPetHitbox({ x: w / 2 - 30, y: h / 2 - 30, width: 60, height: 60 })
+      // 无 3D 场景时按 **2D 小圆环的实测方块** 上报，不写死尺寸：
+      //   · 球形态恒走这里，窗口 56×56 本身就是那个环 → 整块窗口可点（主进程再外扩 pad=3）
+      //   · 人物形态只在这里出现（WebGL 初始化失败），窗口 213×293、环仍是 56×56，
+      //     所以必须按它在窗口里的**居中位置**算，不能拿整块窗口去撑成一个 213×293 的热点。
+      // 旧实现一律回退到「居中 60×60 + FIGURE_VIEW 兜底值」，两个尺寸都写错了。
+      const el = fallbackRef.current
+      const hw = hostRef.current?.clientWidth || BALL_VIEW.width
+      const hh = hostRef.current?.clientHeight || BALL_VIEW.height
+      const w = el?.clientWidth || BALL_VIEW.width
+      const h = el?.clientHeight || BALL_VIEW.height
+      window.api.setPetHitbox({ x: (hw - w) / 2, y: (hh - h) / 2, width: w, height: h })
       return
     }
     const r = handle.hitRect()
@@ -276,20 +287,6 @@ export function PetBall({
     const w = hostRef.current?.clientWidth ?? FIGURE_VIEW.width
     return Math.min(Math.max(x, pad), w - pad)
   }
-
-  useEffect(() => {
-    const frame: BallFrame = {
-      percent: pct,
-      level: lvl,
-      value,
-      label,
-      pager: count > 1 ? { count: Math.min(count, 6), index: idx % count } : null,
-      showRing
-    }
-    frameRef.current = frame
-    sceneRef.current?.setFrame(frame)
-    // 球的投影位置与数据无关，尺寸变化由 ResizeObserver/轮询兜底
-  }, [pct, lvl, value, label, count, idx, s, showRing])
 
   useEffect(() => {
     sceneRef.current?.setPaused(renaming)
@@ -409,9 +406,17 @@ export function PetBall({
       } · 单击展开 · 拖动移动 · 右键菜单`
     : `单击展开 · 拖动移动 · 右键菜单`
 
+  /**
+   * 2D 小圆环的呈现条件（三种情形，缺一不可）：
+   *   · 球形态：恒为真 —— 它本来就是 2D（这一版没有 3D 球）
+   *   · 人物形态 + WebGL 初始化失败：`failed` 兜底，老显卡/驱动异常时仍要有可用界面
+   * 这一条不能因为「球形态已经是 2D 了」顺手删掉：它服务的是**人物形态的失败路径**。
+   */
+  const dot2d = !figure || failed
+
   return (
     <div
-      className={`petball lvl-${lvl}${hover ? ' hover' : ''}${failed ? ' no3d' : ''}`}
+      className={`petball lvl-${lvl}${hover ? ' hover' : ''}${dot2d ? ' no3d' : ''}`}
       data-pet={pet.id}
       data-figure={figure ? '1' : '0'}
     >
@@ -438,12 +443,16 @@ export function PetBall({
         tabIndex={-1}
       />
 
-      {failed && (
-        // 兜底：WebGL 不可用时退回 2D 圆点（功能不丢，只是没有 3D）
-        <div className="petball-fallback">
+      {dot2d && (
+        // 2D 小圆环：球形态的**正常**呈现（不建 3D），也是人物形态 WebGL 失败时的兜底。
+        // 这段 JSX 就是首版（`d5a028e` 的 CollapsedDot）的那份，逻辑早已在 PetBall 里
+        // 重写过一遍（严重度排序 / 轮播 / 8px 拖拽 / tooltip），搬回旧组件会多出一份状态来源。
+        <div className="petball-fallback" ref={fallbackRef}>
           <svg viewBox="0 0 56 56" aria-hidden="true">
             <circle className="dot-ring-track" cx="28" cy="28" r="22" fill="none" strokeWidth="5" />
-            {pct != null && (
+            {/* 填充弧由「显示用量环」（ui:petRing）控制：关掉只剩素圆盘 + 数字。
+                没有这一条，右键菜单那个开关在球形态下就成了点了没反应的死开关。 */}
+            {showRing && pct != null && (
               <circle
                 className="dot-ring-fill"
                 cx="28"
@@ -461,30 +470,19 @@ export function PetBall({
         </div>
       )}
 
-      {/* 球心数值（DOM 而非 WebGL 文字：透明窗口下更清晰，且随皮肤换色） */}
-      {/* 数值：球形态放回环心；人物形态环心被人物占着 → 只走下方胶囊 */}
-      {!failed && !figure && (
+      {/* 下方胶囊（供应商名 + 轮播点）只在人物形态出现：球形态的窗口只有 56×56，
+          胶囊最宽 140px 会被 .petball 的 overflow:hidden 切掉；它的读数位就是上面的环心数字。 */}
+      {figure && !failed && (
         <div
-          className={`petball-center-value${value.length > 5 ? ' small' : ''}`}
-          style={{ left: center.x, top: center.y }}
-          aria-hidden="true"
-        >
-          {value}
-        </div>
-      )}
-      {!failed && (
-        <div
-          className={`petball-caption${figure ? '' : ' sub'}`}
+          className="petball-caption"
           style={{
             left: clampX(center.x, 70),
-            // 人物形态：优先贴在主体下方，但**夹在窗内**（窗口矮，按半身高推会溢出被切）
-            top: figure
-              ? Math.min(center.y + half.h + 20, viewSize.h - 26)
-              : center.y + half.h + 18
+            // 优先贴在主体下方，但**夹在窗内**（窗口矮，按半身高推会溢出被切）
+            top: Math.min(center.y + half.h + 20, viewSize.h - 26)
           }}
           aria-hidden="true"
         >
-          {figure && <span className={`petball-value${value.length > 5 ? ' small' : ''}`}>{value}</span>}
+          <span className={`petball-value${value.length > 5 ? ' small' : ''}`}>{value}</span>
           {label && <span className="petball-label">{label}</span>}
           {count > 1 && (
             <span className="petball-dots">
@@ -504,8 +502,8 @@ export function PetBall({
             top: ringBox.y,
             width: ringBox.w,
             height: ringBox.h,
-            // 球形态画圆核对投影，人物形态画方框核对包围盒
-            borderRadius: figure ? 10 : '50%'
+            // 只可能是人物形态：ringBox 由 3D 场景的 hitRect 填，球形态没有场景，w 恒为 0
+            borderRadius: 10
           }}
           aria-hidden="true"
         />
@@ -521,14 +519,26 @@ export function PetBall({
           {bubble}
         </div>
       )}
-      {isStale(s ?? {}) && figure && !failed && (
-        // 角标贴主体右上（人物形态落在肩侧、球形态落在球缘）
+      {isStale(s ?? {}) && !failed && (
+        // 可信度角标。**球形态也要有**（2026-09-27 复核补上）：ballLevel() 只看 status、
+        // 不看 dataQuality，所以缓存/本机估算的数字在小环上是和权威数据一模一样的绿/琥珀色，
+        // 看上去就是实时值。tooltip 里虽然写了「（缓存数据 · 14:03）」，可那要悬停才看得到 ——
+        // 而「数字在骗人」正是最该一眼看出的场景。角标只在该出现时出现，不是装饰。
         <div
           className="petball-badge"
-          style={{ left: clampX(center.x + half.w * 0.62, 8), top: center.y - half.h * 0.62 }}
+          // 人物形态贴右上肩侧。球形态窗口只有 56×56：环的 stroke 外缘在 r=24.5（圆心 28,28），
+          // 空角沿 45° 对角线到盒角（距圆心 39.6）只有 15.1px，15px 的角标必然压弧或被
+          // overflow:hidden 裁掉（实测 15px 落在 (37,5)-(52,20)，最近角距圆心仅 12.0）。
+          // 所以球形态缩到 10px。注意是**正方形**：离圆心最近的是角不是边中点，半对角线
+          // 5√2≈7.07，所以圆心要放到 24.5+7.07=31.57 才真正内切。百分比坐标跟着 viewBox 走。
+          style={
+            figure
+              ? { left: clampX(center.x + half.w * 0.62, 8), top: center.y - half.h * 0.62 }
+              : { left: '89.9%', top: '10.1%' }
+          }
           aria-hidden="true"
         >
-          <Icon name={s?.dataQuality === 'local' ? 'flask' : 'history'} size={9} />
+          <Icon name={s?.dataQuality === 'local' ? 'flask' : 'history'} size={figure ? 9 : 7} />
         </div>
       )}
 

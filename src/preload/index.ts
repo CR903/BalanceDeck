@@ -74,7 +74,7 @@ const api = {
   // ─── 收起态 3D 悬浮物（球 / 个性人物）──────────────────────────────────────
   /** 右键菜单：把菜单模型交给主进程弹原生菜单，回传选中项 id（未选中返回 null） */
   petMenu: (model: PetMenuModel): Promise<string | null> => ipcRenderer.invoke('pet:menu', model),
-  /** 收起态形态：true = 个性人物（人物独立站着），false = 3D 悬浮球 */
+  /** 收起态形态：true = 个性人物（人物独立站着），false = 2D 小圆环 */
   setPetFigure: (figure: boolean): void => ipcRenderer.send('pet:mode', figure === true),
   /** 总在最前开关 */
   setAlwaysOnTop: (on: boolean): void => ipcRenderer.send('ui:always-on-top', on !== false),
