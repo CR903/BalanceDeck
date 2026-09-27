@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "步 4 要改一批 uitest 断言与一个测试套件，而本 spec 记着两条硬纪律：「不留永真的假护栏」（petFigureOnly 会变成永过）与「加护栏后先弄坏它一次」"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "步 3 删死码要动 scene.ts / rig.ts / projection.ts / skins.css / package.json。该 spec 记着哪两个「地面」物体是人物形态仍在用的（删错就伤到人物），以及 test-structure 的 qa/ 目录闭集断言"}
+{"file": "CONTEXT.md", "reason": "「形态」词条与「数字助理不是宠物」的定位 —— 球形态改回小圆环后，定位描述是否还成立（球形态下连角色都没有了）"}

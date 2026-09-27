@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "本任务改的就是形态契约：PetBall 的渲染分支、props（showRing）、CSS 类名与「严重度有三种拼法」这条。动 PetBall.tsx 前必须知道 props 约定与 class 命名不能随手加第四种"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "决定复用 .petball-fallback 而不是复活 d5a028e 的 CollapsedDot —— 那条决策的依据就是本 spec 记录的「两处 AppState / 两处 skin 状态」不一致，搬回旧组件会引入第三份状态来源"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "3D 场景 effect 要加 figure 守卫；该 spec 记录了本项目 effect 依赖数组的两种约定（ref 镜像 vs 闭包）与 three.js 生命周期，必须避免引入第三种"}
