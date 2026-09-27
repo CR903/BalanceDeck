@@ -23,6 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [External API Integration Guide](./external-api-integration.md) | Verify the endpoint, keep labels honest, never approximate口径 | Wiring up or maintaining any third-party HTTP API |
 
 ---
 
@@ -50,6 +51,20 @@ These guides help you **ask the right questions before coding**.
 - [ ] Multiple branches update the same derived state from `kind` / `action`
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+
+### When to Think About External APIs
+
+- [ ] You're picking an endpoint from docs, a generated client, or a scraped JS bundle
+- [ ] A script/doc claims something is "实测" / "verified" / "official"
+- [ ] The third party renamed a field, or you must map an old shape to a new one
+- [ ] You have a value for the right concept but a different window/period
+- [ ] You changed **where** a number comes from (local → server, or vice versa)
+- [ ] A diagnostic/QA command reads a credential the product resolves differently
+- [ ] Two or more requests to one host, and one occasionally fails
+- [ ] You just added a test for a rule you believe matters
+
+→ Read [External API Integration Guide](./external-api-integration.md)
+（可执行契约在 [`../adapters/`](../adapters/index.md)）
 
 ### When Verifying AI Cross-Review Results
 
