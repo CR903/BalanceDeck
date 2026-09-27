@@ -127,11 +127,16 @@ export function PetBall({
   }, [ready, hideBalance])
 
   // 角色切换：换人 + 自报家门（进场动作由场景在模型就位那一刻自己播，见 scene.ts）
+  //
+  // `figure` 必须进依赖数组并在函数体里守卫（2026-09-27 修）：
+  // 球形态里没有人，原实现无条件 `showBubble('你好，我是…～')`，
+  // 于是「未开启个性人物」时点一下球也会冒出人物打招呼的泡泡。
+  // 放进依赖是有意的：球 → 人物形态切换时角色"到场"，自报家门合理。
   useEffect(() => {
     sceneRef.current?.setPet(pet.id)
-    showBubble(`你好，我是${pet.name}～`)
+    if (figure) showBubble(`你好，我是${pet.name}～`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pet.id])
+  }, [pet.id, figure])
 
   // 皮肤：主进程推送时 App 会重挂 data-skin，等一帧让 CSS 变量生效再重读令牌
   useEffect(() => {
@@ -365,8 +370,11 @@ export function PetBall({
     else if (!renaming) {
       // 点击 = 立即展开。挥手动画**不阻塞**：等 1.5s 动画播完再展开，既是体验问题
       // （点一下要等一秒半），也会让 UI 断言在 700ms 的等待窗口里读不到展开后的窗口。
-      const scene = (window as any).__bd_pet_scene__
-      void scene?.playGesture?.('wave')?.catch?.(() => {})
+      // 球形态没有人可挥（2026-09-27 修：原来无条件挥手），但**展开照常**。
+      if (figure) {
+        const scene = (window as any).__bd_pet_scene__
+        void scene?.playGesture?.('wave')?.catch?.(() => {})
+      }
       onExpand()
     }
   }

@@ -537,6 +537,13 @@ export async function runUiTest(
       : 'fail:no-canvas'
   // 球形态：数值回到环心（宠物形态才放球下方胶囊）
   r.petBallCenterValue = (await exec("!!document.querySelector('.petball-center-value')")) ? 'ok' : 'fail:no-center-value'
+  // 球形态**不该**出现人物的自报家门泡泡（2026-09-27 用户反馈的 bug 的回归护栏）。
+  // 触发方式是切换角色/形态，所以这里切一次角色再等它有机会冒泡。
+  await exec("window.api.setExtras({ 'ui:petState': JSON.stringify({ version: 1, id: 'ray', name: 'Ray', createdAt: Date.now() }) })")
+  await sleep(700)
+  r.petBallNoBubble = !(await exec("!!document.querySelector('.petball-bubble')"))
+    ? 'ok'
+    : `fail:bubble=${await exec("document.querySelector('.petball-bubble')?.innerText || ''")}`
   await exec(dotClickJs())
   await sleep(1000)
   r.petBallExpand = bounds().width > 300 ? 'ok' : `fail:${bounds().width}`
