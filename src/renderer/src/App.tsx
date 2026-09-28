@@ -17,7 +17,7 @@ import {
 import type { PetMenuModel } from '../../shared/types'
 import { stopVoice } from './voice'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
-import { speakableSnapshot } from './read-model'
+import { speakableSnapshots } from './read-model'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -72,14 +72,16 @@ export default function App(): React.JSX.Element {
   const [voiceEvery, setVoiceEvery] = useState(60)
   /** 不播报的供应商 id（ui:voiceMuted，默认空 = 全部播报） */
   const [voiceMuted, setVoiceMuted] = useState<string[]>([])
+  /** 语音播报音色性别（ui:voiceGender，默认 any = 不限制） */
+  const [voiceGender, setVoiceGender] = useState<'female' | 'male' | 'any'>('any')
 
   /**
    * 播报上下文：定时器 effect 只依赖「开关 + 间隔」，其余值一律从 ref 读。
    * 为什么必须如此：依赖数组里一旦带上 collapsed / view，每次收/展面板、切视图
    * 都会重跑 effect 并「立即触发一次」—— 间隔设成 1 分钟就会感觉被播报了好几次。
    */
-  const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false, muted: voiceMuted })
-  speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance, muted: voiceMuted }
+  const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false, muted: voiceMuted, gender: voiceGender })
+  speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance, muted: voiceMuted, gender: voiceGender }
   const voiceTimerRef = useRef<number | null>(null)
 
   const persistPet = (s: PetState): void => {
@@ -161,6 +163,12 @@ export default function App(): React.JSX.Element {
     void window.api.setExtras({ 'ui:voiceEvery': String(minutes) })
   }
 
+  /** 语音播报音色性别 */
+  const setVoiceGenderPref = (g: 'female' | 'male' | 'any'): void => {
+    setVoiceGender(g)
+    void window.api.setExtras({ 'ui:voiceGender': g })
+  }
+
   /** 悬浮球右键菜单：原生菜单由主进程渲染，动作回到这里执行 */
   const petMenu = async (): Promise<string | null> => {
     const p = petRef.current
@@ -197,7 +205,7 @@ export default function App(): React.JSX.Element {
     return picked
   }
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted']).then((e) => {
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceOn', 'ui:voiceEvery', 'ui:voiceMuted', 'ui:voiceGender']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
@@ -209,6 +217,8 @@ export default function App(): React.JSX.Element {
       } catch {
         setVoiceMuted([])
       }
+      const gender = e['ui:voiceGender']
+      setVoiceGender(gender === 'female' || gender === 'male' ? gender : 'any')
       const every = parseInt(e['ui:voiceEvery'] || '60', 10)
       // 支持档位：1/3/5/10/15/30/60 分钟
       if (every >= 1 && [1, 3, 5, 10, 15, 30, 60].includes(every)) {
@@ -235,7 +245,7 @@ export default function App(): React.JSX.Element {
   /** 动态 import 语音模块并朗读；失败只记一条日志，不影响界面 */
   const say = (text: string): void => {
     import('./voice')
-      .then(({ speak }) => speak(text))
+      .then(({ speak }) => speak(text, 'zh-CN', speakCtxRef.current.gender))
       .catch(() => console.warn('[voice] 无法导入 speak 函数'))
   }
 
@@ -248,18 +258,21 @@ export default function App(): React.JSX.Element {
     //   「展开面板时不播报」正好相反 —— 结果是开着面板才播、收成球反而不播）
     if (!ctx.collapsed) return
 
-    const snapshot = speakableSnapshot(ctx.snapshots, ctx.muted)
-    if (!snapshot) return
+    const snapshots = speakableSnapshots(ctx.snapshots, ctx.muted)
+    if (snapshots.length === 0) return
 
-    const name = snapshot.name || snapshot.id
-    // 隐藏余额时不能把金额读出来（界面上是 ••••），只播用量；连用量都没有就如实说明
-    if (ctx.hideBalance && !snapshot.windows.some((w) => w.percent != null)) {
-      say(`${name}，余额已隐藏`)
-      return
+    // 遍历所有可播报的供应商（2026-09-28 修复：原来只播第一个）
+    for (const snapshot of snapshots) {
+      const name = snapshot.name || snapshot.id
+      // 隐藏余额时不能把金额读出来（界面上是 ••••），只播用量；连用量都没有就如实说明
+      if (ctx.hideBalance && !snapshot.windows.some((w) => w.percent != null)) {
+        say(`${name}，余额已隐藏`)
+        continue
+      }
+      const summary = providerSummary(snapshot)
+      if (!summary) continue
+      say(`${name}，${summary}${qualitySuffix(snapshot)}`)
     }
-    const summary = providerSummary(snapshot)
-    if (!summary) return
-    say(`${name}，${summary}${qualitySuffix(snapshot)}`)
   }
 
   /** 语音播报定时器 */
@@ -383,6 +396,8 @@ export default function App(): React.JSX.Element {
             onSetVoiceEvery={setVoiceEveryInterval}
             alwaysTop={alwaysTop}
             onToggleAlwaysTop={toggleAlwaysTop}
+            voiceGender={voiceGender}
+            onSetVoiceGender={setVoiceGenderPref}
           />
         ) : view === 'detail' ? (
           <DetailView

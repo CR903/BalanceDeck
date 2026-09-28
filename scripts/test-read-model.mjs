@@ -12,7 +12,7 @@ import { loadTs } from './lib/load-ts.mjs'
 
 const rm = await loadTs('src/renderer/src/read-model.ts')
 const { fmtAmount } = await loadTs('src/renderer/src/format.ts')
-const { primaryWindow, primaryWindowIndex, worstWindow, maxPercent, snapshotLevel, windowLevel, severityRank, ballLevel, speakableSnapshot } = rm
+const { primaryWindow, primaryWindowIndex, worstWindow, maxPercent, snapshotLevel, windowLevel, severityRank, ballLevel, speakableSnapshots } = rm
 
 let pass = 0
 let fail = 0
@@ -110,18 +110,18 @@ eq(fmtAmount(88.5, 'usd', { compact: true }), '$88.50', 'G4 紧凑档 <100 仍�
 eq(fmtAmount(1500000, 'token'), '1.5M', 'G5 token 用 M/K')
 eq(fmtAmount(1500000, 'token', { compact: true }), '1.5M', 'G6 token 两档写法相同（口径未变）')
 
-console.log('\nH. 该播报哪一个（muted = 不播报的 id 列表，空 = 全部允许）')
+console.log('\nH. 哪些可以播报（muted = 不播报的 id 列表，空 = 全部允许）')
 
 const okSnap = (id) => snap({ id, name: id })
 const badSnap = (id, status) => snap({ id, name: id, status })
 
-eq(speakableSnapshot([okSnap('a'), okSnap('b')])?.id, 'a', 'H1 默认全部允许 → 卡片顺序里第一个正常的')
-eq(speakableSnapshot([okSnap('a'), okSnap('b')], ['a'])?.id, 'b', 'H2 静音 a → 播 b')
-eq(speakableSnapshot([okSnap('a'), okSnap('b')], ['b', 'a']), undefined, 'H3 全静音 → 不播')
-eq(speakableSnapshot([badSnap('a', 'error'), okSnap('b')])?.id, 'b', 'H4 跳过非 ok 的')
-eq(speakableSnapshot([badSnap('a', 'error'), badSnap('b', 'nodata')]), undefined, 'H5 都不可用 → 不播')
-eq(speakableSnapshot([]), undefined, 'H6 没有快照 → 不播')
-eq(speakableSnapshot([okSnap('a')], ['不存在'])?.id, 'a', 'H7 静音未列出的 id 不影响结果')
+eq(speakableSnapshots([okSnap('a'), okSnap('b')]).map((s) => s.id).join(','), 'a,b', 'H1 默认全部允许 → 返回所有正常供应商')
+eq(speakableSnapshots([okSnap('a'), okSnap('b')], ['a']).map((s) => s.id).join(','), 'b', 'H2 静音 a → 只返回 b')
+eq(speakableSnapshots([okSnap('a'), okSnap('b')], ['b', 'a']).length, 0, 'H3 全静音 → 返回空数组')
+eq(speakableSnapshots([badSnap('a', 'error'), okSnap('b')]).map((s) => s.id).join(','), 'b', 'H4 跳过非 ok 的')
+eq(speakableSnapshots([badSnap('a', 'error'), badSnap('b', 'nodata')]).length, 0, 'H5 都不可用 → 返回空数组')
+eq(speakableSnapshots([]).length, 0, 'H6 没有快照 → 返回空数组')
+eq(speakableSnapshots([okSnap('a')], ['不存在']).map((s) => s.id).join(','), 'a', 'H7 静音未列出的 id 不影响结果')
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

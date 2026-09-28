@@ -285,6 +285,8 @@ export function SettingsView({
   onToggleVoice,
   alwaysTop,
   onToggleAlwaysTop,
+  voiceGender,
+  onSetVoiceGender,
   ...petProps
 }: {
   onBack: () => void
@@ -295,6 +297,9 @@ export function SettingsView({
   /** 悬浮球是否总在最前（ui:alwaysOnTop） */
   alwaysTop: boolean
   onToggleAlwaysTop: (on: boolean) => void
+  /** 语音播报音色性别（ui:voiceGender） */
+  voiceGender: 'female' | 'male' | 'any'
+  onSetVoiceGender: (g: 'female' | 'male' | 'any') => void
 } & PetSectionProps): React.JSX.Element {
   const [payload, setPayload] = useState<ProvidersPayload | null>(null)
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
@@ -719,6 +724,17 @@ export function SettingsView({
             <span className="knob" />
           </button>
         </div>
+        <label className="field">
+          <span className="field-label">语音播报音色</span>
+          <select
+            value={voiceGender}
+            onChange={(e) => onSetVoiceGender(e.target.value as 'female' | 'male' | 'any')}
+          >
+            <option value="any">不限制</option>
+            <option value="female">女声</option>
+            <option value="male">男声</option>
+          </select>
+        </label>
         {foreignLoginItem && (
           <div className="settings-note warn">
             系统「登录项」里还残留着本应用（多来自旧版本），本开关无法移除它。请到

@@ -75,15 +75,17 @@ export function severityRank(s: ProviderSnapshot): number {
 }
 
 /**
- * 该播报哪一个供应商：卡片顺序里第一个状态正常、且没被静音的。
+ * 哪些供应商可以播报：所有状态正常、且没被静音的。
  * muted 传「不要播报的 id」而不是「允许播报的 id」—— 这样默认空列表就等于全部允许，
  * 老用户没有这个偏好时行为与从前一致，而「只关掉其中一个」也表达得出来。
+ *
+ * 返回数组而非单个：用户配置了多个供应商时，每个都应该播报（2026-09-28 修复）。
  */
-export function speakableSnapshot(
+export function speakableSnapshots(
   snapshots: ProviderSnapshot[],
   muted: readonly string[] = []
-): ProviderSnapshot | undefined {
-  return snapshots.find((s) => s.status === 'ok' && !muted.includes(s.id))
+): ProviderSnapshot[] {
+  return snapshots.filter((s) => s.status === 'ok' && !muted.includes(s.id))
 }
 
 /**
