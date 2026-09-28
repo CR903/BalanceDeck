@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "步 4/5 的 10 条新门每条都要走「写绿→弄坏→红→还原→绿」；还要判 build 前置与 uitest 退出 flake 的判读方式"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复核 --ball-bg/--ball-rim 五皮肤取值是否成体系、rim 方向与盘色是否相反、删 backdrop-filter 后有没有留下会骗人的注释"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "复核 interval effect 的 deps 未被 advanceAuto 污染、live ref 每渲染同步、卸载 cleanup 完整；这是本任务唯一会静默失效的地方"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "作废 petCarouselResetsWindow → petCarouselOrder 横跨 uitest/结构门/implement 批次记录三处；令牌改动横跨 skins.css→PetBall→ballshot 证据链，漏一处就是静默失效"}

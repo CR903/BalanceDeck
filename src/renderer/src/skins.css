@@ -31,7 +31,17 @@
   /* 收起态圆点的立体光影（逐皮肤定义，保证每种皮肤都有体积感） */
   --dot-top: rgba(255, 255, 255, 0.55);
   --dot-bottom: rgba(0, 0, 0, 0.07);
-  --dot-rim: rgba(255, 255, 255, 0.55);
+  /* 球形态的**表面色 + 盘缘**：与 --track/--dot-top/--dot-bottom 同族的球专属令牌。
+     此前 .petball-fallback 的底盘借的是页面级的 --bg（卡片/页面表面色），与「桌面壁纸长什么样」
+     毫无关系 —— 6 个皮肤变体里 4 个因此给出浅色盘，minimal 是纯白、ink 是米色，白底桌面上
+     球根本读不出「这是一个物体」。球随皮肤变色本身是对的（--track 就是逐皮肤对着该皮肤的球盘
+     调的），缺的只是**一个属于球的表面色**。
+     判据（可算，不靠目测）：--ball-rim 的方向必须与盘相反 —— 浅色盘的 rim 是深色且 alpha ≥ 0.16，
+     深色盘的 rim 是浅色且 alpha ≥ 0.12。
+     ⚠ :root 必须有这两条 —— 外部皮肤（ext:*）没写时球会变成**完全透明**，
+       一个没有底的球比一个浅色的球更糟。 */
+  --ball-bg: rgba(246, 246, 248, 0.86);
+  --ball-rim: rgba(0, 0, 0, 0.16);
   --radius-lg: 16px;
   --radius-md: 12px;
   --radius-sm: 8px;
@@ -65,7 +75,10 @@
     --shadow-pop: 0 10px 36px rgba(0, 0, 0, 0.5);
     --dot-top: rgba(255, 255, 255, 0.22);
     --dot-bottom: rgba(0, 0, 0, 0.36);
-    --dot-rim: rgba(255, 255, 255, 0.14);
+    /* 暗色 aero 的球盘必须在这里覆盖，否则会继承上面 :root 的**浅色** --ball-bg：
+       跟随系统的暗色用户会拿到一个白球。 */
+    --ball-bg: rgba(28, 28, 30, 0.68);
+    --ball-rim: rgba(255, 255, 255, 0.14);
   }
 }
 
@@ -94,7 +107,8 @@
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
   --dot-top: rgba(255, 255, 255, 0.16);
   --dot-bottom: rgba(0, 0, 0, 0.5);
-  --dot-rim: rgba(255, 255, 255, 0.12);
+  --ball-bg: #101014; /* 原 --bg 的值：深色盘本就与球同色，无需改 */
+  --ball-rim: rgba(255, 255, 255, 0.12);
 }
 
 [data-skin='minimal'] {
@@ -114,14 +128,19 @@
   --ok: #1a9e4b;
   --warn: #c77700;
   --danger: #d92c20;
-  --track: rgba(0, 0, 0, 0.08);
+  --track: rgba(0, 0, 0, 0.12);
   --btn-primary: linear-gradient(180deg, #2c2c31, #111114);
   --btn-primary-fg: #fff;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.12);
   --dot-top: rgba(255, 255, 255, 0);
   --dot-bottom: rgba(0, 0, 0, 0.08);
-  --dot-rim: rgba(0, 0, 0, 0.08);
+  /* #ffffff 在白底桌面上零对比（这就是「看不出这是一个球」的直接原因）→ 收到带冷调的
+     #f2f2f6，仍读作「极简白」，但与桌面分得开；rim 提到 0.18 把轮廓钉住。
+     --track 0.08 → 0.12：轨道是盘上唯一的进度参照，浅盘上 0.08 太淡。
+     ⚠ --track 是共享令牌，minimal 下滚动条滑块等消费者会跟着深一档（同族调色，可接受）。 */
+  --ball-bg: #f2f2f6;
+  --ball-rim: rgba(0, 0, 0, 0.18);
 }
 
 [data-skin='candy'] {
@@ -148,7 +167,11 @@
   --shadow-pop: 0 12px 36px rgba(120, 90, 200, 0.22);
   --dot-top: rgba(255, 255, 255, 0.9);
   --dot-bottom: rgba(120, 90, 200, 0.16);
-  --dot-rim: rgba(255, 255, 255, 0.7);
+  /* --bg 的 linear-gradient 是为几百 px 的卡片调的，放进 56px 的盘里会糊成一条污迹
+     （实拍取证）→ 压成一个中间调纯色，并偏紫一档以免又读成「白盘」。
+     rim 沿用本皮肤的紫（--track 同源），不用中性灰黑，才不像贴了张别的皮的圆。 */
+  --ball-bg: #f1eafb;
+  --ball-rim: rgba(120, 90, 200, 0.24);
 }
 
 [data-skin='ink'] {
@@ -175,7 +198,10 @@
   --shadow-pop: 0 10px 30px rgba(60, 50, 30, 0.2);
   --dot-top: rgba(255, 255, 255, 0.75);
   --dot-bottom: rgba(60, 50, 30, 0.12);
-  --dot-rim: rgba(255, 255, 255, 0.5);
+  /* 纸色保留（这是这款皮肤的灵魂），但 rim 从白 `rgba(255,255,255,0.5)` 改成墨色 ——
+     白 rim 贴在米盘上几乎不可见，而米盘 + 白桌面本来就分不开，正是需要 rim 的场合。 */
+  --ball-bg: #f4f1ea;
+  --ball-rim: rgba(60, 50, 30, 0.22);
 }
 
 /* ─── 基础 ────────────────────────────────────────────────────────────────── */
@@ -1663,13 +1689,32 @@ textarea {
   height: 56px;
   display: grid;
   place-items: center;
+  /* 球专属令牌（见 :root 的注释）：表面色不再借页面级的 --bg。
+     grid-auto-flow/align-content/gap 是为了「数字正下方放短标签」——绝对定位换成行流后
+     标签自己占第二行、整组竖直居中，从此与环外缘不再争那 1.3px 余量（旧方案的死结）。 */
+  grid-auto-flow: row;
+  align-content: center;
+  gap: 1px;
   border-radius: 50%;
-  background: var(--bg);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  background: var(--ball-bg);
+  /* 背景只用 --ball-bg，不再借页面级 --bg（见 tokens 段注释）。
+     ⚠ 这里原来有 `backdrop-filter: blur(24px) saturate(180%)`，已删 —— 但**要分清两件事**：
+       ① 删它的**理由**成立且仍然成立：悬浮窗是 transparent: true（main/overlay.ts），
+          页面内 html/body/#root 全是 background: transparent，**页面里不存在任何可被采样
+          的 backdrop**，这条滤镜履行不了它注释宣称的「磨砂桌面背景」职责 —— 留着就是一条
+          会骗人的注释。
+       ② **它不是用户报的那个「球外面套一圈浅色方框」的成因。** 删掉它之后方框仍在
+          （2026-09-28 用户实机复测）。已排除：页面侧只有本元素这一个满幅背景、且是 56×56
+          的圆；窗口收起态 hasShadow=false、无 vibrancy。因此那个方框另有出处，**待定位**——
+          任何人再看到它，不要重新归因到 backdrop-filter。
+     ⚠ --ballshot 的 capturePage 出的是透明 PNG、不合成桌面 backdrop，**拍不到屏幕合成结果**：
+       「实拍没变化」不能作为「框消失了」的证据。 */
   box-shadow:
-    inset 0 1px 1.5px var(--dot-rim),
-    inset 0 0 0 1px var(--dot-rim),
+    inset 0 1px 1.5px var(--dot-top),
+    /* 盘缘（轮廓）：方向与盘相反的 --ball-rim 是球在桌面上读作「一个物体」的唯一保证。
+       顶部发丝高光仍取 --dot-top（逐皮肤的「顶部高光」；minimal 是 alpha 0 = 不要高光），
+       盘缘与高光是两件事，不要合成一个令牌。 */
+    inset 0 0 0 1px var(--ball-rim),
     inset 0 -6px 12px var(--dot-bottom),
     0 6px 18px rgba(0, 0, 0, 0.28);
   /* 按压反馈：首版（`d5a028e` 的 .dot-btn:active）就有的缩放。注意 translate 必须一起带上 ——
@@ -1733,19 +1778,22 @@ textarea {
    用户不知道自己停在 5 小时还是本周，「挨个显示」就是盲切（PRD D3 已拍板：要）。
    只在 s.windows.length > 1 时渲染：单窗口写个 5H 是噪音。
 
-   几何（56×56，圆心 28,28，环外缘 r = 22 + 5/2 = 24.5）：文本盒在左下角，
-   离圆心最近的是它的**右上角** (x1, y0)，须满足 (28-x1)² + (y0-28)² > 24.5²。
-   font-size 9px、贴左下角（left/bottom 各 0）时墨迹约 x ≤ 12、y ≥ 47.7：
-   √(16² + 19.7²) = 25.4 > 24.5，余量 ≈ 0.9px —— 全设计最紧的一处。
-   ⚠ 实拍压环就退到 8px（余量 ≈ 2.4px），**不许**把标签挪进环内换空间（会盖住读数）。 */
+   位置：**百分比数字的正下方居中**（同一列、整组竖排居中），不是旧方案的左下角。
+   旧方案绝对定位在 left/bottom 0、9px，与环外缘只剩 ≈0.9px 余量 —— 全设计最紧的一处，
+   还留着「压环就退 8px」的预案。改走 grid 行流后 1.3px 死结消失：
+   盘内可用直径 = 环外缘直径 = 2 × 24.5 = 49px，内容总高 = 13(数字) + 1(gap) + 8(标签) = 22px，
+   上下各余 6.75px，从容。SVG 是 position:absolute（不参与 grid 流），所以流里只有这两行。
+
+   字体：全项目只有 body 那一套 sans 栈（-apple-system 系），没有第二种字体观感；
+   标签内容是纯拉丁字符（不涉及中文字体回退），故直接引入等宽栈 —— 8–9px 下等宽更像仪表读数。
+   ⚠ 不要改回 font-family: inherit（那会退回与 --dot-value 同一个栈，AC3.3）。 */
 .petball.no3d .dot-winlabel {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  font-size: 9px;
+  position: static;
+  font-size: 8px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-weight: 500;
   line-height: 1;
-  font-weight: 640;
-  letter-spacing: -0.02em;
+  letter-spacing: 0.04em; /* 等宽下 5H 两个字符偏挤，补一点字距 */
   color: var(--fg-dim);
   pointer-events: none;
 }

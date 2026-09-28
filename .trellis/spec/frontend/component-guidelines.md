@@ -257,6 +257,27 @@ reparents. Clear refs in cleanup, move state resets into an effect body.
 The home status line is a 7-deep nested ternary (`CardView.tsx:478-490`). It is the worst
 construct in the renderer. Use `read-model.ts`'s `snapshotLevel` / `worstWindow` instead.
 
+### Don't: change a cross-form rule without asking whether it holds in the other form
+
+`.petball-hit` / `.petball-fallback` / `.dot-value` are **shared by both forms** — the fallback
+is the 2D ring *and* the figure's WebGL-unavailable path. Before editing one, ask: *does this
+rule still hold when the other form is active?*
+
+Concretely, from 2026-09-28: `.petball-fallback` had `backdrop-filter: blur(24px) saturate(180%)`
+with the comment "磨砂桌面背景". It could not do that job — the window is `transparent: true`
+and the page has no samplable backdrop — and in the dark skin it rendered as a light frame
+around the ball. A comment promising a capability the code does not have is worse than no
+comment. Same class of error: a token whose name says "page surface" being used for the ball.
+
+### Don't: pin an expectation to a value that depends on text length
+
+The figure baseline (`FIG_BASE` in `uitest.ts`) pins 8 fields byte-for-byte. Seven are
+geometry; `overlay`'s **width** is a function of the caption string (label width + padding),
+so pinning `77` couples a figure-form assertion to which provider happens to be on screen.
+Seven geometry fields stay pinned; `overlay` is checked structurally instead. Apply the same
+test to any new baseline field: *if changing this number requires changing a string somewhere
+else, it is not a figure-form property.*
+
 ### Don't: extend the dead pet CSS
 
 `skins.css:2105-2366` (262 lines) targets the removed SVG-sprite pets

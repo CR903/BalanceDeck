@@ -300,13 +300,16 @@ export function PetBall({
   const count = snaps.length
 
   /**
-   * 换供应商的**唯一入口** —— 自动轮播 tick 与滚轮横向步进都必须调它。
+   * `idx`（换人）的**唯一出口** —— 自动轮播与滚轮横向步进都必须调它。
    * 换人 → 窗口索引固定落回 `windows[0]`（PRD §6 已拍板的 Q1=B：上下滚动的起始点可预期），
    * 两个 setState 在同一次调用里由 React 批处理成一帧，`winIdx` 与 `s` 永远同帧更新。
    *
    * ⚠ 不许在 interval 里另写一次 `setIdx`（那条路径就不会重置窗口），
    *   也不许改成 `useEffect(..., [idx])` 去重置 —— 后者会先用**旧 winIdx** 画一帧
    *   新供应商的窗口，再被 effect 打回 0：中心数字闪一下别的读数，动画起点也会算错。
+   *
+   * R4 后放宽的只有一句：它不再要求自己是「自动轮播的**唯一出口**」——自动轮播会在同一家内
+   * 逐个走完窗口，那条路径不碰 `idx`。红线收紧成了「**`idx` 的唯一出口**」，方向没变松。
    */
   const advanceProvider = useCallback(
     (dir: number): void => {
@@ -321,21 +324,50 @@ export function PetBall({
   const lastAdvance = useRef(0)
   const holdUntil = useRef(0)
 
+  /**
+   * 轮播 tick 要读的两个**渲染期取值**（窗口数 / 窗口索引）的 ref 镜像。
+   * 为什么这么做：自动轮播的判断依赖 `s` 与 `winIdx`，而它们每切一次窗口就变一次。
+   * 让 tick 直接闭包捕获它们、或做成 useCallback 再塞进依赖数组，代价是
+   * **每切一次窗口就重建一次 interval effect** —— 定时器反复拆建，且「满 6 秒」的基准
+   * 从「上次推进」变成「上次 effect 重跑」；数据刷新若顺带改了 `count`/`s`，
+   * 用户等的那一步就被往后推。
+   *
+   * ⚠ 一条**被实测推翻**的说法，别照抄：曾写「把窗口相关的量放进依赖数组 → lastAdvance
+   *   归零 → 6 秒永远走不到 → 球彻底静止」。实测（uitest 两轮，各把 live.current.winIdx
+   *   和一个每渲染都变的量塞进 deps）**静止不了**：tick 先把 lastAdvance 置成 now 再改状态，
+   *   effect 紧接着重跑又置成同一个 now，两者相差不到 1ms，节奏仍是 6 秒。真实代价是上面
+   *   两条（定时器 churn + 基准漂移），不是卡死。live ref 仍是对的写法，但理由按实测写。
+   *
+   * 赋值放在渲染期（不是 effect 里），与下面 `idxMirror` 同一个模式：ref 永远新鲜。
+   */
+  const live = useRef({ winCount: 0, winIdx: 0 })
+
   useEffect(() => {
     if (count <= 1) return
     // 节奏从挂载起算：不重置的话 lastAdvance 一直是 0，第 1 秒的 tick 就会判定「已满 6 秒」
     lastAdvance.current = Date.now()
     // 秒级 tick + 两个时间戳，而不是「固定 6s interval + hold 守卫」：后者在手动操作落在
     // 第 5.9 秒时，下一跳会被推到第 12 秒 —— 实测是「说了暂停 8 秒却等了 12 秒」。
-    // 1s tick 只做判断、未必 setIdx，零渲染开销，而语义精确到 ±1 秒。
+    // 1s tick 只做判断、未必 setState，零渲染开销，而语义精确到 ±1 秒。
     const t = window.setInterval(() => {
       const now = Date.now()
       if (now < holdUntil.current) return // 还在手动操作后的暂停期（AC4.3）
-      if (now - lastAdvance.current < AUTO_MS) return // 满 6 秒才换
+      if (now - lastAdvance.current < AUTO_MS) return // 满 6 秒才推进一步
       lastAdvance.current = now
-      advanceProvider(1) // ← 同一个入口：自动换人也把窗口打回 windows[0]
+      const { winCount: n, winIdx: w } = live.current
+      // 先在同一家里把窗口走完（5H → 周 → 月），走完才换人 —— 旧行为只换供应商、
+      // 且永远停在 windows[0]，用户看到的正是「快速切供应商但从不切时限」（R4）。
+      // 单窗口供应商：n > 1 不成立 → 直接换人，不空转一步（AC4.2）；充值余额供应商
+      // 没有环但走同一条路径（AC4.6），不为视觉特殊-case。
+      if (n > 1 && w + 1 < n) {
+        setWinIdx((i) => (i + 1) % n)
+      } else {
+        advanceProvider(1) // ← 换人的同一个入口：窗口落回 windows[0]
+      }
     }, 1000)
     return () => window.clearInterval(t)
+    // ⚠ 依赖里只有 count / advanceProvider（后者本身只依赖 count）。**不要**把任何
+    //   窗口相关的量（live、winIdx、s）加进来 —— 理由与实测见 live 的注释。
   }, [count, advanceProvider])
 
   const s: ProviderSnapshot | undefined = count ? snaps[idx % count] : undefined
@@ -347,6 +379,8 @@ export function PetBall({
   const winCount = s?.windows.length ?? 0
   // 渲染期镜像（见 idxMirror 的注释）：与上面的 ref 同一帧刷新，`__bd_ball` 读到的永远是本次渲染的索引
   idxMirror.current = { idx, winIdx, winCount }
+  // 同一个渲染期镜像模式：轮播 tick 读的是这个（不重跑 effect）——见 live 的注释
+  live.current = { winCount, winIdx }
 
   // 窗口夹紧：同一个供应商的窗口数量变了（数据刷新）就把索引收回范围内，防止越界。
   // ⚠ 依赖必须是**长度**而不是 `s`：依赖 s 的话，每轮采集（10–300s 一次）都会把用户

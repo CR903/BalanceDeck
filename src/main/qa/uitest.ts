@@ -125,6 +125,14 @@ export async function runUiTest(
     await sleep(500)
   }
 
+  /**
+   * 展开的 overlay 盒：[className, left, top, right, bottom]（**绝对坐标，不是宽高**）。
+   * 踩过的坑：曾把它当 [x, y, w, h] 读，于是把 right 当成宽、bottom 当成高 ——
+   * 「基线 245/44」实际是 y=245、h=44（289-245），坐标没错，是**读法**错了。
+   * 所以下面只做差值运算，永远不直接拿 right/bottom 当尺寸。
+   */
+  type OverlayBox = [string, number, number, number, number]
+
   type BallProbe = {
     err: string
     ring: string | null
@@ -819,11 +827,12 @@ export async function runUiTest(
   //  ③ 必须是**收起后的新挂载** —— 轮播的 lastAdvance 才重新起算（6s 一跳），
   //    等到 idx==1 立即量，在 12s 的下一跳之前完成。
   // 冷启动时素材解析可能超过 6 秒的轮播窗口，所以留 3 轮重试（第二轮起素材已缓存）。
+  // ⚠ overlay 不与 --ballshot 的 diag 逐字比对，改用**有界检查**（见下面 figOverlayWhy）。
+  //   其余 7 个字段仍逐位钉死。
   const FIG_BASE = JSON.stringify({
     win: [213, 293],
     stage: [213, 293],
     canvas: [426, 586, 213, 293],
-    overlay: [['petball-caption', 68, 245, 145, 289]],
     rect: {
       x: 26.880806326334206,
       y: 39.53742447368828,
@@ -843,7 +852,7 @@ export async function runUiTest(
     win: [window.innerWidth, window.innerHeight],
     stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
     canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
-    overlay: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-badge,.petball-toast')]
+    overlayRaw: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-badge,.petball-toast')]
       .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
     rect: window.__bd_ball?.()?.rect ?? null,
     center: window.__bd_ball?.()?.center ?? null,
@@ -853,6 +862,45 @@ export async function runUiTest(
     pet: document.querySelector('.petball')?.dataset.pet ?? '',
     caption: (document.querySelector('.petball-caption')?.innerText||'').trim().split('\\n').join(' / ')
   })`
+  /**
+   * overlay 的**有界检查**（替代逐位比对）。
+   *
+   * 为什么不能用「宽度 77」当硬期望（2026-09-28 实测裁决）：
+   * 胶囊的宽度 = 标签文字宽 + 左右 padding，而标签是**供应商名 + 读数**。R4 让自动轮播
+   * 改成「先走完窗口再换人」，节拍随之改变 —— 同一墙钟时刻会落在**不同的供应商**上：
+   *   · HEAD（R4 前）：diag 帧落 idx1「Claude Code」，标签 59.28px → 胶囊 77px → 68..145
+   *   · R4：        diag 帧落 idx0「OpenCode Go」，标签 64.24px → 胶囊 83px → 65..148
+   * 两边各连跑 3 次，**结果完全确定**（不是 flake，是节拍变化后的稳定新值）。
+   *
+   * 所以宽度从来不是「人物形态」的属性 —— 它是**文案长度**的属性。把 77 钉死，等于
+   * 把人物形态断言耦合到轮播时序：下一次节拍调整就会伪造一个「人物形态回归」。
+   *
+   * 保留的强度（这仍是一条有牙齿的断言，不是「什么都不查」）：
+   *  ① overlay 恰好**一项**，且就是 .petball-caption —— 基线的泡泡/角标必须已散尽，
+   *     多一项说明有残留 UI（曾经真的发生过）
+   *  ② y / h 逐位钉死：245 / 289（胶囊贴着脚、44px 高）—— 这两个与文案无关
+   *  ③ x / w 有界：盒子必须完整落在 213×293 窗内，且宽度在 [60, 120] —— 宽度归零、
+   *     溢出窗口、或窄到只剩一个字，都会红
+   *  ④ caption 文案本身仍逐位钉死（'13.7% / Claude Code'）—— 「是哪个供应商」这个信息
+   *     没丢，只是不再用它**推导**宽度
+   */
+  const figOverlayWhy = (ov: unknown, caption: string): string => {
+    if (!Array.isArray(ov)) return `fail:overlay-not-array=${JSON.stringify(ov)}`
+    if (ov.length !== 1) return `fail:overlay-items=${ov.length}（基线只有胶囊一项：${JSON.stringify(ov)}）`
+    const it = ov[0]
+    if (!Array.isArray(it) || it.length !== 5) return `fail:overlay-shape=${JSON.stringify(it)}`
+    const [cls, left, top, right, bottom] = it as OverlayBox
+    if (cls !== 'petball-caption') return `fail:overlay-class=${cls}`
+    // 绝对坐标 → 尺寸（差值，不是直接读 right/bottom）
+    const w = right - left
+    const h = bottom - top
+    if (top !== 245 || h !== 44) return `fail:overlay-yh=top${top}/h${h}（基线 245/44）`
+    if (left < 0 || right > FIGURE_VIEW.width) return `fail:overlay-xw=${left}..${right} 溢出 ${FIGURE_VIEW.width}`
+    if (w < 60 || w > 120) return `fail:overlay-width=${w}（应在 60–120：太窄只剩一个字，太宽说明 padding 跑飞）`
+    if (caption !== '13.7% / Claude Code') return `fail:caption=${caption}`
+    return ''
+  }
+
   let needAria = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''")) !== 'aria'
   let figGot = ''
   let figWhy2 = ''
@@ -927,7 +975,28 @@ export async function runUiTest(
     }
     figGot = raw
   }
-  r.petFigureUnchanged = figGot ? (figGot === FIG_BASE ? 'ok' : `fail:${figGot}`) : `fail:${figWhy2 || 'no-capture'}`
+  // 7 个字段逐位 + overlay 有界（见 figOverlayWhy 的裁决理由）
+  let figFail = figWhy2 || 'no-capture'
+  if (figGot) {
+    let parsed: Record<string, unknown> | null = null
+    try {
+      parsed = JSON.parse(figGot) as Record<string, unknown>
+    } catch {
+      parsed = null
+    }
+    if (!parsed) {
+      figFail = `fail:unparsed=${figGot.slice(0, 80)}`
+    } else if (parsed.idx !== 1 || parsed.pet !== 'aria') {
+      figFail = `fail:frame idx=${parsed.idx} pet=${parsed.pet}`
+    } else {
+      // 7 个几何/时序字段仍逐位钉死（把 overlayRaw 摘掉再比）
+      const { overlayRaw, ...rest } = parsed
+      void overlayRaw
+      if (JSON.stringify(rest) !== FIG_BASE) figFail = `fail:base=${figGot}`
+      else figFail = figOverlayWhy(parsed.overlayRaw, String(parsed.caption ?? ''))
+    }
+  }
+  r.petFigureUnchanged = figFail ? (figFail === 'no-capture' ? 'fail:no-capture' : figFail) : 'ok'
 
   // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
   await exec(`(()=>{
@@ -1132,6 +1201,42 @@ export async function runUiTest(
     if (g0.winLabel !== FIX_PLAN3_LBL[0]) winLabelWhy = `fail:lbl0=${g0.winLabel}`
   }
   r.petRingAlwaysOn = ringOnWhy || 'ok'
+  // AC3.1/AC3.2：短标签必须落在百分比**正下方**（同一列），既不压数字也不压环、且不溢出 56×56。
+  // 这里量的是**几何**，不是 CSS 声明 —— 声明由 scripts/test-structure.mjs 的 D4/D5 守。
+  // 两条声明各自的判据都能被改坏（见 implement.md），但它们都**证明不了**「真的在下方」：
+  // 那只有真实布局能给。所以这里补一条读 getBoundingClientRect 的。
+  //
+  // 阈值从几何算：整组 = 13(数字) + 1(gap) + 8(标签) = 22px，56 盘里竖直居中 → 数字底 ~31.5、
+  // 标签顶 ~32.5，间隙 ≈1px，容差取 5px（够松，别把正常的字体度量差异当回归）。
+  const wlGeo = String(await exec(`(()=>{
+    const dot=document.querySelector('.petball-fallback'); if(!dot) return 'fail:no-dot'
+    const dv=dot.querySelector('.dot-value'); const wl=dot.querySelector('.dot-winlabel')
+    if(!dv) return 'fail:no-value'; if(!wl) return 'fail:no-label'
+    const a=dv.getBoundingClientRect(), b=wl.getBoundingClientRect(), d=dot.getBoundingClientRect()
+    // 环的几何：56×56 盘，圆心 (28,28)，轨道 r=22、stroke 5 → 笔画内缘 r=19.5、外缘 r=24.5。
+    // 换算到**未缩放**的盘坐标系（按 d.width 归一），这样按压态的 scale 不会污染判据。
+    const k=56/d.width
+    const bx=(b.left-d.left)*k, by=(b.top-d.top)*k, bw=b.width*k, bh=b.height*k
+    const corners=[[bx,by],[bx+bw,by],[bx,by+bh],[bx+bw,by+bh]]
+      .map(([x,y])=>+Math.hypot(x-28,y-28).toFixed(2))
+    const inBox = bx>=0 && by>=0 && bx+bw<=56 && by+bh<=56
+    return JSON.stringify({gap:+(b.top-a.bottom).toFixed(2), corners, inBox, text:wl.textContent})
+  })()`))
+  let wlBelowWhy = ''
+  if (wlGeo.startsWith('fail:')) {
+    wlBelowWhy = wlGeo
+  } else {
+    const g = JSON.parse(wlGeo) as { gap: number; corners: number[]; inBox: boolean; text: string }
+    // ① 数字在上、标签在下：标签顶不低于数字底，且间隙在 5px 内（=「正下方」而非「另开一坨」）
+    if (g.gap < -0.5 || g.gap > 5) wlBelowWhy = `fail:gap=${g.gap}（标签须紧贴数字下方）`
+    // ② 不压环：四角到盘心的最大距离必须小于环笔画**内缘** r=19.5
+    else if (Math.max(...g.corners) >= 19.5) wlBelowWhy = `fail:press-ring=${Math.max(...g.corners)}`
+    // ③ 不溢出 56×56（AC3.2）
+    else if (!g.inBox) wlBelowWhy = 'fail:overflow-56'
+    // ④ 取值仍来自 shortWindowLabel()，随窗口切换同步变化（AC3.4 —— 位置对了但值错了也是回归）
+    else if (g.text !== FIX_PLAN3_LBL[0]) wlBelowWhy = `fail:text=${g.text} want=${FIX_PLAN3_LBL[0]}`
+  }
+  r.petWinLabelBelow = wlBelowWhy || 'ok'
   await wheelSettled(0, 100)
   const g1 = await ballProbe()
   if (!winCycleWhy) {
@@ -1298,26 +1403,46 @@ export async function runUiTest(
           break
         }
       }
-      // ② 暂停结束后轮播恢复；换人必须走唯一入口 → 窗口回到 windows[0]，读数是新供应商首窗
+      // ② R4：暂停结束后轮播**先在同一家里把窗口走完**，走完才换人。
+      //
+      //    这条**替换**掉了旧的 petCarouselResetsWindow（已作废，见下方 r 赋值处的注释）。
+      //    观测方式：500ms 一采，把 winIdx 的**去重序列**记下来；换人那一帧记 -1。
+      //    24 次 × 500ms = 12s 观测窗，按「走完 1 个窗口（6s）+ 换人（再 6s）」足够覆盖。
+      const seq: number[] = []
       let adv: BallProbe | null = null
-      for (let i = 0; i < 16 && !adv; i++) {
+      for (let i = 0; i < 24 && !adv && !advWhy; i++) {
         await sleep(500)
         const p = await ballProbe()
-        if (!p.err && p.idx !== m0.idx) adv = p
+        if (p.err) {
+          advWhy = `fail:probe=${p.err}`
+          break
+        }
+        if (p.idx === m0.idx) {
+          if (!seq.length || seq[seq.length - 1] !== p.winIdx) seq.push(p.winIdx)
+        } else {
+          adv = p
+          seq.push(-1) // 换人那一帧
+        }
       }
-      if (!adv) {
-        advWhy = 'fail:no-advance-in-8s'
-      } else {
+      if (!advWhy && !adv) {
+        advWhy = `fail:no-advance-in-12s seq=[${seq}]`
+      } else if (adv) {
         await sleep(700) // 等换人后的读数补间落定再取值
         const fin = await ballProbe()
         const nm = titleName(fin.title)
+        // **核心判据**：换人*之前*必须见过窗口往后走过（seq 里出现过 >0 的值）。
+        // 只守「换人时窗口回 0」是不够的 —— 旧的「每 6s 直接 advanceProvider」
+        // 同样满足那一条，而那正是 R4 要改掉的病（用户看到的「快速切供应商但从不切时限」）。
+        const walked = seq.some((w) => w > 0)
         advWhy = fin.err
           ? `fail:probe=${fin.err}`
-          : fin.winIdx !== 0
-            ? `fail:winIdx=${fin.winIdx}`
-            : FIX_AB_FIRST[nm] !== fin.value
-              ? `fail:${nm}=${fin.value} want=${FIX_AB_FIRST[nm]}`
-              : ''
+          : !walked
+            ? `fail:no-window-walk seq=[${seq}]`
+            : fin.winIdx !== 0
+              ? `fail:winIdx=${fin.winIdx} seq=[${seq}]`
+              : FIX_AB_FIRST[nm] !== fin.value
+                ? `fail:${nm}=${fin.value} want=${FIX_AB_FIRST[nm]} seq=[${seq}]`
+                : ''
       }
       // ③ 左右滚 = 换人：窗口必须归零、读数落到新供应商的 windows[0]（标题变 = 真换了人）
       const c0 = await ballProbe()
@@ -1341,8 +1466,66 @@ export async function runUiTest(
     }
   }
   r.petWheelHold = holdWhy || 'ok'
-  r.petCarouselResetsWindow = advWhy || 'ok'
+  // ⚠ petCarouselResetsWindow **已被 09-28-dot-frame-label-carousel 作废**（不是重命名）。
+  //
+  // 它守的是「自动轮播推进后窗口回到 0」。R4 之后，多窗口供应商的自动轮播**正确行为
+  // 就是窗口往后走**，该断言会把正确实现判成红的 —— 留着就是一条**会误报的假护栏**，
+  // 比没有护栏更坏（它会让人以为 R4 改错了）。
+  //
+  // 换上的 petCarouselOrder 守的是**完整序列**（先走完窗口 → 再换人 → 换人时窗口回 0），
+  // 而不只是换人那半边。仅守「换人时回 0」是不够的：旧的每 6s 直接 advanceProvider
+  // 同样满足那一条。
+  r.petCarouselOrder = advWhy || 'ok'
   r.petProviderCycle = provWhy || 'ok'
+
+  // ── 场景四之二：petCarouselRhythm —— 专打 design §4.2 的「effect 重跑把节奏冻死」 ──
+  //
+  // 为什么要单独一条：petCarouselOrder 证明的是**一次**「走窗口→换人」；
+  // 这条证明的是**节拍连续** —— 走完窗口之后下一个 tick 仍在 6s 附近再推进一步，
+  // 而不是被某个 effect 重跑把 lastAdvance 归零、之后每一步都重新等满 6s。
+  //
+  // 判据不是「6s」（那受 ±1s tick 粒度与机器负载影响，太紧会变成常红的 flake），
+  // 而是**单调不倒退 + 不再无限等**：三次观测（0 → 至少 1 步 → 再至少 1 步）必须在
+  // 有限窗口内真的推进。冻结的实现（把 winIdx / s 塞进 deps）会一直停在 seq=[0]。
+  //
+  // 为什么要「不碰 holdUntil」：8s 的手动暂停（AC4.3）与 6s 的自动节奏同量级，
+  // 夹在一起观测会把暂停误读成冻结。走窗口这条路**不设 hold**，所以这里显式清掉它。
+  await pushSettle(FIX_AB)
+  const rh0 = await ballProbe()
+  let rhythmWhy = ''
+  if (rh0.err) {
+    rhythmWhy = `fail:probe=${rh0.err}`
+  } else if (rh0.winCount <= 1) {
+    rhythmWhy = `fail:precondition winCount=${rh0.winCount}`
+  } else {
+    // 起点：把窗口推到 0（setWindowTo 只发滚轮，会顺带起 8s 暂停 —— 见下面的说明）
+    await setWindowTo(0, 5)
+    const rBase = await ballProbe()
+    // 收「(idx, winIdx) 去重序列」，要求至少 3 个**互不相同**的状态。
+    // 为什么不逐对比较：换人后 winIdx 会归 0，与起点的 (0,0) 撞车，逐对比较会
+    // 在第一次换人处误判成「没推进」。去重序列天然处理这种回绕。
+    //
+    // 3 个不同状态 = 连着真的推进了 2 次（6s + 6s）。冻结的实现只会停在 1 个状态。
+    const seen: string[] = []
+    for (let i = 0; i < 72 && seen.length < 3; i++) {
+      await sleep(500)
+      const p = await ballProbe()
+      if (p.err) {
+        rhythmWhy = `fail:probe=${p.err}`
+        break
+      }
+      const st = `${p.idx}/${p.winIdx}`
+      if (!seen.includes(st)) seen.push(st)
+    }
+    if (rhythmWhy) {
+      /* 探针挂了 */
+    } else if (seen.length < 3) {
+      rhythmWhy =
+        `fail:stalled base=${rBase.idx}/${rBase.winIdx} seen=[${seen}]` +
+        `（36s 内只出现 ${seen.length} 个状态：球走完一步就再也不动了 —— effect 重跑把 lastAdvance 归零了）`
+    }
+  }
+  r.petCarouselRhythm = rhythmWhy || 'ok'
 
   // ── 场景五：套餐窗口算不出比例（AC3.3）—— L2「轨道与 pct 解耦」的唯一证明 ──────
   // 上面几个夹具的 plan 全都带 percent，所以「无 limit 的窗口仍有轨道」若不单推一个
@@ -1364,6 +1547,60 @@ export async function runUiTest(
   r.petRingAlwaysOn = ringOnWhy || 'ok' // 复写：场景一写过一次，这里补上 AC3.3 那一半
   // 收尾：隐藏余额已在场景三还原；采集频率拉回默认（setExtras 会 reconfigure → 立刻补一轮真实数据）
   await exec("window.api.setExtras({refreshInterval:'60'})")
+
+  // ── petBallSkinSurface：5 个内置皮肤 + 一个**不存在的**皮肤下，球盘都有实心底色 ────
+  //
+  // AC1.5 的核心：外部皮肤（ext:*）没写 `--ball-bg` 时靠顶层 `:root` 兜底。
+  // 删掉 :root 那条，这些皮肤会**全部**塌成 transparent —— 一个没有底的球比浅色的球更糟。
+  // `ext:__no-such-skin__` 那一档是这条断言真正的目标：它模拟「皮肤作者没提供这个令牌」，
+  // 只有 :root 兜底能让它不塌。
+  //
+  // 判据不是「值等于某个具体色」（那是把设计取值钉死），而是**可解析 + 不透明**：球必须
+  // 是一个物体。切皮肤直接改 .app 的 data-skin（App.tsx 就是这么落的），改完**立刻**读
+  // getComputedStyle —— 样式重算在读计算值时同步发生，不存在读到旧值的竞态；读完复原。
+  //
+  // ⚠ **覆盖范围要说清楚**（实测发现的，别误以为它什么都管）：本条验的是**当前系统主题下**
+  // 的兜底链。uitest 跑在什么主题上，这条就只覆盖那一半：`prefers-color-scheme` 是媒体查询，
+  // 渲染层改不了，所以「删掉顶层 :root 那份、浅色系统下 ext 皮肤会不会塌」在这台机器上
+  // **测不出来**（实测：只删顶层 :root 时本条仍绿，因为暗色 media 块里那份还在兜着）。
+  // 那一半由结构门 D3 静态覆盖 —— 它区分顶层与 @media 内层，与机器主题无关。
+  // 实测红集：删掉**全部** --ball-bg 定义 → 恰好 {petBallSkinSurface}。
+  const surfRaw = String(await exec(`(()=>{
+    const app=document.querySelector('.app'); const dot=document.querySelector('.petball-fallback')
+    if(!app) return 'fail:no-app'; if(!dot) return 'fail:no-dot'
+    const before=app.getAttribute('data-skin')
+    const out={}
+    for(const s of ['aero','dark','minimal','candy','ink','ext:__no-such-skin__']){
+      app.setAttribute('data-skin', s)
+      out[s]=getComputedStyle(dot).backgroundColor
+    }
+    if(before===null) app.removeAttribute('data-skin'); else app.setAttribute('data-skin', before)
+    return JSON.stringify(out)
+  })()`))
+  const SKIN_KEYS = ['aero', 'dark', 'minimal', 'candy', 'ink', 'ext:__no-such-skin__']
+  let skinWhy = ''
+  if (surfRaw.startsWith('fail:')) {
+    skinWhy = surfRaw
+  } else {
+    const surf = JSON.parse(surfRaw) as Record<string, string>
+    // rgba(r,g,b,a) 的 a 必须 > 0；transparent / rgba(0,0,0,0) 都算塌陷
+    const alphaOf = (c: string): number => {
+      const m = /rgba?\(([^)]+)\)/.exec(c)
+      if (!m) return -1
+      const parts = m[1].split(',').map((x) => parseFloat(x))
+      return parts.length >= 4 ? parts[3] : 1
+    }
+    const bad = SKIN_KEYS.filter((k) => !surf[k] || alphaOf(surf[k]) <= 0)
+    if (bad.length) {
+      skinWhy = `fail:transparent=${bad.join(',')} got=${JSON.stringify(surf)}`
+    } else {
+      // 5 个内置皮肤必须**逐个不同** —— 全部同色说明只剩 :root 一处取值在生效
+      // （浅色的 aero / minimal / ink 尤其要能彼此区分：它们正是「白底上读不出物体」的重灾区）
+      const built = SKIN_KEYS.slice(0, 5).map((k) => surf[k])
+      if (new Set(built).size < 5) skinWhy = `fail:not-per-skin=${JSON.stringify(surf)}`
+    }
+  }
+  r.petBallSkinSurface = skinWhy || 'ok'
 
   // 泡泡的回归护栏挪到了形态翻转处（见 petBallOff 紧后面那条），不在这里查：
   // 收尾时泡泡那 4.2s 存活期早就过了，那时候查是**永真**的 —— 实测只差一行 IPC 的

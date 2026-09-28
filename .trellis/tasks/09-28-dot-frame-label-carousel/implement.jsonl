@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "主战场是 skins.css 的令牌与类：--ball-bg 要与已有的 --track/--dot-rim 家族同处一个「一个 home」；且 .petball-hit/.petball-fallback 跨形态共用，§9 的人物形态陷阱清单是本任务步 1/2 的判据来源"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "步 3 的核心陷阱是 interval effect 的 deps 与 ref 取值：advanceAuto 依赖 s/winIdx，进 deps 会让 6 秒节奏永远走不到、球彻底静止。effect/ref/清理的规范归它管"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "两件硬要求在它里面：npx electron . 跑 out/ 必须先 npm run build（含 env 不能与 build 同行的坑），以及 break-once「红集恰好等于声明目标集」的取证纪律"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "令牌单一归属：球表面色只能有一个 home（--ball-bg），不许再借 --bg，也不许留一个没人用的 --dot-rim 变成下一个误导源"}
