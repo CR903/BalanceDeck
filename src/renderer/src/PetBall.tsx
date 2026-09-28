@@ -7,6 +7,7 @@ import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
+import { markColor, markDataUrl } from './ProviderMark'
 import { createPet3dScene, type Pet3dHandle } from './pet3d/scene'
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -765,9 +766,32 @@ export function PetBall({
               )}
             </svg>
           )}
+          {/* 供应商标记：10px 品牌色图标，环内数值正上方。
+              复用 ProviderMark 的 markDataUrl/markColor，不引入新依赖。
+              仅当 mark 字段存在且非空时显示（FR5）。 */}
+          {s?.mark && (
+            <span
+              className="dot-provider"
+              aria-hidden="true"
+              style={{
+                width: 10,
+                height: 10,
+                backgroundColor: markColor(s.mark) || 'currentColor',
+                WebkitMaskImage: `url("${markDataUrl(s.mark)}")`,
+                maskImage: `url("${markDataUrl(s.mark)}")`,
+                opacity: 0.85,
+                pointerEvents: 'none'
+              }}
+            />
+          )}
           {/* 读数：数值走逐帧动画的显示值，非数值（! / — / … / ••••）直接落定；
               .small 按**落定后的目标值**分类，否则动画中途长度变化会来回切字号 */}
-          <span className={`dot-value${valueText.length > 4 ? ' small' : ''}`}>{shownText}</span>
+          <span
+            className={`dot-value${valueText.length > 4 ? ' small' : ''}`}
+            aria-label={`${s?.name ?? ''} 用量 ${shownText}`}
+          >
+            {shownText}
+          </span>
           {/* 当前时限短标签（D3 已拍板：要，但只在多窗口时显示 —— 单窗口写 5H 是噪音）。
               没有它，切时限就只有数字在变，用户不知道停在 5H 还是周，功能等于盲切。 */}
           {active && s && s.windows.length > 1 && (

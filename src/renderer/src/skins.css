@@ -1782,6 +1782,15 @@ textarea {
 .petball.no3d.lvl-muted .dot-ring-fill {
   stroke: var(--fg-faint);
 }
+/* 供应商标记：10px 品牌色图标，位于环内数值正上方。
+   grid 布局中不收缩（flex-shrink: 0），不拦截指针事件。 */
+.petball.no3d .dot-provider {
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
+  /* 空品牌色（7/15 个 mark）= 跟随主题前景色；显式声明避免依赖继承链 */
+  color: var(--fg);
+}
 .petball.no3d .dot-value {
   position: relative;
   font-size: 13px;
