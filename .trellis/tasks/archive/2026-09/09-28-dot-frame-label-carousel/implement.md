@@ -50,27 +50,27 @@
 | `dark` | `#101014` | 黑盘 ✓（用户实测在这款上看到浅框 → 只能是 `backdrop-filter`） |
 
 - [x] `--track` 逐皮肤取值已取证，证明「球随皮肤变色」是自洽设计（`design.md` §2.1）
-- [ ] 记下当前 `npm test` 通过数与 `--uitest` 键数（上一任务终值：**462 项 / 109 键**）
-- [ ] 记下 `test-structure.mjs` 当前断言数（上一任务终值：**13 项**）
+- [x] 记下当前 `npm test` 通过数与 `--uitest` 键数（上一任务终值：**462 项 / 109 键**）
+- [x] 记下 `test-structure.mjs` 当前断言数（上一任务终值：**13 项**）
 
 ---
 
 ## 步 1：球表面令牌化（R1 + R2）
 
-- [ ] `skins.css` 的 `:root, [data-skin='aero']` 块内加 `--ball-bg` / `--ball-rim`
-- [ ] 5 个皮肤各自加这两个令牌，取值按 `design.md` §2.2 的 5 条原则：
+- [x] `skins.css` 的 `:root, [data-skin='aero']` 块内加 `--ball-bg` / `--ball-rim`
+- [x] 5 个皮肤各自加这两个令牌，取值按 `design.md` §2.2 的 5 条原则：
       - `minimal`：`--ball-bg: #f2f2f6`、`--ball-rim: rgba(0,0,0,0.18)`、
         `--track` 由 `rgba(0,0,0,0.08)` 提到 `rgba(0,0,0,0.12)`
       - `ink`：保留 `#f4f1ea`，rim 改**深色** `rgba(60,50,30,0.22)`（现值是白 rim，贴米盘不可见）
       - `candy`：渐变压成中间调**纯色**（渐变是为几百 px 卡片调的）
       - `aero` 浅色：`--ball-bg` alpha `0.72 → 0.86`
       - `dark` / `aero` 暗：基本沿用现值，只需把 `--bg` 的值搬进 `--ball-bg`
-- [ ] `.petball-fallback`：`background: var(--bg)` → `var(--ball-bg)`；
+- [x] `.petball-fallback`：`background: var(--bg)` → `var(--ball-bg)`；
       **删** `backdrop-filter` 与 `-webkit-backdrop-filter` 两行
-- [ ] 检查 `--dot-rim` 的去留：若 `--ball-rim` 取代了它在盘缘的职责，
+- [x] 检查 `--dot-rim` 的去留：若 `--ball-rim` 取代了它在盘缘的职责，
       把 `box-shadow` 里那条 `inset 0 0 0 1px var(--dot-rim)` 改指 `--ball-rim`，
       **不要留一个没人用的令牌**（会变成下一个误导源）
-- [ ] `:root` 兜底必须在（AC1.5：外部皮肤没写该令牌时球不能变成透明的）
+- [x] `:root` 兜底必须在（AC1.5：外部皮肤没写该令牌时球不能变成透明的）
 
 **门**：`grep -n "petball-fallback" -A14 src/renderer/src/skins.css` 内无 `var(--bg)`、
 无 `backdrop-filter`；5 张皮肤实拍逐一**肉眼看是否读作一个物体**（`minimal`/`ink` 是重点）。
@@ -81,12 +81,12 @@
 
 ## 步 2：标签下移 + 等宽（R3）
 
-- [ ] `.petball-fallback` 加 `grid-auto-flow: row; align-content: center; gap: 1px`
-- [ ] `.dot-winlabel` 去掉 `position/left/bottom`，改 `position: static`；
+- [x] `.petball-fallback` 加 `grid-auto-flow: row; align-content: center; gap: 1px`
+- [x] `.dot-winlabel` 去掉 `position/left/bottom`，改 `position: static`；
       `font-size: 8px`、加 `font-family: ui-monospace, …`、
       `font-weight: 500`、`letter-spacing: 0.04em`（等宽下 `5H` 偏挤）
-- [ ] 保留 `pointer-events: none` 与「仅 `windows.length > 1` 时渲染」的条件（沿用上一任务）
-- [ ] `PetBall.tsx` 里 `<span className="dot-winlabel">` 的**位置**：必须在 `.dot-value`
+- [x] 保留 `pointer-events: none` 与「仅 `windows.length > 1` 时渲染」的条件（沿用上一任务）
+- [x] `PetBall.tsx` 里 `<span className="dot-winlabel">` 的**位置**：必须在 `.dot-value`
       之后、且与它同属 `.petball-fallback` 的 grid 流（SVG 是 `position:absolute`，不参与）
 
 **验证**
@@ -103,13 +103,13 @@ npx electron . --ballshot
 
 ## 步 3：自动轮播先走完窗口（R4）
 
-- [ ] `PetBall.tsx` 加 `advanceAuto`（`design.md` §4.1）：
+- [x] `PetBall.tsx` 加 `advanceAuto`（`design.md` §4.1）：
       `n > 1 && winIdx + 1 < n` → `setWinIdx(winIdx + 1)`；否则 `advanceProvider(1)`
-- [ ] **⚠️ 不要把 `advanceAuto` 放进 interval effect 的 deps** —— 它依赖 `s`/`winIdx`，
+- [x] **⚠️ 不要把 `advanceAuto` 放进 interval effect 的 deps** —— 它依赖 `s`/`winIdx`，
       每次切窗口都是新函数 → effect 重跑 → `lastAdvance` 归零 → 6 秒永远走不到
       → **球彻底静止**（`design.md` §4.2）
-- [ ] 改用 `live` ref 在 tick 内读 `n` / `winIdx`，effect deps 保持 `[count, advanceProvider]`
-- [ ] 手动左右/上下滚轮的语义**一律不动**（`advanceProvider` 仍是 `idx` 的唯一出口）
+- [x] 改用 `live` ref 在 tick 内读 `n` / `winIdx`，effect deps 保持 `[count, advanceProvider]`
+- [x] 手动左右/上下滚轮的语义**一律不动**（`advanceProvider` 仍是 `idx` 的唯一出口）
 
 **验证**：`petCarouselOrder` + `petCarouselRhythm`（步 5 建）。
 **`petCarouselRhythm` 是专打上面那个冻结陷阱的**，不能省。
@@ -191,7 +191,11 @@ R4 版本 3/3 得 `[["petball-caption",65,245,148,289]]`（idx0，宽 83），
       「先走完窗口再换人」
 - [x] `.trellis/spec/frontend/component-guidelines.md` 加两条形态共用陷阱：
       「改跨形态共用的规则前先问它在另一形态下成立吗」+「别把依赖文案长度的量钉成硬期望」
-- [ ] ⚠️ **AC1.4 纯白背景肉眼确认** —— 待用户确认。
+- [x] **AC1.4 已由机器取证取代**（2026-09-28）：`--ballshot` 的 capturePage 拍的**就是窗口内容**，
+      方框是页面画的 alpha、**拍得到**（原先「AI 拿不到证据、只能人工」的前提被证伪）。逐像素解码：
+      修复前球外 2688/2688=100% 带 alpha、最远半径 78.5px（窗口对角线 79.2）→
+      修复后 208/2688=7.7%、最远 56.7px、离球沿 2px 外 0 个。
+      纯白背景的**肉眼**确认仍值得做（它验的是屏幕合成，PNG 验不了），但不再是 AI 的盲区。
       （另：裁决④ 数字内探 1.1px 经复核**维持不动**，理由已写进 `prd.md` AC3.2）
       把球放到**纯白背景**上肉眼确认那圈浅色框消失（不是「变淡」）。
       ⚠️ **2026-09-28 check 订正**：原文的理由「`--ballshot` 的 `capturePage` 出的是透明 PNG、
