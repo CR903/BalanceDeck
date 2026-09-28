@@ -315,6 +315,45 @@ set its `border-radius: 0` and the expanded window grows the same square frame. 
 that yet — a `.card` assertion is the natural home, deliberately not added by task `09-28`,
 whose scope is the pet window.)
 
+### Don't: use `markColor()` without a fallback
+
+`markColor(mark)` returns `providerMark(mark).color`, and **7 of the 15 built-in marks have
+`color: ""`** (empty string). The semantics are documented at `provider-icons.ts:14`:
+"空串 = 跟随主题前景色". CSS `background-color: ""` is invalid → the browser falls back to
+`transparent` → the mask has no background to show through → **the marker is completely
+invisible**.
+
+```tsx
+// Wrong — 7/15 suppliers get an invisible marker
+backgroundColor: markColor(s.mark)
+
+// Correct — fall back to currentColor (matches ProviderMark.tsx:49)
+backgroundColor: markColor(s.mark) || 'currentColor'
+```
+
+The same applies to any future use of `markColor()` outside `ProviderMark.tsx`. The fallback
+is already there inside `ProviderMark` itself — the bug only appears when reusing `markColor`
+directly.
+
+### Don't: verify marker visibility on opaque backgrounds with alpha
+
+On opaque backgrounds (e.g. `dark` skin `--ball-bg: #101014`), both the background and the
+marker have alpha = 255, so **alpha comparison cannot distinguish them**. Use **luminance
+difference** instead:
+
+```js
+// Wrong — both are 255, difference is 0, looks like "marker not visible"
+const bgAlpha = 255, markAlpha = 255;
+
+// Correct — luminance difference > 30 means visible
+const bgLum = 0.2126*bgR + 0.7152*bgG + 0.0722*bgB;  // 15
+const mLum  = 0.2126*mR  + 0.7152*mG  + 0.0722*mB;   // 77
+const diff = Math.abs(mLum - bgLum);  // 62 → visible
+```
+
+Measured on 5 skins (2026-09-28): aero 25-51, dark 62, minimal 59, candy 52, ink 70 — all
+well above the 30 threshold.
+
 ### Don't: pin an expectation to a value that depends on text length
 
 The figure baseline (`FIG_BASE` in `uitest.ts`) pins 8 fields byte-for-byte. Seven are
