@@ -27,3 +27,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 球形态：方形蒙版真凶定位 + 标签下移等宽 + 轮播先走完窗口
+<!-- trellis-session: v=2 fp=68b3b435829f5711 -->
+
+**Date**: 2026-09-28
+**Task**: 球形态：方形蒙版真凶定位 + 标签下移等宽 + 轮播先走完窗口
+**Branch**: `main`
+
+### Summary
+
+用户报的「球外面套一圈浅色方框」三次归因全错（backdrop-filter → macOS 原生窗口层 → 不透明浅灰底），真凶是 .petball-fallback 的 outer box-shadow：收起态窗口与该元素同为 56×56，外阴影无处容放却被绘制，圆形光晕被窗口裁成方形。同机理第二实例 .petball-rename input 一并去掉（用户拍板）。两条独立证据链：实屏抓屏（白底打底）窗口顶缘 253,252,252,251,251,250 → 255,255,255；capturePage alpha 逐像素解码球外 2688/2688=100% → 208/2688=7.7%、最远半径 78.5px → 56.7px。撤回无效改动 roundedCorners:false 与 setBackgroundColor（实测对方框无效，只改圆角 9pt→6pt）。新结构门 D6 从 1 条扩到 5 条（顶层逗号切层 + 剥注释 + 选择器配平取整块），9 组弄坏验证红集均恰好等于声明目标。顺带修 uitest.ts 的 petDiag 空指针（会让整个 --uitest 不输出 JSON）。最重要的一条方法教训已写进 spec：症状无法被现有工具观测时，先解决观测手段再谈归因；以及方程无解时该怀疑的是前提而不是继续找参数。另订正了我自己一个错误断言——「capturePage 拍不到方框」是错的，它一直拍得到，该错误说法曾被当事实写在 8 处。验证：typecheck ✓ / npm test 477 通过 / test-structure 28 / uitest 112 键 0 失败。遗留：展开态卡片拖拽断言在机器高负载时偶发红（红集每次不同、与本改动无关）；.card 缺护栏；AC5.1c 改名态仍需用户肉眼确认。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `334a79e` | feat(pet): 球表面令牌化 + 时限标签下移等宽 + 自动轮播先走完窗口 |
+| `5d0f04c` | fix(pet): 去掉悬浮球外的方形蒙版 —— 真凶是窗口同尺寸元素上的 outer box-shadow |
+
+### Status
+
+[OK] **Completed**
