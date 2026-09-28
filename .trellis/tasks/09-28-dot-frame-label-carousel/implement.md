@@ -13,15 +13,27 @@
 | 1 | `--ball-bg`/`--ball-rim` + 删 `backdrop-filter` | ✅ 已完成 | 结构门 + 5 皮肤实拍（rim 方向与盘相反，逐皮肤实测） |
 | 2 | 标签下移 + 等宽 | ✅ 已完成 | 实拍：标签在数字下方、间隙 2.5px、不溢出 56×56 |
 | 3 | 自动轮播先走完窗口 | ✅ 已完成 | `petCarouselOrder` + `petCarouselRhythm` |
-| 4 | 结构门（`test-structure.mjs` **10 条断言**） | ✅ 已完成 | 每条弄坏一次，红集恰好等于声明目标 |
+| 4 | 结构门（`test-structure.mjs` **11 条断言**） | ✅ 已完成 | 每条弄坏一次，红集恰好等于声明目标 |
 | 5 | 行为门（uitest：作废 1 条 + 新增 3 条 + 裁决①） | ✅ 已完成 | 红集恰好等于声明目标 |
 | 6 | 文档同步 + **真实白底人工复现** | ⚠️ **部分完成** | 文档已同步；**AC1.4 待用户人工确认** |
+| 7 | R5 定位方框真凶（删 outer box-shadow）+ 复核取证手段 | ✅ 已完成 | 结构门 D6 两条红绿循环 + `design.md` §9.8 的 alpha 实测 |
+| 8 | 改名框去掉 outer box-shadow（用户拍板）+ **D6 扩成「宠物窗口满幅元素」这一类** | ✅ 已完成 | 结构门 **28 条**；批次 10–18 红集恰好等于声明目标 |
 
-> **步 4 的断言数是 10 不是 5**：`design.md` §6.1 列的 5 个门里，`ball-surface-token` 拆成
+> **步 4 的断言数是 11 不是 5**：`design.md` §6.1 列的 5 个门里，`ball-surface-token` 拆成
 > 「是 `--ball-bg`」+「不再引用 `--bg`」两条，`winlabel-mono` 拆成「独立字体栈」+「字号 ≤9px」
 > 两条；另加 2 条 D0 骨架门（按选择器确实取到整块）—— 没有它们，取块失败会让上面几条
 > **空洞地通过**（实测：改名选择器时，D1 的「不再引用 --bg」原本仍绿，已修）。
-> 合计 13 → **23 条**。
+> 合计 13 → **23 条**；R5 之后 +1 条 `ball-no-outer-shadow` → **24 条**；
+> **步 8 把 D6 从 1 条拆成 5 条（4 条 `no-outer-shadow` + 1 条 `inset-3d`）→ 28 条**，
+> `npm run test:structure` 实测 `通过 28 项，失败 0 项`。
+> `npm test` 合计随之由 473 → **477**（9 个 suite 全 0 失败）。
+>
+> ⚠ **D6 门表从 5 项缩回 4 项**：`.petball-debugring` 曾被列进去，理由写的是「按投影上报的
+> 外接框 = 整个窗口」—— **那条理由是假的**（`PetBall.tsx:812` 写明它只可能是人物形态，球形态
+> `w` 恒为 0，也就是它在 56×56 窗口里**根本不存在**；人物形态下也只是 213×293 里的
+> 一圈虚线）。**门的前提不成立就不能进表** —— 留着等于让注释宣称一个代码不具备的性质，
+> 与本任务修的正是同一类错。批次 13′ 实测：移出后给它加 outer shadow 门**不再红**（28/0），
+> 这是预期结果，不是回归。
 
 ---
 
@@ -113,7 +125,8 @@ npx electron . --ballshot
 
 **每条走完整循环**：写绿 → 弄坏 → 红 → 还原 → 绿，红集**恰好等于**该批声明目标。
 
-**门**：`node scripts/test-structure.mjs` 现有 13 项 + 新增 5 项 = **18 项全绿**。
+**门**：`node scripts/test-structure.mjs` 现有 13 项 + 新增 5 项 = **18 项全绿**
+（R5 之后 +`ball-no-outer-shadow` = **24 项全绿**）。
 
 ---
 
@@ -178,18 +191,84 @@ R4 版本 3/3 得 `[["petball-caption",65,245,148,289]]`（idx0，宽 83），
       「先走完窗口再换人」
 - [x] `.trellis/spec/frontend/component-guidelines.md` 加两条形态共用陷阱：
       「改跨形态共用的规则前先问它在另一形态下成立吗」+「别把依赖文案长度的量钉成硬期望」
-- [ ] ⚠️ **AC1.4 人工复现 —— 待用户确认，check 做不了，也不许用 ballshot 顶替**
-      （另：裁决④ 数字内探 1.1px 经复核**维持不动**，理由已写进 `prd.md` AC3.2）：
+- [ ] ⚠️ **AC1.4 纯白背景肉眼确认** —— 待用户确认。
+      （另：裁决④ 数字内探 1.1px 经复核**维持不动**，理由已写进 `prd.md` AC3.2）
       把球放到**纯白背景**上肉眼确认那圈浅色框消失（不是「变淡」）。
-      `--ballshot` 的 `capturePage` 出的是透明 PNG、**不合成桌面 backdrop**，所以
-      「实拍没变化」**不算证据**。**本项未完成，不得标绿。**
+      ⚠️ **2026-09-28 check 订正**：原文的理由「`--ballshot` 的 `capturePage` 出的是透明 PNG、
+      **不合成桌面 backdrop**，所以「实拍没变化」不算证据」**只对「球有没有透出壁纸」成立**。
+      **方框本身 capturePage 拍得到** —— 它是页面自己画在窗口内的 alpha，而 capturePage 拍的
+      就是那 56×56 的窗口内容。免权限的机器可读证据见 `design.md` §9.8：
+      `node scripts/lib/png-probe.mjs /tmp/balancedeck-shots/ball-skin-minimal.png`
+      修前「球外 2688/2688 个像素 alpha>0、最远半径 78.5px（= 窗口对角线）」，
+      修后「208/2688、最远半径 56.7px、离球沿 2px 外 0 个」，5 个皮肤一致。
+      **本项仍未完成**（它验的是屏幕合成，PNG 验不了），但它**不再是「AI 无法取证」**。
 - [x] 门：`grep -rn "backdrop-filter" src/renderer/src/skins.css` 在 `.petball-fallback`
       **生效声明**内 0 命中（结构门 D2，已剥注释验证：注释里保留该词但 D2 绿）；
       `--dot-rim` 全项目 0 定义 0 引用（已删净）
 
 ---
 
-## 步 5 实测：全部「弄坏一次」记录（每条门跑过完整循环）
+## 步 7：R5 的护栏与取证手段复核（2026-09-28 check）
+
+- [x] **结构门 D6 `ball-no-outer-shadow`**：`.petball-fallback` 的 `box-shadow` **逐层**都是 `inset`
+      （判据：剥注释 → 按完整选择器配平花括号取整块 → 按**顶层逗号**切层 → 每层 `^inset`；
+      并要求 `层数 > 0` 防空洞）。弄坏记录见下方批次 8/9
+- [x] **同机理扫描**：把 `skins.css` 里全部 outer `box-shadow` 列出来，逐个判「元素尺寸是否等于
+      窗口尺寸」。展开态 384×600 直接实拍解码（`.card` 无 box-shadow，16px 圆弧之外带 alpha 的
+      220 个像素全在离弧 ≤1.12px 处 = 抗锯齿，**没有方框**）；球形态用真实构建产物的样式表在
+      56×56 透明窗口里复现。**结论与数字见 `design.md` §9.8 的表**
+- [x] **取证手段复核（推翻了产物里三处说法）**：`capturePage` 拍得到方框（球外 100% 像素带 alpha），
+      「拍不到屏幕合成」只对桌面 backdrop 那一问成立。已订正 `prd.md` R2/AC1.4/AC5.4、
+      `design.md` §2.3/§6.2/§9.3/§9.5/§9.7、`implement.md` 步 6、`skins.css` 两条注释，
+      以及 `src/main/overlay.ts` 里把方框归给原生窗口阴影的那段（**误诊 #2**，只改注释，
+      `hasShadow: !state.collapsed` 行为未动）
+- [x] 补 `scripts/lib/png-probe.mjs`（纯 zlib 的 PNG→RGBA 解码，~90 行，不引新依赖）
+
+---
+
+## 步 8：改名框 + D6 扩类（2026-09-28 check 第二轮）
+
+- [x] **删掉 `.petball-rename input` 的 `box-shadow: 0 6px 20px rgba(0,0,0,0.35)`**
+      （用户 2026-09-28 拍板）。留下注释说明**为什么不能加回来**：它 168×28 却活在同一个
+      56×56 窗口里，20px 光晕实测把 112×112 像素 100% 铺满；辨认度靠深色底 + 1px 强调色边框
+- [x] **D6 从「守一个选择器」扩成「守宠物窗口满幅/溢幅元素这一类」**：4 条 `no-outer-shadow`
+      （底盘 / 底盘按压态 / 改名框 / 命中层，**逐个独立判**）+ 1 条 `inset-3d`
+      （只守底盘的 AC5.3）。沿用 `shadowLayers()` / `ruleBody()` / `decls()`，**未重写**
+- [x] ⚠️ **「层数 > 0」没有推广到整张表**：改名框的**正确终态就是 0 层**，对它要求层数 > 0
+      等于逼着人把阴影写回去。只对「本该有 inset 立体感」的底盘提
+- [x] 批次 10–18 全部走完「写绿 → 弄坏 → 红 → 还原 → 绿」，红集**恰好等于**声明目标
+      （表在下方）。批次 17/18 顺带把原文标注「未重跑，不作数」的批次 6/7 重跑了
+- [x] **独立复验「展开态那 13 处 outer box-shadow 不该动」**（不采信上一轮结论），实跑：
+      - `npm run shots` 重拍 `1-card.png` / `8-drag-preview.png`（384×600 → 768×1200 设备像素），
+        逐像素解码：两帧都是**圆角矩形之外 0 个像素带 alpha、四角点 alpha `0/0/0/0`**
+      - 右缘 alpha 轮廓**对称收口**（x=370 → 行 0..600，x=376 → 2..598，x=382 → 8..592）→ 圆角
+      - ⚠️ **推翻了上一轮的理由**：`.pcard` 的右边框在 `x ≈ 369.5`，384 宽窗口里只剩 **14px 余量**；
+        `.pcard.dragging` 的压暗带一路走到 **`x = 383` 最后一个像素都没退回底色** ——
+        阴影**确实被窗口边界裁了**。保护来自 `.card` 的 `overflow:hidden` + `border-radius:16px`，
+        不是「元素被内缩」
+      - ⚠️ 顺带查出两处**不实记录**，已订正 `design.md` §9.8 的表：
+        ① `.petball-bubble` 从未有过 `0 6px 20px`（`git log -S` 只命中 `63aa291` 新增的
+        `.petball-rename input`）；② 人物形态「四条窗口边全 0 alpha」不成立 —— 实测
+        **下缘**最后一行 alpha `1..20`、横跨 `x 58.5..153.5`（`.petball-caption` 的合法
+        `0 2px 10px` 投影被窗口下缘裁了一道；左/右/四角仍是 0，**不构成方框**）
+      - **未加 `.card` 的门**（本任务作用域是宠物窗口；`design.md`/`spec` 都记了这条潜藏风险）
+- [x] **踩到并修掉一个测量陷阱**：`capturePage()` 出的是 **2× 设备像素**（56 CSS → 112×112）。
+      我第一版把 DPR 写成 `width / 112`（设备宽）→ `dpr=1`、`R=28`，于是一份**干净**的构建
+      报出「球外 75.4% 带 alpha、7236 个离沿 2px 外」。改正后独立复现出已知良好数字：
+      **5 个皮肤 + 2 张 `5-ball` 全部 208/2688 = 7.7%、最远 56.7px、离沿 2px 外 0 个**
+- [x] **顺带修掉一个真 bug（本轮实测崩的）**：`uitest.ts` 的 `r.petDiag` 只判了 `ball &&`
+      就直接读 `ball.rect.width` / `ball.measure.box.width`，而这两个字段**运行时可以是 null**
+      （球形态不建 3D 场景；人物形态在首帧 `measure()` 之前）。实测崩在
+      `out/main/index.js:4696` → `TypeError: Cannot read properties of null (reading 'width')`，
+      它是**未捕获的 promise rejection**，于是**整轮 `--uitest` 一条 JSON 都不打印**
+      （stdout 仅 1.2KB 错误栈，退出码 1）。一条**纯诊断**字段把 112 键的证据换成了
+      「什么都没跑」。已改成先取 `bRect`/`bInk` 再序列化，并把类型改成如实可空。
+      **没有断言读 `petDiag`，所以这不弱化任何门。**
+      ⚠ 诚实标注：原崩溃**是时序依赖的**，修完后连续多轮 `--uitest` 都没再崩，但
+      「能按需稳定复现原崩溃」做不到 —— 能证明的是修复后不再发生，且修复前的崩溃有明确
+      堆栈与字节数留痕。
+
+---
 
 **结构门**（`node scripts/test-structure.mjs`，快，可反复跑）：
 
@@ -207,6 +286,34 @@ R4 版本 3/3 得 `[["petball-caption",65,245,148,289]]`（idx0，宽 83），
 | 5 | 标签 `position: static` → `absolute`+left/bottom | {D5} | D5 | ✓ |
 | 6 | 改名 `.petball-fallback` 选择器 | {D0×1, D1×2, D2} | 取块失败扇出 | ✓ |
 | 7 | 改名 `.dot-winlabel` 选择器 | {D0×1, D4×2, D5} | 取块失败扇出 | ✓ |
+| 8 | **加回 outer `box-shadow: 0 6px 18px rgba(0,0,0,0.28)`** | {D6}（4 层，1 层非 inset） | D6 | ✓ |
+| 9 | **整条 `box-shadow` 删掉**（0 层） | {D6} | D6 | ✓ |
+| 10 | **改名框加回 `box-shadow: 0 6px 20px rgba(0,0,0,0.35)`**（出事那一行，逐字还原） | {D6 no-outer-shadow `.petball-rename input`} | 同 | ✓ |
+| 11 | **球盘按压态加 `box-shadow: 0 4px 12px rgba(0,0,0,0.3)`** | {D6 no-outer-shadow `…:active…`} | 同 | ✓ |
+| 12 | 命中层 `.petball-hit` 加 `box-shadow: 0 0 20px rgba(0,0,0,0.4)` | {D6 no-outer-shadow `.petball-hit`} | 同 | ✓ |
+| 13 | 调试环 `.petball-debugring` 加 `box-shadow: 0 0 12px rgba(255,0,128,0.5)` | {D6 no-outer-shadow `.petball-debugring`} | 同 | ✓（**随后该项被移出门表**，见下） |
+| 13′ | 同上，移出门表之后重跑 | **{空集}**（28/0） | 无 —— 前提不成立 | 预期 |
+| 14 | **球盘加回 outer `0 6px 18px rgba(0,0,0,0.28)`**（D6 扩成 6 条后重跑批次 8） | {D6 no-outer-shadow `.petball.no3d .petball-fallback`}，**`inset-3d` 仍绿**（4 层 ≥1） | 同 | ✓ |
+| 15 | **球盘整条 `box-shadow` 删掉**（0 层，重跑批次 9） | {D6 inset-3d} | 同 | ✓ |
+| 16 | 改名框选择器改名 `.petball-rename2 input` | {D6 no-outer-shadow `.petball-rename input`}（`body == null` 兜住空洞） | 同 | ✓ |
+| 17 | 底盘选择器改名 `.petball-disc`（2 处 replaceAll） | {D0×1, D1×2, D2, D6 no-outer-shadow, D6 inset-3d} = **6 条** | 取块失败扇出 | ✓ |
+| 18 | 短标签选择器改名 `.winlabel` | {D0×1, D4×2, D5} = **4 条** | 取块失败扇出 | ✓ |
+
+⚠ **批次 17/18 是原批次 6/7 的重跑，原文那句「现在重跑批次 6 的红集会是
+{D0×1, D1×2, D2, D6} —— **未重跑，不作数**」到此作废**：D6 拆成 6 条后实测是
+**6 条**（{D0, D1×2, D2, D6 no-outer-shadow, D6 inset-3d}），比原先预估多一条，因为
+`inset-3d` 与 `no-outer-shadow` 现在是两条独立断言。批次 6 用的 `replaceAll` 命中
+底盘规则与 `.petball.no3d .petball-fallback svg` 两处，**`:active` 按压态那条不含该字符串，
+所以按压态的门在批次 17 里仍绿** —— 它的覆盖由批次 11 单独证明。
+
+⚠ **批次 11 第一次跑是空集**（该记，不藏）：第一版补丁把 shadow 写成了
+`transform: … scale(0.94) 0 4px 12px rgba(0,0,0,0.3);` —— 拼进了 `transform` 的值里，
+`box-shadow` 键压根没出现，门自然绿。**这就是「弄不红」的一种伪装形态：补丁本身是错的，
+不是门没牙齿。** 改正成独立声明后红集恰好等于声明目标。
+
+⚠ 批次 8 是本任务最关键的一次「弄坏」：**它还原的正是出事那一行**
+（`inset …, inset …, 0 6px 18px rgba(0,0,0,0.28)`）。批次 9 证明 D6 不是
+「删光了自然就绿」的假护栏 —— 层数为 0 时「没有非 inset 层」空洞成立，所以判据带 `层数 > 0`。
 
 ⚠ 批次 2 同时是**「grep 门 vs 必须断言的字面量」的同轮红绿证明**：注释里始终有
 `backdrop-filter`，加真声明 → 红；只有注释 → 绿。
@@ -249,8 +356,8 @@ R4 版本 3/3 得 `[["petball-caption",65,245,148,289]]`（idx0，宽 83），
 
 ```bash
 npm run typecheck
-npm test
-node scripts/test-structure.mjs      # 期望 18 项
+npm test                            # 9 个 suite，合计 477 通过 / 0 失败
+node scripts/test-structure.mjs      # 期望 28 项（步 8 把 D6 从 1 条扩成 5 条）
 
 npm run build
 
@@ -261,6 +368,10 @@ BD_USER_DATA=/tmp/bd-ud npx electron . --uitest
 # 逐皮肤实拍（步 1 的主要证据）
 BD_USER_DATA=/tmp/bd-ud BD_SKINS=1 npx electron . --ballshot
 # → /tmp/balancedeck-shots/ball-skin-{aero,dark,minimal,candy,ink}.png
+
+# 球盘外不该有任何方形 alpha（R5 / AC1.4 的机器可读版，免 Screen Recording 权限）：
+# 期望「球外 alpha>0 的像素 ≈ 0」「alpha>0 的最远半径 ≈ 56.7px（球盘 56 + 抗锯齿）」
+node scripts/lib/png-probe.mjs /tmp/balancedeck-shots/ball-skin-minimal.png
 
 # 人物形态基线复核
 BD_PET=1 BD_PET_ID=aria npx electron . --ballshot

@@ -90,6 +90,28 @@ were two weeks stale. The script never opened a socket. We reported "the officia
 fine" on the strength of it; it returned 403. The comment is now
 `这是硬代码的历史样本，不是实时响应`.
 
+### Don't: eyeball a screenshot — decode it
+
+`--ballshot` writes a 112×112 mostly-transparent PNG. Glancing at it, the "light square around
+the ball" bug looked absent; decoding it, **100% of the pixels outside the ball's circle carried
+alpha** (2688/2688, out to the window's diagonal), because `capturePage()` photographs the
+window *contents* and the artifact was the page's own alpha. `scripts/lib/png-probe.mjs`
+(≈90 lines, `zlib` only, no new dependency) exists for exactly this.
+
+⚠ **Derive DPR from the CSS size, not from the file's pixel count.** `capturePage()` returns
+**2× device pixels** on this machine: the 56 CSS px ball comes out 112×112, the 384×600 expanded
+window 768×1200. Getting this wrong does not error — it just reports nonsense. Writing
+`dpr = width / 112` (the *device* width) yields `dpr = 1` and `R = 28`, which classifies the
+square around the circle as "inside the ball" and reports a fabricated **75.4% of pixels outside
+the disc carrying alpha** on a build that is actually clean. The correct divisor is
+`BALL_VIEW.width = 56`, and the only trustworthy self-check is that the numbers match a known
+good frame (clean = 208/2688 outside, furthest radius 56.7 px, 0 beyond 2 px).
+
+The corollary matters as much: `capturePage()` **does not** composite the desktop, so "the ball
+shows the wallpaper through it" is *not* observable that way. Two different claims got merged
+into one "we can't see it" and cost three misdiagnoses. Before declaring a symptom unobservable,
+write down **which layer** you need, then check whether that layer is in the file you have.
+
 ### Don't: leave a guard in place that reads as verification but isn't
 
 `PetSection.tsx:57-66` sets `let alive = true` and checks it in a **synchronous** loop body —
@@ -174,7 +196,7 @@ percent → ssr → quality → tray → pet → gesture → adapters → struct
 | `test-pet.mjs` | 104 | `loadTs` | identity model, serialization, migration |
 | `test-gesture.mjs` | 226 | `loadTs` ×2 + `fs` | clip catalog consistency, scheduling |
 | `test-adapters.mjs` | 1160 | `loadTs` ×12 | golden samples A–N, production net R, fan-out S, store T, parity U |
-| `test-structure.mjs` | 74 | static file reads | 13 architectural guards |
+| `test-structure.mjs` | 316 | static file reads | 28 architectural guards |
 | `test-read-model.mjs` | 127 | `loadTs` ×2 | read model + formatting |
 
 **The script convention** (uniform in all 9): a `//` header stating
@@ -194,7 +216,7 @@ function eq(actual, expected, label) {
 Three summary-line spellings coexist (`结果：N 通过 / M 失败`, `通过 N 项，失败 M 项`, and a
 prefixed variant) — not worth unifying, but do not assume a grep pattern matches all of them.
 
-### `test-structure.mjs` — the architectural guard (13 assertions, pure static)
+### `test-structure.mjs` — the architectural guard (28 assertions, pure static)
 
 ```js
 // :35-38
@@ -209,6 +231,19 @@ ok(/'--uitest'|'--shots'/.test(index), 'A4 入口仍认得 --uitest / --shots �
 
 **When you add a file to `src/main/qa/`, you must update the B4 assertion.** That is the
 point: the closed set is deliberate.
+
+**Section D is the pattern to copy when a gate needs to read a CSS *declaration block*.** All
+three traps are load-bearing and each was hit for real (see `scripts/test-structure.mjs:73-88`):
+a comment in the block makes a literal `grep` always-red, a fixed `-A14` window misses a
+declaration 18 lines down (a permanently-true fake guard), and the *first* occurrence of the
+class name is a comment in `:root`. So: strip `/* */` → locate the **full** selector → balance
+braces → then judge the declaration. `ruleBody` / `decls` / `declScopes` are the three helpers.
+
+**One rule that generalises: a negative assertion needs a precondition, or it passes
+vacuously.** `!body.includes('backdrop-filter')` is true when `body` is `null` (selector renamed)
+and `outer.length === 0` is true when there are zero layers (declaration deleted). Both look
+green and mean nothing. Every negative in section D therefore carries either `body != null` or a
+`length > 0` floor.
 
 ### The real-Electron QA harness
 

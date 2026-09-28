@@ -780,14 +780,27 @@ export async function runUiTest(
   r.petCmdOk = watch.collapsed === true && bounds().width === FIGURE_VIEW.width ? 'ok' : `fail:${bounds().width}`
   // 收起态必须关掉原生窗口阴影（否则 macOS 会按窗口矩形投一层方框阴影，实机表现为"宠物外面有个四方形框"）
   r.petNoWindowShadow = watch.shadow === false ? 'ok' : 'fail:has-shadow'
+  // ⚠️ `rect` / `measure.box` **运行时可以是 null**，类型不能骗人：
+  //   · 球形态根本不建 3D 场景，`__bd_ball()` 的字段全是 null/[]（见 ballshot 的同款说明）
+  //   · 人物形态在场景首帧 `measure()` 之前，`measure.box` 也是 null（`shots.ts` 靠轮询等它）
+  // 原来这里只判了 `ball &&` 就直接 `ball.rect.width` / `ball.measure.box.width` ——
+  // 一次时序抖动就抛 TypeError，而它是**未捕获的 promise rejection**，
+  // 于是**整个 `--uitest` 一条 JSON 都不打印**（实测：崩在 runUiTest，stdout 仅 1.2KB 错误栈）。
+  // 一条纯记录字段把整轮 112 键的证据换成「什么都没跑」，这是最坏的一种脆。
+  // `petDiag` 是**纯诊断**，没有任何断言读它，所以加空值保护不会弱化任何门。
   const ball = (await exec('window.__bd_ball?.() ?? null')) as
-    | { rect: { x: number; y: number; width: number; height: number }; measure: { box: { width: number; height: number } } }
+    | {
+        rect: { x: number; y: number; width: number; height: number } | null
+        measure: { box: { width: number; height: number } | null } | null
+      }
     | null
+  const bRect = ball?.rect ?? null
+  const bInk = ball?.measure?.box ?? null
   r.petDiag = JSON.stringify({
     watch,
     hb: hb && { w: Math.round(hb.width), h: Math.round(hb.height) },
-    rect: ball && { w: Math.round(ball.rect.width), h: Math.round(ball.rect.height) },
-    ink: ball && { w: ball.measure.box.width, h: ball.measure.box.height },
+    rect: bRect && { w: Math.round(bRect.width), h: Math.round(bRect.height) },
+    ink: bInk && { w: bInk.width, h: bInk.height },
     // 软化/卡顿现场证据：帧率与最长一帧间隔
     perf: (ball as { perf?: unknown } | null)?.perf ?? null,
     stride: (ball as { stride?: unknown } | null)?.stride ?? null,

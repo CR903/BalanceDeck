@@ -269,6 +269,52 @@ and the page has no samplable backdrop — and in the dark skin it rendered as a
 around the ball. A comment promising a capability the code does not have is worse than no
 comment. Same class of error: a token whose name says "page surface" being used for the ball.
 
+### Don't: put an outer `box-shadow` on an element that is the size of the window
+
+The overlay window is `transparent: true` and sized **exactly** to its content
+(`BALL_VIEW` 56×56 = `.petball-fallback` 56×56). An outer shadow therefore has nowhere to go —
+it is still painted, and the **window clips the circular halo into a square**: the four regions
+inside the window but outside the circle keep their alpha, so a light rounded square appears
+around a `border-radius: 50%` disc. Three misdiagnoses in a row (blame `backdrop-filter`, then
+the native window layer, then an "opaque window background") before the bisection landed on it;
+`design.md` §9 of task `09-28-dot-frame-label-carousel` has the full record.
+
+Guard: structure gate `D6` in `scripts/test-structure.mjs` judges a **list** of pet-window
+full-bleed selectors (`.petball-fallback`, its `:active` press state, `.petball-rename input`,
+`.petball-hit`) — every top-level-comma layer of each `box-shadow` must
+start with `inset`, and `.petball-fallback` must additionally keep ≥1 layer so its 3D does not
+silently disappear. Layers are split on **top-level** commas only (`rgba(0,0,0,0.28)` contains
+commas; so does `color-mix(in srgb, var(--ok) 18%, transparent)`).
+
+#### The second instance, and why "it looks deliberate" is not a defence
+
+`.petball-rename input` is 168×28 — **wider than the 56×56 window it lives in** — and its
+`0 6px 20px rgba(0,0,0,0.35)` halo covered **100% of the window's 112×112 pixels**, exactly like
+the ball's did. It shipped reading as "an intentional field shadow" and was left alone for three
+days; the user then asked for it to go (2026-09-28). So the question to ask is not "is this
+shadow wanted?" but **"does this element's box equal, or exceed, the window's box?"** — the window
+clips whatever is there into a rectangle either way.
+
+#### Why the 384×600 expanded window is *not* affected — the reason is not "it's inset"
+
+Worth stating because the intuitive reason is **wrong**, and a wrong reason is what would let
+someone break it. Measured on real `1-card.png` / `8-drag-preview.png` captures (2× device
+pixels): a `.pcard`'s right border sits at **x ≈ 369.5 CSS in a 384-wide window — only 14 px of
+clearance** — and `.pcard.dragging` carries `var(--shadow-pop), 0 14px 30px rgba(0,0,0,0.22)`
+(36 px + 30 px blur in the dark skin). Its darkening band runs out to **x = 383, the last pixel
+of the window, without fading back to the background**: the shadow really *is* being cut by the
+window boundary. It is safe anyway because `.card` is `width:100%; height:100%` +
+`border-radius:16px` + `overflow:hidden` and carries **no box-shadow of its own**, so every
+descendant's ink overflow is clipped to the card's *rounded* rect. Pixel proof: the alpha contour
+at the right edge tapers symmetrically — x=370 → rows 0..600, x=376 → 2..598, x=382 → 8..592 —
+and **0 pixels outside that rounded rect carry any alpha**. The same measurement in the broken
+ball form was 100% out to the window diagonal.
+
+So the latent risk lives in `.card`, not in the individual shadows: drop its `overflow:hidden` or
+set its `border-radius: 0` and the expanded window grows the same square frame. (No guard for
+that yet — a `.card` assertion is the natural home, deliberately not added by task `09-28`,
+whose scope is the pet window.)
+
 ### Don't: pin an expectation to a value that depends on text length
 
 The figure baseline (`FIG_BASE` in `uitest.ts`) pins 8 fields byte-for-byte. Seven are

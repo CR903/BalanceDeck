@@ -141,8 +141,13 @@ export function createOverlay(): BrowserWindow {
     skipTaskbar: true,
     resizable: false,
     // 原生窗口阴影：展开态（圆角卡片）打开；收起态关闭 —— 收起态是 GPU 合成的
-    // 透明窗口，macOS 会按**窗口矩形**投一层方框阴影（实机表现为「主体外面有个四方形框」），
-    // 人物的立体感由场景内的接触阴影负责。
+    // 透明窗口，macOS 会按**窗口矩形**投一层方框阴影（不是圆角矩形的形状）。
+    // ⚠ 2026-09-28 订正：这段注释原来把用户报的「球外面套一圈浅色方框」直接归给这一层
+    //   （「实机表现为…」），那是**误诊 #2**，已被证伪 —— 真凶是 `.petball-fallback` 的
+    //   outer box-shadow：窗口与元素同为 56×56，圆形阴影的光晕在窗口内、圆外的那四块
+    //   留在画面上，把窗口四角填成方形。证据与「为什么不用原生阴影」是两件事，
+    //   前者已改、后者仍然成立；详见 .trellis/tasks/09-28-dot-frame-label-carousel/design.md §9。
+    //   人物的立体感由场景内的接触阴影负责。
     hasShadow: !state.collapsed,
     fullscreenable: false,
     minimizable: false,

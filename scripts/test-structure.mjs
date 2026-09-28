@@ -244,5 +244,79 @@ ok(
   `D5 winlabel-not-absolute 短标签不在流外（position: ${wl.position || '未设置'}）`
 )
 
+// D6 宠物窗口内**不许有 outer box-shadow**（AC5.1/AC5.3）。
+// 守的正是「球外面套一圈浅色方框」的真凶：元素尺寸 = 窗口尺寸时外阴影无处容放却被绘制 ——
+// 圆形的光晕被窗口裁成方形，**窗口内、元素外**的那几块（四个角）留在画面上（design.md §9）。
+//
+// ⚠ 本门只管辖**这一类**元素：**尺寸等于（或大于）宠物窗口**的那些。判据的成立依赖这个前提，
+//   扩大到窗口内普通元素就是假红了 —— `.petball-caption` 就有合法的 outer
+//   `0 2px 10px`（胶囊要靠投影在任何壁纸上读得清），它 max-width 140px 装在 213×293 的
+//   人物窗口里，从不等于窗口。展开态 384×600 里的 `.pcard`/`.hero`/`.dot`/`.btn`/
+//   `.knob`/`:focus` **也不在本门内，但理由不是「被 padding 内缩」** —— 实测 `.pcard` 的
+//   右边框离窗口边只剩 14px，`.pcard.dragging` 的 36+30px 阴影确实被窗口边界裁掉了。
+//   真正让展开态安全的是 `.card` 自己：`width/height:100%` + `border-radius:16px` +
+//   `overflow:hidden` + **无 own box-shadow**，把后代所有墨迹溢出裁进圆角矩形
+//   （像素证据：右缘 alpha 轮廓对称收口，圆角矩形之外 0 像素带 alpha）。
+//   ⚠ 所以展开态的护栏该加在 `.card` 上，而不是在每条阴影上 —— 那条门**目前不存在**，
+//   详见 design.md §9.8 与 spec 的 component-guidelines.md。
+//
+// ⚠ 为什么不能简单 `includes('inset')`：底座原来那条是
+// `inset …, inset …, 0 6px 18px rgba(0,0,0,0.28)` —— 「含 inset」照样绿。
+// 必须**逐层**判，且「层」要按**顶层逗号**切：`rgba(0,0,0,0.28)` 与
+// `color-mix(in srgb, var(--ok) 18%, transparent)` 里都有逗号，按 `,` 裸切会把
+// `var(--ok) 18%` 切成一个「层」，那条并不以 inset 开头 → 假红。
+function shadowLayers(value) {
+  const out = []
+  let depth = 0
+  let cur = ''
+  for (const c of value) {
+    if (c === '(') depth++
+    else if (c === ')') depth--
+    else if (c === ',' && depth === 0) {
+      out.push(cur.trim())
+      cur = ''
+      continue
+    }
+    cur += c
+  }
+  if (cur.trim()) out.push(cur.trim())
+  return out
+}
+
+const PET_WINDOW_FULLBLEED = [
+  ['.petball.no3d .petball-fallback', '球盘：56×56 = 球形态窗口 56×56（BALL_VIEW）'],
+  ['.petball.no3d:has(.petball-hit:active) .petball-fallback', '球盘按压态：同一元素、同一尺寸'],
+  ['.petball-rename input', '改名输入框：168×28 却活在 56×56 窗口里，20px 光晕照样铺满'],
+  ['.petball-hit', '命中层：inset:0 = 整块窗口'],
+  // ⚠ 曾经把 `.petball-debugring` 也列进来，理由写的是「按投影上报的外接框 = 整个窗口」——
+  //   **那条理由是假的**（`PetBall.tsx:812` 写明它只可能是人物形态：ringBox 由 3D 场景的
+  //   hitRect 填，球形态 w 恒为 0，所以它在 56×56 窗口里**根本不存在**）。人物形态下它也
+  //   只是 213×293 里的一圈虚线，尺寸远小于窗口，不满足本门的成立前提。
+  //   留着就是「注释宣称了一个代码不具备的性质」—— 与本任务修的正是同一类错。已移出。
+  //   批次 13 曾对它跑过「加 outer shadow → 红」（说明门当时有牙齿）；移出是因为
+  //   **前提不成立**，不是因为它不响 —— 记录在此，别为了「多一条门」把它加回来。
+]
+// 逐个独立判，理由写进标签 —— 一次红集要能指出是哪个选择器出的问题。
+// `body != null` 前置与 D2/D5 同一条纪律：选择器改名/删掉时 `outer.length === 0` 会
+// **空洞地通过**（块根本没取到 ≠ 规则里真的没有），必须一起红。
+for (const [sel, why] of PET_WINDOW_FULLBLEED) {
+  const body = ruleBody(css, sel)
+  const layers = shadowLayers(decls(body)['box-shadow'] || '')
+  const outer = layers.filter((l) => !/^inset\b/.test(l))
+  ok(
+    body != null && outer.length === 0,
+    `D6 no-outer-shadow ${sel} 没有 outer box-shadow（${why}；共 ${layers.length} 层，非 inset ${outer.length} 层：${outer.join(' / ') || '无'}）`
+  )
+}
+
+// 球盘的**正向**要求（AC5.3）：立体感由 CSS inset 阴影提供，所以层数必须 > 0。
+// ⚠ 这条不能推广到整张表：改名输入框的**正确终态就是 0 层**（一个投影都不许有），
+//   对它要求「层数 > 0」等于逼着人把阴影写回去。只对「本该有 inset 立体感」的元素提。
+const fbLayers = shadowLayers(fb['box-shadow'] || '')
+ok(
+  fallbackBody != null && fbLayers.length > 0,
+  `D6 inset-3d 球盘的立体感由 inset 阴影提供，box-shadow 至少 1 层（实际 ${fbLayers.length} 层）`
+)
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)
