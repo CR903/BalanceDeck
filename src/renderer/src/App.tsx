@@ -16,7 +16,7 @@ import {
 } from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
-import { maxPercent, speakableSnapshots } from './read-model'
+import { speakableSnapshots } from './read-model'
 import {
   DEFAULT_TTS_CONFIG,
   enqueue,
@@ -27,20 +27,12 @@ import {
 import {
   DEFAULT_TRIGGER_CONFIG,
   THRESHOLD_FIELD,
-  balanceOf,
-  checkTriggers,
-  freshHits,
-  latchKeys,
-  mergeHits,
   type ProviderOverride,
   type TriggerConfig,
   type TriggerKind
 } from './smartBroadcast'
-import {
-  DEFAULT_HISTORY_CAP,
-  appendPoint,
-  type HistoryPoint
-} from './history'
+import { DEFAULT_HISTORY_CAP, type HistoryPoint } from './history'
+import { evaluate } from './alertOrchestrate'
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -502,48 +494,30 @@ export default function App(): React.JSX.Element {
   }
 
   /**
-   * 一轮评估：先判触发，再记历史，最后合并成**一条**播报（AC12）。
-   * 返回是否真的产生了新播报。
+   * 一轮评估：**组装 ctx → 调纯函数 → 落副作用**。返回是否真的产生了新播报。
    *
-   * ⚠ 顺序不能反：checkTriggers 拿到的 hist 必须是**上一轮**的采样（smartBroadcast.ts
-   * 文件头的约定）。先把本轮塞进去的话，「相邻两次采样之差」恒为 0 —— 波动场景永远
-   * 命中不了（AC4 静默失效），异常检测的均值也会被当轮自己拉偏。
+   * 6 步编排（先判后记、锁存、分级、合并成一条）都在 alertOrchestrate.ts 里 —— 它此前
+   * 住在这个函数体内，而盲审在这里找出 3 个致命 bug：判定时序颠倒、锁存缺失、阈值覆盖
+   * 被丢弃，全部发生在「引擎答不了、只有调用方答得了」的那一层。抽成纯函数后这层终于
+   * 有测试盯着（scripts/test-alert-orchestration.mjs）。
+   *
+   * 这里仍然走 ref 镜像读实时值：定时器/推送 effect 的依赖数组里不得再加第四个依赖
+   * （state-management.md 的定时器契约），所以 ctx 是**这一轮**的显式快照而不是闭包。
    */
   const evaluateAlerts = (): boolean => {
     const ctx = alertCtxRef.current
-    if (ctx.snapshots.length === 0) return false
-    const now = Date.now()
-
-    // ① 判触发：沿用上一轮的历史；只判用户开着的场景，已静音的供应商不参与
-    const hits = checkTriggers(ctx.snapshots, ctx.history, ctx.config, now)
-      .filter((h) => ctx.triggerOn[h.kind] !== false)
-      .filter((h) => !ctx.muted.includes(h.id))
-
-    // ② 记历史：本轮采样在判定之后落库，供**下一轮**比对
-    let next = ctx.history
-    for (const s of ctx.snapshots) {
-      if (s.status !== 'ok') continue
-      next = appendPoint(
-        next,
-        { t: now, id: s.id, balance: balanceOf(s), percent: maxPercent(s) },
-        ctx.historyCap
-      )
-    }
-    if (next !== ctx.history) persistHistory(next)
-    ctx.history = next
-
-    // ③ 锁存：条件持续成立期间只播一次（AC9「恰好一次」）。
-    //    锁存的是**本轮进入播报判定的那批**（speakable），不是全部命中 —— 否则展开面板
-    //    时被 AC15 挡下的例行项也被记成「播过了」，等用户收起面板就再也听不到。
-    const speakable = ctx.collapsed ? hits : hits.filter((h) => h.level === 'urgent')
-    const fresh = freshHits(speakable, alertLatchRef.current)
-    alertLatchRef.current = new Set(latchKeys(speakable))
-    if (fresh.length === 0) return false
-
-    // ④ 合并去重成一条；有紧急就整条按紧急插队（speechOut 会打断例行）
-    const text = mergeHits(fresh, ctx.format, { hideBalance: ctx.hideBalance })
-    if (!text) return false
-    speakOut(text, fresh.some((h) => h.level === 'urgent'))
+    // spread 出来的字段全是 ctx 上的；多带的那几个（ttsConfig / fallback / visual…）
+    // 编排纯函数不看。必填项缺一个，tsc 就报错 —— 不靠人工核对。
+    const d = evaluate({ ...ctx, latched: alertLatchRef.current, now: Date.now() })
+    // 整轮无变更（没有快照）：不播、不动历史与锁存
+    if (!d) return false
+    // 纯函数返回同一引用 = 本轮没有新采样，不必落盘
+    if (d.nextHistory !== ctx.history) persistHistory(d.nextHistory)
+    ctx.history = d.nextHistory
+    // 锁存必须写回：漏了这一句就退回「每 60s 数据推送重播同一句」（AC9）
+    alertLatchRef.current = d.nextLatched
+    if (!d.text) return false
+    speakOut(d.text, d.urgent)
     return true
   }
 

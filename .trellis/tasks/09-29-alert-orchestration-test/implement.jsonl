@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-29-alert-orchestration-test/prd.md", "reason": "任务需求与测试需求 T1-T8、AC1-AC8；3 个历史致命 bug 的具体表现是断言设计依据"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/design.md", "reason": "父任务技术决策：D6 extras 键表、D7 定时器依赖契约、播报分级规则；抽取后不得违反这些约束"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核心约束：测试必须 loadTs 加载真实源码，禁止内联副本；tsc 是唯一类型闸门且不在 npm test 内，两者都要单独跑"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "本项目无自定义 hook，答案就是抽纯函数模块；effect cleanup 与 ref 镜像模式是 App.tsx 薄封装的依据"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "播报定时器的自重排契约与 ref 镜像约定；抽离时必须保持「不闭包读取实时值」这一原约束"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "纯函数的输入输出类型设计；缺失值必须保持 null 不得填 0（history 的 balance/percent 字段）"}

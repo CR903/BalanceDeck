@@ -178,28 +178,33 @@ for this reason.
 
 ## Testing Requirements
 
-### The nine unit suites
+### The unit suites
 
 `npm test` chains them with `&&` in a fixed order, so the first failure short-circuits
-(`package.json:27`):
+(`package.json` `scripts.test`):
 
 ```
 percent → ssr → quality → tray → pet → gesture → adapters → structure → read-model
+        → voice → speech-out → trigger-engine → alert-orchestration
 ```
 
-| Script | Lines | Loads real source | Covers |
-|---|---|---|---|
-| `test-percent.mjs` | 66 | **inline copy** ⚠ | percent normalisation / rounding |
-| `test-ssr-parser.mjs` | 305 | `loadTs` ×3 | console window + per-model parsing, real captured fixtures |
-| `test-quality.mjs` | 128 | direct `.ts` import | cache policy, staleness, network errors |
-| `test-tray.mjs` | 119 | `loadTs` | tray wording, offline/cache prefixes |
-| `test-pet.mjs` | 104 | `loadTs` | identity model, serialization, migration |
-| `test-gesture.mjs` | 226 | `loadTs` ×2 + `fs` | clip catalog consistency, scheduling |
-| `test-adapters.mjs` | 1160 | `loadTs` ×12 | golden samples A–N, production net R, fan-out S, store T, parity U |
-| `test-structure.mjs` | 316 | static file reads | 28 architectural guards |
-| `test-read-model.mjs` | 127 | `loadTs` ×2 | read model + formatting |
+| Script | Loads real source | Covers |
+|---|---|---|
+| `test-percent.mjs` | **inline copy** ⚠ | percent normalisation / rounding |
+| `test-ssr-parser.mjs` | `loadTs` ×3 | console window + per-model parsing, real captured fixtures |
+| `test-quality.mjs` | direct `.ts` import | cache policy, staleness, network errors |
+| `test-tray.mjs` | `loadTs` | tray wording, offline/cache prefixes |
+| `test-pet.mjs` | `loadTs` | identity model, serialization, migration |
+| `test-gesture.mjs` | `loadTs` ×2 + `fs` | clip catalog consistency, scheduling |
+| `test-adapters.mjs` | `loadTs` ×12 | golden samples A–N, production net R, fan-out S, store T, parity U |
+| `test-structure.mjs` | static file reads | 28 architectural guards |
+| `test-read-model.mjs` | `loadTs` ×2 | read model + formatting |
+| `test-voice.mjs` | `loadTs` | system-voice gender matching (was an inline copy; it hid a real `Siri 声音 1` mismatch) |
+| `test-speech-out.mjs` | `loadTs` | queue / interrupt / rate gate / TTS-vs-fallback |
+| `test-trigger-engine.mjs` | `loadTs` ×2 | 5 trigger scenarios, grading, merge/dedupe |
+| `test-alert-orchestration.mjs` | `loadTs` ×3 | **calling order** into the trigger engine (see below) |
 
-**The script convention** (uniform in all 9): a `//` header stating
+**The script convention** (uniform across all): a `//` header stating
 `用法：node scripts/<name>.mjs` plus what it covers; then `let pass = 0; let fail = 0`; then
 local `eq()`/`ok()` helpers that compare with `JSON.stringify`; then flat `console.log`
 section headers; then a summary; then `process.exit(fail ? 1 : 0)`.
@@ -215,6 +220,73 @@ function eq(actual, expected, label) {
 
 Three summary-line spellings coexist (`结果：N 通过 / M 失败`, `通过 N 项，失败 M 项`, and a
 prefixed variant) — not worth unifying, but do not assume a grep pattern matches all of them.
+
+### Pattern: the orchestration pure-function boundary
+
+**Problem.** This repo has no React test infrastructure (no vitest / RTL / jsdom), so
+anything living inside a `.tsx` component is untestable. In the voice-alert work this left
+three production-fatal bugs unguarded — all in `App.tsx`'s `evaluateAlerts`, none in the
+engine it calls. `test-trigger-engine.mjs` covered `checkTriggers` thoroughly and still could
+not answer *"did the caller feed things in the right order?"*
+
+The engine answers **「给定快照与历史能不能判出命中」**; it cannot answer **「谁先谁后」**.
+
+**Solution.** Extract the orchestration steps into a pure module that takes an explicit
+immutable context and returns a decision, leaving the component as a thin side-effect shell.
+
+```ts
+// src/renderer/src/alertOrchestrate.ts — no electron, no DOM, no React
+export interface AlertContext { /* snapshots, history, config, …, now */ }
+export interface Decision { text: string | null; urgent: boolean; nextHistory: …; nextLatched: … }
+export function evaluate(ctx: AlertContext): Decision | null
+
+// src/renderer/src/App.tsx — the only side effects live here
+const d = evaluate({ ...ctx, latched: latchRef.current, now: Date.now() })
+if (!d) return false
+if (d.nextHistory !== ctx.history) persistHistory(d.nextHistory)   // same-reference = skip
+alertLatchRef.current = d.nextLatched
+if (!d.text) return false
+speakOut(d.text, d.urgent)
+```
+
+Rules that make this boundary work (each was learned the hard way):
+
+1. **`now` is a parameter.** The pure module must not read its own clock. Exactly one
+   `Date.now()` in the wrapper.
+2. **The context is a snapshot, not a closure.** The wrapper reads live values from a ref
+   mirror (see [`state-management.md`](./state-management.md)) and spreads them in; the pure
+   function never closes over them. This is what keeps the timer contract intact.
+3. **`null` must not swallow side effects.** `evaluate` returning `null` means *"nothing
+   changed at all"* (no snapshots). "This round doesn't broadcast" is `text === null` — that
+   round **still records history and updates the latch**. Returning `null` for both silently
+   starved `statsFor` of samples, so the anomaly scenario could never fire.
+4. **Latch only what reached the decision.** `latchKeys(speakable)`, not `latchKeys(hits)`.
+   Otherwise hits filtered out by a grading rule get recorded as "already spoken" and are
+   never heard again.
+
+**Testing it** needs no new dependency: `loadTs` the pure module the same way as any other.
+
+**Verify the guard can fail** — inject all four historical bugs and confirm each goes red:
+
+| Injection | Red assertions |
+|---|---|
+| feed `checkTriggers` the already-appended history | 14 |
+| latch `hits` instead of `speakable` | 2 |
+| drop `perProvider` | 4 |
+| remove latching entirely | 4 |
+
+### Don't: signal "no broadcast" with the same value as "no change"
+
+**Problem.** A single `null` return for both "the whole round is a no-op" and "there is
+nothing to say this round" makes the caller skip history and latch updates in the second case
+too.
+
+**Why it's bad:** the sample counter feeding the anomaly detector never grows, so the feature
+silently never fires — and no assertion fails, because every individual step is correct.
+
+**Instead:** distinct signals. `evaluate() === null` for "nothing changed"; `text === null` for
+"changed, but nothing to say" (and the caller still persists history + latch).
+
 
 ### `test-structure.mjs` — the architectural guard (28 assertions, pure static)
 
@@ -371,7 +443,7 @@ Also note the stable key-sorted serialization with `undefined` keys dropped (`:4
 
 **Build & config**
 - [ ] `npm run typecheck` clean (it is not part of `npm test`)
-- [ ] `npm test` all ten suites 0 failures
+- [ ] `npm test` all suites 0 failures
 - [ ] `npm run build` clean
 - [ ] Any new tsconfig option — is it actually set in *both* configs, or does it need adding?
 

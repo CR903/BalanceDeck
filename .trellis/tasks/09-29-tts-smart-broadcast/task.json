@@ -22,7 +22,9 @@
     "09-29-speech-out",
     "09-29-trigger-engine",
     "09-29-tts-main-ipc",
-    "09-29-voice-reminder-ui"
+    "09-29-voice-reminder-ui",
+    "09-29-ac7-repeat-until-confirmed",
+    "09-29-alert-orchestration-test"
   ],
   "parent": null,
   "relatedFiles": [],

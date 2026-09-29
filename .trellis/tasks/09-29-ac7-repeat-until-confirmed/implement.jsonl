@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-29-ac7-repeat-until-confirmed/prd.md", "reason": "任务需求与 AC1-AC9：重复间隔、倒计时、确认语义、分组粒度、频率闸门约束"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/prd.md", "reason": "父任务 AC7/AC9 的原始表述与冲突背景；用户裁定的新语义必须与父任务一致"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/design.md", "reason": "父任务技术决策：D5 队列与打断策略、D6 extras 键表、D7 定时器契约（本任务新增定时器不得违反）"}
+{"file": ".trellis/tasks/09-29-alert-orchestration-test/prd.md", "reason": "前置依赖：编排逻辑抽为 alertOrchestrate.ts 纯函数后，确认状态机必须落在同一可测边界内"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "倒计时与重复计时要用 setTimeout 自重排链，不得新增独立定时器；effect cleanup 规范"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "确认按钮复用 PetBall 现有 notice 泡泡通道，不新增浮层；样式复用现有 class"}

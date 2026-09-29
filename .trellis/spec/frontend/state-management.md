@@ -159,6 +159,13 @@ Full key inventory:
 | `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:221`) |
 | `ui:voiceEvery` | `String(minutes)` | re-validated against a whitelist (`App.tsx:227`) |
 | `ui:hideBalance` | **`'1'` / `''`** | differs from the other six booleans — don't copy |
+| `ui:ttsOn` | `'1'` / `'0'` | replaces the retired `ui:voiceOn` (read on load for migration) |
+| `ui:ttsConfig` | `JSON.stringify` | TTS service (url/voice/speed). **Never holds a token** |
+| `ui:ttsTriggers` / `ui:ttsTriggerOn` | `JSON.stringify` | 5 thresholds / their on-off flags, split for validation |
+| `ui:ttsHistory` | `JSON.stringify` | sampled snapshots, cap `ui:ttsHistoryCap` (default 100) |
+| `ui:ttsTextFormat` | `'simple'` / `'detailed'` | |
+| `ui:ttsVisual` / `ui:ttsFallback` / `ui:ttsRoutine` | `'1'` / `'0'` | |
+| `ui:ttsRoutineEvery` / `ui:ttsHistoryCap` | `'60'` / `'100'` | |
 | `ui:cardWindow:<id>` | window name, e.g. `本周` | per-provider, read in `CardView` |
 | `skin` / `refreshInterval` | plain id / `'10'…'300'` | |
 | `interval:plan` | — | legacy read-only, migration at `SettingsView.tsx:331` |
@@ -216,6 +223,17 @@ The two `extras` namespaces are disjoint and mixing them fails silently:
 forever. This produced a diagnostic tool that reported "not configured" while the app worked
 fine. Same class of bug applies to anything under `persist:*` partitions.
 
+### Don't: put a secret in `extras` — it is plaintext
+
+`extras` is stored as plain text; only `items` goes through `crypto.encrypt` (`store.ts:68-90`).
+`preload` exposes only `getExtras`/`setExtras`, so a new secret needs its own IPC pair that
+lands in `items` — see `tts:setSecret` / `tts:getSecret` in `ipc.ts`, keyed `tts:secret:<id>`.
+
+Validate `id` before it reaches a storage key (`^[A-Za-z0-9_-]{1,64}$`): a colon in `id` would
+collide with the namespace prefix. The renderer does need the plaintext at request time (to
+build an `Authorization` header), so the guarantee being made is **never plaintext at rest** —
+hold it in a ref, not `useState`, so it does not ride along in React state.
+
 ### Don't: assume `AppState` in `PetBall` is the same object `App` has
 
 It is not. It is a second subscription to the same broadcast. Mutating one has no effect on
@@ -224,6 +242,38 @@ the other.
 ### Don't: add a non-`ui:` extras key without knowing it triggers a recollect
 
 See `ipc.ts:191-193`. A "harmless" preference write becomes a network request.
+
+### Don't: put a long-interval timer in a window that throttles in the background
+
+**Problem.** `BrowserWindow` defaults to `backgroundThrottling: true` (`electron.d.ts:18215`).
+Chromium then does *intensive throttling* on the hidden/unfocused window's `setTimeout` — timers
+of 1 minute or more get clamped to the minimum rate. The overlay window is *permanently*
+unfocused (it is a floating badge), so this is not an edge case; it is the normal state.
+
+**Why it's bad:** the failure is silent. The timer still fires, just late — possibly much
+later. Nothing in the UI looks wrong, and there is no error to grep for. A 1-hour broadcast
+timer becomes "some time after an hour, if the OS feels like it".
+
+**Instead:** set it in `overlay.ts` where the window is constructed:
+
+```ts
+webPreferences: {
+  // 后台节流必须关掉：窗口常态是「用户没在看它」，而 Chromium 对隐藏/非聚焦窗口的
+  // setTimeout 会做 intensive throttling（1 分钟以上的定时器被降到最低频率）。
+  backgroundThrottling: false
+}
+```
+
+Companion setting, same feature: unattended audio (`new Audio().play()` with no user gesture)
+is blocked by the autoplay policy. `session.defaultSession.setAutoplayPolicy()` **does not
+exist** in this Electron version — verified against `electron.d.ts`, where `autoplayPolicy`
+only appears as a `webPreferences` field. The working form is a process-wide switch, placed
+before `app.whenReady()`:
+
+```ts
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+```
+
 
 ### Don't: promote a value to `App` before checking it isn't a main-process push
 

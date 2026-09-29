@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-29-ac7-repeat-until-confirmed/prd.md", "reason": "验收基线：AC1-AC9，重点核对 AC6（分组独立）、AC7（频率闸门不可绕过）、AC8（重启清空）"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/design.md", "reason": "设计合规基线：D5 打断策略、D7 定时器依赖契约、播报分级"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查项：确认状态机是否有测试覆盖、测试是否加载真实源码、有无假护栏"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "检查项：是否用自重排 setTimeout 而非新增独立定时器、effect cleanup 是否完整、有无定时器泄漏"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查项：待确认状态是否误入 extras（应为内存态）、确认后锁存是否与 AC9 冲突"}

@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-29-alert-orchestration-test/prd.md", "reason": "验收基线：AC1-AC8，重点核对 AC3（3 个历史 bug 各自有能变红的断言）与 AC8（抽离是重构，行为不变）"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/design.md", "reason": "设计合规基线：extras 键须 ui: 前缀、定时器依赖不得增加、播报分级规则不得在抽离中走样"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查项：测试是否加载真实源码（内联副本一律判不合格）、是否有从未观察到失败的假护栏"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查项：纯函数边界上缺失值是否被填 0、字面量联合是否穷尽、读取是否类型守卫"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查项：薄封装是否仍走 ref 镜像、有没有在抽离中把实时值闭包捕获（定时器契约依赖这一点）"}
