@@ -11,6 +11,7 @@ import {
   decodePetState,
   defaultPetState,
   encodePetState,
+  petGender,
   petMeta,
   type PetId,
   type PetState
@@ -20,9 +21,14 @@ import { providerSummary, qualitySuffix } from '../../shared/tray-text'
 import { speakableSnapshots } from './read-model'
 import {
   DEFAULT_TTS_CONFIG,
+  PROBE_IDLE,
   enqueue,
   flush,
+  probeStep,
+  probeTts,
   stopAll,
+  type ProbeEvent,
+  type ProbeState,
   type TtsConfig
 } from './speechOut'
 import {
@@ -103,8 +109,6 @@ export default function App(): React.JSX.Element {
    *  留一个能写却没人听的开关，就是让用户以为设置生效了。 */
   /** 不播报的供应商 id（ui:voiceMuted，默认空 = 全部播报） */
   const [voiceMuted, setVoiceMuted] = useState<string[]>([])
-  /** 语音播报音色性别（ui:voiceGender，默认 any = 不限制） */
-  const [voiceGender, setVoiceGender] = useState<'female' | 'male' | 'any'>('any')
 
   // ─── 语音提醒（TTS 集成 + 智能播报）────────────────────────────────────────
   // 所有键都是 ui: 前缀：非 ui: 的 extras 写入会触发一次全量重新采集（ipc.ts:191-193）
@@ -138,13 +142,39 @@ export default function App(): React.JSX.Element {
   const [ttsHistoryCap, setTtsHistoryCap] = useState(DEFAULT_HISTORY_CAP)
   /** 历史快照（ui:ttsHistory）—— 供波动/未使用/异常三个场景判定 */
   const [ttsHistory, setTtsHistory] = useState<HistoryPoint[]>([])
-  /** 上次 TTS 调用是否失败（内存态，不持久化：重启后重新探测） */
+  /** TTS 服务是否仍连不上（内存态，不持久化：重启后重新探测） */
   const [ttsUnreachable, setTtsUnreachable] = useState(false)
+  /**
+   * 退避探测的进度（不可达 → 5s/15s/1min/5min 各试一次 → 恢复即停）。
+   *
+   * 内存态、**不落盘**：它描述的是「这一轮连不上」，跨重启保留下来只会让新会话一上来
+   * 就挂着一条已经过期的提示。纯状态机在 speechOut 的 probeStep（可单测），这里只排程。
+   */
+  const probeRef = useRef<ProbeState>(PROBE_IDLE)
+  /** 探测定时器句柄。与播报的两条定时器分开 —— 探测是「服务不可达」时才存在的旁路，
+   *  混进播报链会让每次切换开关都重建它（定时器契约见 state-management.md）。 */
+  const probeTimerRef = useRef<number | null>(null)
+  /**
+   * 组件是否还活着。探测的 await 回来时必须先看它，否则卸载后还会 setState + 排下一个
+   *  定时器（hook-guidelines「异步 effect 用 cancelled 守卫」的那一条）。
+   *
+   * ⚠ 这个标志**必须在 effect 体里置回 true**，只在 cleanup 里置 false 是错的：
+   *   本项目渲染入口挂着 `<React.StrictMode>`（main.tsx），而 React 18 的 StrictMode
+   *   在开发模式下会把每个 effect 跑成「挂载 → 清理 → 再挂载」。ref 跨这次假卸载**不会**
+   *   被重置，于是清理里写下的 false 会一直留着 —— 开发模式下 runProbe 的结果从此
+   *   全被丢弃，退避探测（也就是缺陷 2 的自愈通路）静默失效，而 production 构建里
+   *   又一切正常。component-guidelines 那条「清理里只清 ref，状态复位放回 effect 体」
+   *   说的正是这件事。
+   */
+  const probeInFlightRef = useRef(true)
   /** 已配置 token（只记有无：明文只在下面那个 ref 里，绝不进 state 也不进 extras） */
   const [ttsHasSecret, setTtsHasSecret] = useState(false)
   /** 视觉通知文本（'' = 无） */
   const [ttsVisualText, setTtsVisualText] = useState('')
   const ttsVisualTimerRef = useRef<number | null>(null)
+  /** 「测试播报」的试听反馈（null = 无）。成功会自己消失，失败留着等用户改配置 */
+  const [testNote, setTestNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const testNoteTimerRef = useRef<number | null>(null)
 
   /**
    * 自定义 TTS 服务的认证 token 明文。
@@ -239,12 +269,6 @@ export default function App(): React.JSX.Element {
     void window.api.setExtras({ 'ui:voiceMuted': JSON.stringify(next) })
   }
 
-  /** 语音播报音色性别（ui:voiceGender）—— 走系统语音回退路径时生效 */
-  const setVoiceGenderPref = (g: 'female' | 'male' | 'any'): void => {
-    setVoiceGender(g)
-    void window.api.setExtras({ 'ui:voiceGender': g })
-  }
-
   // ─── 语音提醒：持久化辅助 ─────────────────────────────────────────────────
   // 读取处一律重新校验：extras 可能被旧版本或手改写成任意值（state-management.md:178-180）
 
@@ -297,7 +321,11 @@ export default function App(): React.JSX.Element {
         persistConfigSilently({
           url: typeof c.url === 'string' && c.url ? c.url : DEFAULT_TTS_CONFIG.url,
           voice: typeof c.voice === 'string' && c.voice ? c.voice : DEFAULT_TTS_CONFIG.voice,
-          speed: pos(c.speed, DEFAULT_TTS_CONFIG.speed, 0.1)
+          speed: pos(c.speed, DEFAULT_TTS_CONFIG.speed, 0.1),
+          // style 是本轮新增的字段：**旧配置里根本没有这个键**（那时它是写死的），
+          // 所以读不到是常态而不是异常，补默认值即可 —— 补的值正是当时写死的那个，
+          // 升级前后行为不变（NFR2）。
+          style: typeof c.style === 'string' && c.style ? c.style : DEFAULT_TTS_CONFIG.style
         })
       } catch {
         persistConfigSilently(DEFAULT_TTS_CONFIG)
@@ -423,7 +451,7 @@ export default function App(): React.JSX.Element {
     return picked
   }
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:voiceGender']).then((e) => {
+    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted']).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
@@ -434,8 +462,9 @@ export default function App(): React.JSX.Element {
       } catch {
         setVoiceMuted([])
       }
-      const gender = e['ui:voiceGender']
-      setVoiceGender(gender === 'female' || gender === 'male' ? gender : 'any')
+      // ⚠ 这里**不再读** ui:voiceGender：性别改由 petGender(pet.id) 现算（FR3）。
+      //   旧键留在 extras 里不动 —— 读过再用它改写用户选的助理，就是「覆盖用户显式偏好」
+      //   （上一轮集成复核因此还原过一次），而它本来也只是「谁播报」的另一种问法。
       const st = decodePetState(e['ui:petState'])
       if (st) setPet(st)
     })
@@ -473,7 +502,9 @@ export default function App(): React.JSX.Element {
     fallback: true,
     visual: false,
     routine: false,
-    gender: 'any' as 'female' | 'male' | 'any'
+    // 性别**每轮从助理现算**，不落盘、不进 state（FR3/FR4）：换助理立刻生效，
+    // 不必重启、也不必去设置页改第二处。代价是这里每轮多一次查表，可以忽略。
+    gender: petGender(petRef.current.id)
   })
   alertCtxRef.current = {
     collapsed,
@@ -490,7 +521,7 @@ export default function App(): React.JSX.Element {
     fallback: ttsFallback,
     visual: ttsVisual,
     routine: ttsRoutine,
-    gender: voiceGender
+    gender: petGender(pet.id)
   }
 
   /**
@@ -508,10 +539,79 @@ export default function App(): React.JSX.Element {
     ttsVisualTimerRef.current = window.setTimeout(() => setTtsVisualText(''), 12_000)
   }
 
-  /** 走统一播出口：频率闸门 + 队列 + TTS/系统语音回退都在里面 */
-  const speakOut = (text: string, urgent: boolean): void => {
+  /** 试听反馈：成功 3 秒后自动消失；失败**不自动消失**（用户得看见它才知道要去改配置） */
+  const showTestNote = (ok: boolean, text: string): void => {
+    if (testNoteTimerRef.current !== null) {
+      window.clearTimeout(testNoteTimerRef.current)
+      testNoteTimerRef.current = null
+    }
+    setTestNote({ ok, text })
+    if (ok) testNoteTimerRef.current = window.setTimeout(() => setTestNote(null), 3000)
+  }
+
+  const clearProbeTimer = (): void => {
+    if (probeTimerRef.current !== null) {
+      window.clearTimeout(probeTimerRef.current)
+      probeTimerRef.current = null
+    }
+  }
+
+  /**
+   * 不可达 / 恢复的唯一入口。状态迁移交给纯函数 probeStep，本函数只做副作用：
+   * 置界面标志 + 排下一次探测定时器。
+   *
+   * ⚠ `delayMs === null` **不等于**「停止探测」：链还在跑、或这一轮已用尽时它也是 null，
+   *   而此时绝不能去动已经挂着的定时器（动了就把下一次探测无限推后）。恢复态
+   *   （`next.unreachable === false`）才是唯一该清定时器的情况。
+   */
+  const stepProbe = (event: ProbeEvent, reason: string): void => {
+    if (event === 'fail') console.warn('[voice] TTS 通路不可达：', reason)
+    const r = probeStep(probeRef.current, event, Date.now())
+    probeRef.current = r.next
+    setTtsUnreachable(r.next.unreachable)
+    if (!r.next.unreachable) {
+      // 恢复：把还挂着的探测停掉，否则它会在服务已经好的情况下再问一次
+      clearProbeTimer()
+      return
+    }
+    if (r.delayMs === null) return
+    clearProbeTimer()
+    probeTimerRef.current = window.setTimeout(() => {
+      probeTimerRef.current = null
+      void runProbe()
+    }, r.delayMs)
+  }
+
+  /**
+   * 静默探测：只验连通性，不播声、不入队、不占配额（speechOut 的 probeTts 内部直连
+   * 请求函数）。它存在的理由是缺陷 2 的因果链 —— 清标志若只靠「下一次播报成功」，
+   * 而后续播报全被闸门拦下，标志就永远粘着。
+   */
+  const runProbe = async (): Promise<void> => {
     const ctx = alertCtxRef.current
-    enqueue({ text, urgent })
+    const token = ttsSecretRef.current
+    const config: TtsConfig = token
+      ? {
+          ...ctx.ttsConfig,
+          authHeader: { ...ctx.ttsConfig.authHeader, Authorization: `Bearer ${token}` }
+        }
+      : ctx.ttsConfig
+    const r = await probeTts(config)
+    if (!probeInFlightRef.current) return
+    if (r.ok) stepProbe('ok', '')
+    else stepProbe('probe-fail', r.reason)
+  }
+
+  /**
+   * 走统一播出口：频率闸门 + 队列 + TTS/系统语音回退都在里面。
+   *
+   * `bill` 决定这条播报**要不要占免费服务配额**：定时/预警传 true（无人值守，必须限流），
+   * 设置页「测试播报」传 false（用户自己点的，一分钟点十次也是他自己的选择）。
+   * 过去闸门挂在公共路径上无条件生效，于是第二次点击被**静默丢弃** —— 无日志、无提示、无声音。
+   */
+  const speakOut = (text: string, urgent: boolean, bill: boolean): void => {
+    const ctx = alertCtxRef.current
+    enqueue({ text, urgent, bill })
     // 认证头**每条现拼**：token 只从 ref 读，不进 state、不进 ui:ttsConfig（design.md D3）。
     // 自由约定的自定义服务几乎都用 Bearer，故固定这个前缀；免费服务没有 token，不受影响。
     const token = ttsSecretRef.current
@@ -527,10 +627,14 @@ export default function App(): React.JSX.Element {
       gender: ctx.gender,
       onVisual: ctx.visual ? showVisual : undefined,
       onTtsFailed: (reason) => {
-        console.warn('[voice] TTS 通路不可达：', reason)
-        setTtsUnreachable(true)
+        stepProbe('fail', reason)
+        // 试听失败要给用户看得见的反馈；定时播报失败只留日志 + 那条会自动消失的提示
+        if (!bill) showTestNote(false, `没播出来：${reason}。检查服务地址是否正确，或点「测试播报」再试。`)
       },
-      onTtsOk: () => setTtsUnreachable(false)
+      onTtsOk: () => {
+        stepProbe('ok', '')
+        if (!bill) showTestNote(true, '试听正常')
+      }
     })
   }
 
@@ -567,8 +671,9 @@ export default function App(): React.JSX.Element {
     alertPendingRef.current = d.nextPending
     if (d.nextPending !== ctx.pending) setAlertPending(d.nextPending)
     if (!d.text) return false
-    // 「新命中」与「到期重复」走**同一条**播出口 —— 频率闸门在 speakOut 里，重复不能绕开它
-    speakOut(d.text, d.urgent)
+    // 「新命中」与「到期重复」走**同一条**播出口 —— 频率闸门在 speakOut 里，重复不能绕开它。
+    // 两者都是无人值守的，bill = true。
+    speakOut(d.text, d.urgent, true)
     return true
   }
 
@@ -600,7 +705,8 @@ export default function App(): React.JSX.Element {
       return summary ? `${name}，${summary}${qualitySuffix(s)}` : null
     }).filter((x): x is string => !!x)
     if (parts.length === 0) return
-    speakOut(parts.join('；'), false)
+    // 定时兜底是无人值守的，计费（仍受闸门约束）
+    speakOut(parts.join('；'), false, true)
   }
 
   // ① 数据一变化就评估一次：智能播报的触发源是**数据**，不是时间
@@ -663,13 +769,30 @@ export default function App(): React.JSX.Element {
   // ④ 关闭播报时把在途音频停掉，并清掉锁存与待确认（下次开启按新的一轮算）。
   //    待确认必须一起清：不清理的话用户关掉再打开，会看到一条早该消失的「知道了」，
   //    而且那一批还会按旧的时间表继续重复播下去。
+  //    探测链也一起停：用户主动关了播报，后台不该还替他连服务。
   useEffect(() => {
     if (ttsOn) return
     stopAll()
     alertLatchRef.current = new Set()
     alertPendingRef.current = []
     setAlertPending([])
+    probeRef.current = PROBE_IDLE
+    setTtsUnreachable(false)
+    clearProbeTimer()
   }, [ttsOn])
+
+  // ⑤ 卸载清理：探测定时器与试听提示定时器都必须停，否则组件没了定时器还在跑
+  //    （收起态切换会卸载设置页那棵树，定时器活过组件 = 在一个看不见的地方继续请求）。
+  useEffect(() => {
+    // 复位放回**体**里，不放清理里 —— StrictMode 的开发态双调用会让「只清理不复位」
+    // 的写法把标志永久按成 false（见 probeInFlightRef 的注释）。
+    probeInFlightRef.current = true
+    return () => {
+      clearProbeTimer()
+      probeInFlightRef.current = false
+      if (testNoteTimerRef.current !== null) window.clearTimeout(testNoteTimerRef.current)
+    }
+  }, [])
 
   // ─── 语音提醒：设置页回调 ─────────────────────────────────────────────────
 
@@ -690,8 +813,14 @@ export default function App(): React.JSX.Element {
     })
   }
 
+  /**
+   * 「测试播报」：用户主动点的，**不计配额**（FR5）。
+   *
+   * 一分钟内连点三次就该响三次 —— 过去第二次就被频率闸门静默丢弃，连同「服务不可达」
+   * 一起变成一个用户解不开的死结（缺陷 1 与缺陷 2 是同一条因果链）。
+   */
   const testSpeak = (text: string): void => {
-    speakOut(text, false)
+    speakOut(text, false, false)
   }
 
   const changeTrigger = (kind: string, patch: { on?: boolean; value?: number }): void => {
@@ -825,31 +954,32 @@ export default function App(): React.JSX.Element {
             onTogglePetBall={togglePetBall}
             alwaysTop={alwaysTop}
             onToggleAlwaysTop={toggleAlwaysTop}
-            voiceGender={voiceGender}
-            onSetVoiceGender={setVoiceGenderPref}
             ttsOn={ttsOn}
             onToggleTts={toggleTts}
             servicePreset={ttsPreset}
             onChangePreset={(id) => {
               setTtsPreset(id)
               void window.api.setExtras({ 'ui:ttsPreset': id })
-              // 切到预设时把 url/voice 一并落进 ui:ttsConfig —— 预设分支里界面显示的是
+              // 切到预设时把 url/voice/style 一并落进 ui:ttsConfig —— 预设分支里界面显示的是
               // 只读端点（读自预设表），而真正发请求用的是 ui:ttsConfig.url。不同步的话，
               // 用户在「预设 / 自定义」之间来回切一次，界面写着免费服务、请求却打向他
               // 之前填的自定义地址，且没有任何提示。
-              // 切到「自定义服务」时**不动**配置：那三项本来就是用户自己填的。
+              // 切到「自定义服务」时**不动**配置：那几项本来就是用户自己填的。
               const p = presetConfig(id)
-              if (p) persistConfig({ ...ttsConfig, url: p.url, voice: p.voice })
+              if (p) persistConfig({ ...ttsConfig, url: p.url, voice: p.voice, style: p.style })
             }}
             ttsUrl={ttsConfig.url}
             onChangeUrl={(url) => persistConfig({ ...ttsConfig, url })}
             ttsVoice={ttsConfig.voice}
             onChangeVoice={(v) => persistConfig({ ...ttsConfig, voice: v })}
+            ttsStyle={ttsConfig.style}
+            onChangeStyle={(s) => persistConfig({ ...ttsConfig, style: s })}
             ttsSpeed={ttsConfig.speed}
             onChangeSpeed={(n) => persistConfig({ ...ttsConfig, speed: n })}
             hasSecret={ttsHasSecret}
             onSetSecret={setSecret}
             onTestSpeak={testSpeak}
+            testNote={testNote}
             triggers={Object.fromEntries(
               (Object.keys(ttsTriggerOn) as TriggerKind[]).map((k) => [
                 k,

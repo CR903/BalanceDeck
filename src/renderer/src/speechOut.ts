@@ -13,13 +13,23 @@
 //   · 紧急入队时若正在播例行 → 停掉例行 + 清空队列，紧急插到最前
 //   · 例行入队时排队，串行播放；积压到上限就跳过新触发（不叠加，记日志）
 //   · 任何打断都让「估算时长」里的等待提前结束，否则紧急项要干等一整条例行念完
+//
+// 计费语义（09-29-voice-settings-refactor）：
+//   频率闸门保护的是**免费服务配额**，不是用户的主动操作。所以闸门挂在 item 上
+//   （SpeechItem.bill）而不是挂在公共路径上：定时/预警播报计费、测试播报不计费。
+//   旧实现把闸门放在 playOne 开头，于是设置页「测试播报」连点第二次就被**静默丢弃** ——
+//   无日志、无提示、无声音，而「上一次调用失败」也因此永远清不掉（见下面的探测段）。
 // ═══════════════════════════════════════════════════════════════════════════════
+
+import { DEFAULT_TTS_STYLE, DEFAULT_TTS_VOICE } from '../../shared/tts-preset'
 
 /** TTS 服务配置。密钥本身走主进程加密 IPC，这里只放已取出的运行时值 */
 export interface TtsConfig {
   url: string
   voice: string
   speed: number
+  /** 语音风格。清单见 shared/tts-preset.ts 的 TTS_STYLES；此前这里是硬编码的 'general' */
+  style: string
   /** 认证头。密钥本身走主进程加密 IPC，此处只放已取出的运行时值 */
   authHeader?: Record<string, string>
 }
@@ -27,8 +37,9 @@ export interface TtsConfig {
 /** 端点已在父任务实测（2026-09-29）：HTTP 200 / 1.71s / 有效 MP3。旧 workers.dev 域名被 DNS 污染，已弃用 */
 export const DEFAULT_TTS_CONFIG: TtsConfig = {
   url: 'https://voice.mytts.ccwu.cc/v1/audio/speech',
-  voice: 'zh-CN-YunxiNeural',
-  speed: 1.0
+  voice: DEFAULT_TTS_VOICE,
+  speed: 1.0,
+  style: DEFAULT_TTS_STYLE
 }
 
 /** 应用级频率限制：滑动窗口内存态，**不持久化**（重启后重置，避免陈旧窗口影响当日限额判断） */
@@ -45,27 +56,43 @@ const PACED_MS_PER_CHAR = 180
 const PACED_MIN_MS = 600
 const PACED_MAX_MS = 15000
 
-/** 一条待播内容。urgent 决定它能不能打断别人 */
-export type SpeechItem = { text: string; urgent: boolean }
+/** 一条待播内容。urgent 决定它能不能打断别人，bill 决定它要不要占一次免费配额 */
+export interface SpeechItem {
+  text: string
+  urgent: boolean
+  /**
+   * 是否计入频率闸门的配额。
+   *
+   * 定时播报 / 预警播报 = true（无人值守，必须限流）；
+   * 设置页「测试播报」= false（用户自己点的，一分钟点十次也是他自己的选择）。
+   *
+   * 必填而非可选：可选的话新调用方漏写就默认摊上「被拦且无提示」的旧故障，
+   * 而那正是这个字段存在的理由 —— 每个入口都得显式表态自己算不算。
+   */
+  bill: boolean
+}
 
 export interface FlushOptions {
   config: TtsConfig
-  /** TTS 失败时是否回退到系统语音 */
+  /** TTS 失败时是否改用系统语音 */
   fallback: boolean
   /**
-   * 系统语音的音色性别（ui:voiceGender）。回退路径必须透传它 ——
-   * 漏掉就落回 voice.speak() 的默认 'any'，用户特意挑的男声/女声被作废（改播报链路时丢过）。
+   * 系统语音的音色性别。回退路径必须透传它 ——
+   * 漏掉就落回 voice.speak() 的默认 'any'，助理的性别被作废（改播报链路时丢过）。
+   *
+   * 值的来源是**助理身份**（shared/pet.ts 的 petGender），不再有用户手选的那一项：
+   * ui:voiceGender 已下线（FR8），每轮从 pet.id 现算。
    */
   gender?: 'female' | 'male' | 'any'
   /** 视觉通知回调。与音频通道独立：频率闸门只拦音频，视觉通知照发 */
   onVisual?: (text: string) => void
   /**
    * TTS 通路失败时回调一次（连接失败 / 非 2xx / 重试后仍失败）。
-   * 设置页的「服务当前不可达」提示靠它 —— 没有它，用户只会看到"没声音"，
+   * 设置页的「连不上语音服务」提示靠它 —— 没有它，用户只会看到"没声音"，
    * 分不清是服务挂了还是自己关了开关。
    */
   onTtsFailed?: (reason: string) => void
-  /** 成功播出一句后回调（用于清掉「不可达」提示） */
+  /** 成功播出一句后回调（用于清掉「连不上」提示，同时把退避探测停下来） */
   onTtsOk?: () => void
 }
 
@@ -98,6 +125,107 @@ export function allowCall(now: number): boolean {
   }
   callLog.push(now)
   return true
+}
+
+// ─── 不可达自愈：退避探测 ────────────────────────────────────────────────────
+//
+// 要解决的问题是一个**因果链**，只修一半等于没修：
+//
+//   某次 TTS 调用失败 → unreachable 置位
+//     → 之后每条播报都撞上频率闸门（1 次/分钟）被静默丢弃
+//       → onTtsOk 再也不会被调用 → unreachable 永久为真
+//
+// 用户看到的正是「提示连不上 + 连点测试播报没反应」。所以「清掉提示」不能靠
+// 「下一次播报碰碰运气」，必须由**不经过队列、不经过闸门**的静默探测来推动：
+// 拿到音频字节就说明恢复了，清提示并停止排程；拿不到就换下一档延迟，档位用尽即停。
+
+/** 退避档位（毫秒）。4 次探测 ≈ 5 分钟内确认一次，之后不再打扰用户 */
+export const PROBE_DELAYS: readonly number[] = [5_000, 15_000, 60_000, 300_000]
+
+/** 探测排程要用的文本。越短越省：探测只验连通性，不播声 */
+const PROBE_TEXT = '测试'
+
+export interface ProbeState {
+  /** 已经排出去的探测次数；等于 PROBE_DELAYS.length 表示这轮退避用尽 */
+  tried: number
+  /** 服务是否仍不可达 —— 设置页那句提示就是它 */
+  unreachable: boolean
+  /**
+   * 上一条链**用尽**的时刻（epoch ms，0 = 从没用尽过）。
+   *
+   * 为什么需要：链用尽后，每次新的真实失败都会重开一条链。而真实失败由 30s 轮询驱动、
+   * 又有 1 次/分钟的闸门，理论上能到 **1 次/分** —— 每次都重开链的话，服务挂着时会有
+   * 4 条探测同时排着，约 8 次请求/分打向免费服务。加了这个冷却，重开之间至少隔 10 分钟。
+   */
+  exhaustedAt: number
+}
+
+export const PROBE_IDLE: ProbeState = { tried: 0, unreachable: false, exhaustedAt: 0 }
+
+/** 链用尽后，重开一条新链的最小间隔（毫秒）。10 分钟 → 服务不可达时 ≤ 0.4 次探测/分 */
+export const PROBE_RESTART_COOLDOWN_MS = 600_000
+
+/** 三种事件，对应「真实播报失败」「探测失败」「恢复」 */
+export type ProbeEvent = 'fail' | 'probe-fail' | 'ok'
+
+/**
+ * 不可达状态机的一步（纯函数，不读时钟、不发请求）。
+ *
+ * 返回 `delayMs` 就是「排下一次探测，等这么久」；返回 null = 这一步不排程。
+ * ⚠ null 有两种含义，调用方必须靠 `next.unreachable` 区分：
+ *   · 恢复了 → 把还挂着的探测**停掉**
+ *   · 链还在跑 / 已用尽 → **别动**已有定时器（动了会把下一次探测推后）
+ * 忘了这个区分，表现就是「探测自己把自己取消了」。
+ */
+export function probeStep(
+  prev: ProbeState,
+  event: ProbeEvent,
+  now = 0
+): { next: ProbeState; delayMs: number | null } {
+  // 恢复：清零并停止排程。真实播报成功与探测成功都走这一支。
+  // ⚠ 必须把 exhaustedAt 也清掉 —— 否则服务恢复后第一次失败会撞上上一轮残留的冷却，
+  //   明明已经通了却要再等 10 分钟才重新探测。
+  if (event === 'ok') return { next: { tried: 0, unreachable: false, exhaustedAt: 0 }, delayMs: null }
+
+  // 探测失败：换下一档延迟；用尽即停（不无限重试，否则一天几千次请求）
+  if (event === 'probe-fail') {
+    if (!prev.unreachable) return { next: prev, delayMs: null }
+    if (prev.tried >= PROBE_DELAYS.length) {
+      // 刚用尽：记下时刻，供下次「真实失败」判断冷却是否已过
+      return { next: { ...prev, exhaustedAt: prev.exhaustedAt || now }, delayMs: null }
+    }
+    return {
+      next: { tried: prev.tried + 1, unreachable: true, exhaustedAt: prev.exhaustedAt },
+      delayMs: PROBE_DELAYS[prev.tried]
+    }
+  }
+
+  // 真实播报失败：链还在跑就别打扰它（重排会把下一次探测推后）；
+  // 首次失败、或上一轮已用尽（tried === length）→ 重排整条链，探一次看看是不是恢复了。
+  if (prev.unreachable && prev.tried < PROBE_DELAYS.length) return { next: prev, delayMs: null }
+  // 上一条链刚用尽：在冷却期内就不再重开。没有这条，服务挂着时每次真实失败都重开一条链
+  // （轮询 30s + 1 次/分钟闸门 → 约 1 次/分 → 4 条探测并排 → 8 次请求/分）。
+  if (prev.exhaustedAt !== 0 && now - prev.exhaustedAt < PROBE_RESTART_COOLDOWN_MS) {
+    return { next: prev, delayMs: null }
+  }
+  return { next: { tried: 1, unreachable: true, exhaustedAt: 0 }, delayMs: PROBE_DELAYS[0] }
+}
+
+/**
+ * 静默连通性探测：只验「能不能拿到音频字节」。
+ *
+ * **不入队、不播声、不占频率配额** —— 它走的是和播报同一个请求函数，但没有队列、
+ * 没有 Audio、没有闸门。这是它与播报的**全部**区别，也正是它能在闸门把播报全拦住的
+ * 情况下仍然确认服务是否恢复的原因。
+ */
+export async function probeTts(config: TtsConfig): Promise<{ ok: boolean; reason: string }> {
+  if (!config.url) return { ok: false, reason: '未配置 TTS 服务' }
+  try {
+    await requestAudioBlob(PROBE_TEXT, config)
+    return { ok: true, reason: '' }
+  } catch (e) {
+    return { ok: false, reason: describeError(e) }
+  }
 }
 
 // ─── 纯函数（供合并去重 / 设置页复用） ────────────────────────────────────────
@@ -239,7 +367,10 @@ async function playOne(item: SpeechItem, opts: FlushOptions): Promise<void> {
     return
   }
 
-  if (!allowCall(Date.now())) return
+  // 频率闸门**按条**判定：谁产生的播报谁决定要不要计费。
+  // 定时/预警照旧受限（配额保护不削弱），设置页的「测试播报」不被拦 —— 用户自己点的，
+  // 连点三次就该响三次。旧实现无条件过闸，于是第二次点击被静默丢弃。
+  if (item.bill && !allowCall(Date.now())) return
 
   try {
     await speakViaTts(item, opts.config)
@@ -332,7 +463,9 @@ async function requestAudioBlob(text: string, config: TtsConfig): Promise<Blob> 
     voice: config.voice,
     speed: config.speed,
     pitch: '0',
-    style: 'general'
+    // ⚠ 这一项过去是**硬编码**的 'general'：用户在服务页面能挑 11 种风格，我们这边一个都
+    //   发不出去（ui:ttsConfig 里存了也白存）。清单见 shared/tts-preset.ts。
+    style: config.style
   })
 
   let lastErr: unknown = null

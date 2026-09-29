@@ -420,6 +420,28 @@ The `>= 2` is the load-bearing one: the behavioural assertions (L22/L27) prove t
 *independent*, and this proves they also *fit* in the budget. Neither alone is enough.
 
 
+### Don't: assert on text you found in a comment
+
+**Problem.** A guard asserted that a string appears somewhere in a file. The only occurrence
+was a **JSDoc comment describing the behaviour**, not the behaviour. Deleting the entire
+feedback line left the suite fully green.
+
+**Why it's bad:** it reads like coverage and provides none. Three of these were found in one
+review pass — a guard on the failure copy, a guard defeated by a local `const` shadowing the
+imported constant, and a guard labelled 「不再被读也不再被写」 that only checked two call-site
+literals.
+
+**Rules that caught them:**
+- Assert the **call shape** (`showTestNote(false,`), not the copy — copy is a leaf.
+- When the copy matters, capture the literal from source and assert on *that* object.
+- For 「constant is defined in exactly one place」, count declarations across all of `src/`
+  rather than checking two files agree — a local shadow satisfies the two-file check.
+- After writing any negative/static guard, inject the mutation and confirm a non-zero red set.
+  A red set of 0 means the guard is decorative.
+
+**Corollary — a ternary branch is two strings, not one.** Rewriting only one branch of
+`fallback ? '…' : '…'` to jargon left the guard green. Split it into one assertion per branch.
+
 ### Don't: signal "no broadcast" with the same value as "no change"
 **Problem.** A single `null` return for both "the whole round is a no-op" and "there is
 nothing to say this round" makes the caller skip history and latch updates in the second case

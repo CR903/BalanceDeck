@@ -7,6 +7,7 @@ import {
   type ProviderOverride,
   type TriggerConfig
 } from './smartBroadcast'
+import { DEFAULT_TTS_STYLE, DEFAULT_TTS_VOICE, TTS_STYLES, TTS_VOICES } from '../../shared/tts-preset'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 设置页「语音提醒」分区
@@ -18,15 +19,15 @@ import {
 // 阈值、单位、默认值取自父任务 09-29-tts-smart-broadcast 的 prd.md（决策表）与
 // design.md（D1 端点 / D6 extras 键表）。
 //
-// ⚠ class 约定：本分区里**每个 select 都有独立 class**（vrs-preset / vrs-text-format /
-// vrs-routine-interval），每个开关与数字输入也是（vrs-power / vrs-threshold / vrs-override /
-// vrs-speed / vrs-history-cap）。`.voice-interval` 与 `.refresh-interval` 都含 option value="10"，
+// ⚠ class 约定：本分区里**每个 select 都有独立 class**（vrs-preset / vrs-voice / vrs-style /
+// vrs-text-format / vrs-routine-interval），每个开关与数字输入也是（vrs-power / vrs-threshold /
+// vrs-override / vrs-speed / vrs-history-cap）。`.voice-interval` 与 `.refresh-interval` 都含 option value="10"，
 // 2026-09-26 踩过「第一个含某 option 的 select」定位抓错（qa/uitest.ts:470-472）。
-// 其中 vrs-preset / vrs-url / vrs-voice / vrs-secret / vrs-endpoint / vrs-text-format /
-// vrs-routine-interval 在 skins.css 里**没有规则** —— 外观由 .field 里的既有规则给，
-// 这些 class 是给 --uitest 用的定位钩子（同 refresh-interval 的性质）。
-// vrs-power 之所以必须有：智能播报开关与分区里另外 6 个开关共用 `.switch`，
-// 没有专属 class 时只能靠「第几个」定位，而开关数量一改定位就悄悄指向别人。
+// 其中 vrs-preset / vrs-url / vrs-voice / vrs-style / vrs-secret / vrs-endpoint /
+// vrs-text-format / vrs-routine-interval 在 skins.css 里**没有专属规则** ——
+// 外观由 .field 里的既有规则给，这些 class 是给 --uitest 用的定位钩子
+// （同 refresh-interval 的性质）。vrs-power 之所以必须有：智能播报开关与分区里另外 6 个开关共用
+// `.switch`，没有专属 class 时只能靠「第几个」定位，而开关数量一改定位就悄悄指向别人。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── TTS 服务预设（仅免费服务；付费服务不在 Out of Scope 之外的任何承诺里）────────
@@ -36,6 +37,8 @@ interface TtsPreset {
   url: string
   /** 预设默认音色（仅在切到自定义时可改，故只作只读展示的参考） */
   voice: string
+  /** 预设默认语音风格 */
+  style: string
 }
 
 type TtsPresetId = 'mytts'
@@ -44,10 +47,11 @@ const TTS_PRESETS: Record<TtsPresetId, TtsPreset> = {
   mytts: {
     label: '免费 · Edge TTS（中文音色）',
     url: 'https://voice.mytts.ccwu.cc/v1/audio/speech',
-    // ⚠ 必须与 speechOut 的 DEFAULT_TTS_CONFIG.voice **一致**（本表是预设的唯一定义处）。
-    //   不一致的话，「选中这个预设」会顺带把音色从出厂默认换成另一个，用户没有任何提示 ——
-    //   而预设分支里音色是**不显示**的（只有只读端点），那次切换等于偷偷换了个人在说话。
-    voice: 'zh-CN-YunxiNeural'
+    // ⚠ voice / style 都取自 shared/tts-preset 的具名常量 —— 与 speechOut 的
+    //   DEFAULT_TTS_CONFIG **同源**。两处各写一份字符串、再各加一条「必须保持一致」的注释
+    //   不是机制（quality-guidelines），改成同一个来源之后它们不可能再漂。
+    voice: DEFAULT_TTS_VOICE,
+    style: DEFAULT_TTS_STYLE
   }
 }
 
@@ -73,14 +77,25 @@ function ttsPreset(id: string): TtsPreset | null {
 /**
  * 预设对应的服务配置；非预设 id（自定义）返回 null。
  *
- * 导出给 App 侧：切到预设时**必须**把 url/voice 一起写进 `ui:ttsConfig`。否则界面上的
+ * 导出给 App 侧：切到预设时**必须**把 url/voice/style 一起写进 `ui:ttsConfig`。否则界面上的
  * 只读端点（读的是本表）与真正发请求用的 `ui:ttsConfig.url` 会各说各话 —— 用户在
  * 「预设 / 自定义」之间来回切一次，就出现「界面写着免费服务，请求打向自定义地址」。
  */
-export function presetConfig(id: string): { url: string; voice: string } | null {
+export function presetConfig(id: string): { url: string; voice: string; style: string } | null {
   const p = ttsPreset(id)
-  return p ? { url: p.url, voice: p.voice } : null
+  return p ? { url: p.url, voice: p.voice, style: p.style } : null
 }
+
+/**
+ * 音色下拉的分组：按性别分两档。
+ *
+ * 为什么分组：用户真正在做的事是「配一个男角色 / 女角色」，这与选哪位数字助理是
+ * 同一个心智模型。摊平成 21 行的话，得逐行读「（男声·清朗）」才知道自己在找什么。
+ */
+const VOICE_GROUPS: { gender: 'female' | 'male'; label: string }[] = [
+  { gender: 'female', label: '女声' },
+  { gender: 'male', label: '男声' }
+]
 
 // ─── 触发场景 ─────────────────────────────────────────────────────────────────
 // 场景名直接取自 smartBroadcast 的 TriggerKind（与引擎共用一份，不另写一份 5 个字符串）。
@@ -271,16 +286,25 @@ export interface VoiceReminderSectionProps {
   onChangePreset: (id: string) => void
   ttsUrl: string
   onChangeUrl: (url: string) => void
+  /** 音色 id（zh-CN-…Neural），存 ui:ttsConfig.voice */
   ttsVoice: string
   onChangeVoice: (v: string) => void
+  /** 语音风格 id，存 ui:ttsConfig.style */
+  ttsStyle: string
+  onChangeStyle: (s: string) => void
   /** 语速倍数，默认 1 */
   ttsSpeed: number
   onChangeSpeed: (n: number) => void
   /** 是否已存过认证 token（主进程加密存储，明文不回传渲染层） */
   hasSecret: boolean
   onSetSecret: (v: string) => void
-  /** 用当前配置播一句示例；播放由 App 侧完成 */
+  /** 用当前配置播一句示例；播放由 App 侧完成（那条不计频率配额） */
   onTestSpeak: (text: string) => void
+  /**
+   * 试听反馈（null = 无）。成功 3 秒后自动消失；失败**留着**——
+   * 用户得看见「没播出来 + 下一步」才知道要去改配置，静默失败过一次（缺陷 1）。
+   */
+  testNote: { ok: boolean; text: string } | null
 
   /** 5 个触发场景的开关与阈值（ui:ttsTriggers） */
   triggers: Record<string, TriggerState>
@@ -296,7 +320,7 @@ export interface VoiceReminderSectionProps {
   /** 视觉通知（ui:ttsVisual） */
   visual: boolean
   onToggleVisual: (on: boolean) => void
-  /** 网络 TTS 不可用时回退到系统语音（ui:ttsFallback） */
+  /** 网络 TTS 不可用时改用系统语音（ui:ttsFallback） */
   fallback: boolean
   onToggleFallback: (on: boolean) => void
   /** 定时兜底播报 */
@@ -309,7 +333,7 @@ export interface VoiceReminderSectionProps {
   historyCap: number
   onChangeHistoryCap: (n: number) => void
 
-  /** 上一次 TTS 调用是否失败（由 App 侧判定，本组件不自己探测） */
+  /** TTS 服务是否仍连不上（由 App 侧的退避探测判定；恢复后自动转 false） */
   unreachable: boolean
   /** 已静音的供应商 id（不参与语音播报） */
   mutedProviders: string[]
@@ -326,11 +350,14 @@ export function VoiceReminderSection({
   onChangeUrl,
   ttsVoice,
   onChangeVoice,
+  ttsStyle,
+  onChangeStyle,
   ttsSpeed,
   onChangeSpeed,
   hasSecret,
   onSetSecret,
   onTestSpeak,
+  testNote,
   triggers,
   onChangeTrigger,
   overrides,
@@ -363,6 +390,14 @@ export function VoiceReminderSection({
   )
   /** 存档值若不在档位表里（手工改过 / 旧配置），补一条出来，避免 select 显示空白 */
   const routineOffLadder = !ROUTINE_STEPS.some(([v]) => v === routineMinutes)
+  /**
+   * 同理，音色 / 风格也可能不在清单里：自定义服务用的是自建音色名，或旧版本存过
+   * 服务端已下线的 id。受控 select 遇到没有匹配 option 的 value 会**回退到第一项**
+   * （state-management.md 记过这个坑），界面于是显示「晓晓」而实际发出去的仍是存档值 ——
+   * 看着是选中了别的音色，其实没变。补一条出来，界面才老实反映存档值。
+   */
+  const voiceOffCatalog = !TTS_VOICES.some((v) => v.id === ttsVoice)
+  const styleOffCatalog = !TTS_STYLES.some((s) => s.id === ttsStyle)
 
   const commitSecret = (): void => {
     const v = secretDraft.trim()
@@ -391,9 +426,14 @@ export function VoiceReminderSection({
         </div>
 
         {unreachable && (
+          // 文案面向用户，不面向实现：只说「发生了什么 + 你现在能做什么」。
+          // 「回退到系统语音」是内部说法 —— 用户不知道那意味着什么，只知道「没声音」，
+          // 于是这句话既没解决问题也没告诉他下一步该做什么。服务恢复后本段自动消失。
           <div className="settings-note warn vrs-warn">
-            上一次调用语音服务失败，<b>服务当前不可达</b>。播报会按下面的设置回退到系统语音；
-            换端点或稍后点「测试播报」验证连通性。
+            {fallback
+              ? '连不上语音服务，提醒暂时只能用系统自带的声音念。'
+              : '连不上语音服务，提醒暂时发不出声音。'}
+            检查网络，或换个服务地址再试；后台会自己再连，连上后这条提示会自动消失。
           </div>
         )}
 
@@ -428,49 +468,79 @@ export function VoiceReminderSection({
                 <input className="vrs-endpoint" type="text" value={preset.url} readOnly />
               </label>
             ) : (
-              <>
-                <label className="field">
-                  <span className="field-label">
-                    接口地址
-                    <em className="tag env">POST · 返回 audio/*</em>
-                  </span>
-                  <input
-                    className="vrs-url"
-                    type="text"
-                    value={ttsUrl}
-                    placeholder="https://…/v1/audio/speech"
-                    onChange={(e) => onChangeUrl(e.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">
-                    音色
-                    <em className="tag env">Edge 音色名</em>
-                  </span>
-                  <input
-                    className="vrs-voice"
-                    type="text"
-                    value={ttsVoice}
-                    placeholder={TTS_PRESETS.mytts.voice}
-                    onChange={(e) => onChangeVoice(e.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">
-                    语速
-                    <em className="tag env">0.5 – 2.0 倍</em>
-                  </span>
-                  <NumInput
-                    className="vrs-speed"
-                    value={ttsSpeed}
-                    min={SPEED_RANGE.min}
-                    max={SPEED_RANGE.max}
-                    step={SPEED_RANGE.step}
-                    onCommit={onChangeSpeed}
-                  />
-                </label>
-              </>
+              <label className="field">
+                <span className="field-label">
+                  接口地址
+                  <em className="tag env">POST · 返回 audio/*</em>
+                </span>
+                <input
+                  className="vrs-url"
+                  type="text"
+                  value={ttsUrl}
+                  placeholder="https://…/v1/audio/speech"
+                  onChange={(e) => onChangeUrl(e.target.value)}
+                />
+              </label>
             )}
+
+            {/* 音色 / 语音风格**两种模式都显示**。
+                过去音色藏在「自定义服务」分支里，于是用免费服务（默认）的用户根本没法
+                换音色 —— 而音色恰恰是这项设置里最直观的一维。风格同理：它在服务端确实
+                被接受（实测 cheerful → 200 / 有效 MP3），藏起来等于这个功能不存在。 */}
+            <label className="field">
+              <span className="field-label">
+                音色
+                <em className="tag env">{TTS_VOICES.length} 个中文音色</em>
+              </span>
+              <select
+                className="vrs-voice"
+                value={ttsVoice}
+                onChange={(e) => onChangeVoice(e.target.value)}
+              >
+                {voiceOffCatalog && <option value={ttsVoice}>{ttsVoice}（当前值，不在清单里）</option>}
+                {VOICE_GROUPS.map((g) => (
+                  <optgroup key={g.gender} label={g.label}>
+                    {TTS_VOICES.filter((v) => v.gender === g.gender).map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">
+                语音风格
+                <em className="tag env">{TTS_STYLES.length} 种</em>
+              </span>
+              <select
+                className="vrs-style"
+                value={ttsStyle}
+                onChange={(e) => onChangeStyle(e.target.value)}
+              >
+                {styleOffCatalog && <option value={ttsStyle}>{ttsStyle}（当前值，不在清单里）</option>}
+                {TTS_STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">
+                语速
+                <em className="tag env">0.5 – 2.0 倍</em>
+              </span>
+              <NumInput
+                className="vrs-speed"
+                value={ttsSpeed}
+                min={SPEED_RANGE.min}
+                max={SPEED_RANGE.max}
+                step={SPEED_RANGE.step}
+                onCommit={onChangeSpeed}
+              />
+            </label>
 
             <label className="field">
               <span className="field-label">
@@ -493,7 +563,7 @@ export function VoiceReminderSection({
               <button
                 type="button"
                 className="btn-secondary vrs-test"
-                title="用当前配置播报一句示例，确认端点 / 音色 / 语速可用"
+                title="用当前配置播报一句示例，确认端点 / 音色 / 语速可用（可以连点，不限次数）"
                 onClick={() => onTestSpeak(SAMPLE_TEXT[textFormat])}
               >
                 <Icon name="volume" size={14} />
@@ -501,6 +571,11 @@ export function VoiceReminderSection({
               </button>
               <span className="vrs-sample">示例：{SAMPLE_TEXT[textFormat]}</span>
             </div>
+            {testNote && (
+              <div className={'settings-note vrs-test-note ' + (testNote.ok ? 'ok' : 'warn')}>
+                {testNote.text}
+              </div>
+            )}
 
             {/* ── B. 触发条件 ── */}
             <div className="field-label vrs-sub">触发条件（阈值单位见每行标注）</div>
@@ -642,13 +717,13 @@ export function VoiceReminderSection({
 
             <div className="enable-row">
               <span>
-                回退到系统语音
-                <em className="tag env">网络失败时</em>
+                网络不通时改用系统语音
+                <em className="tag env">免费备用</em>
               </span>
               <button
                 type="button"
                 className={'switch' + (fallback ? ' on' : '')}
-                title={fallback ? '关闭后网络失败即静默，不出声' : '开启后网络失败改用系统语音（音色因系统而异）'}
+                title={fallback ? '关闭后网络失败即静默，不出声' : '开启后网络失败改用系统自带的声音念'}
                 onClick={() => onToggleFallback(!fallback)}
               >
                 <span className="knob" />

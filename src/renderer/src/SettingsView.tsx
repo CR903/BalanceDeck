@@ -286,8 +286,6 @@ export function SettingsView({
   onToggleVoice,
   alwaysTop,
   onToggleAlwaysTop,
-  voiceGender,
-  onSetVoiceGender,
   ...sectionProps
 }: {
   onBack: () => void
@@ -298,12 +296,12 @@ export function SettingsView({
   /** 悬浮球是否总在最前（ui:alwaysOnTop） */
   alwaysTop: boolean
   onToggleAlwaysTop: (on: boolean) => void
-  /** 语音播报音色性别（ui:voiceGender） */
-  voiceGender: 'female' | 'male' | 'any'
-  onSetVoiceGender: (g: 'female' | 'male' | 'any') => void
   // 「数字助理」与「语音提醒」两个分区的 props 在同一个解构里只能有一个 rest，
   // 所以合成一份 sectionProps 一起透传：两套接口都在类型上并了进来，少传任何一个
   // prop 仍是编译错误；TS 不对 JSX 的变量展开做多余属性检查，两个分区各取自己那份即可。
+  //
+  // ⚠ 这里**没有**语音性别：系统语音的性别由选中的数字助理决定（petGender），设置页
+  //   不再提供第二处开关 —— 同一个问题问两遍，两处迟早会打架（FR3 / ui:voiceGender 下线）。
 } & PetSectionProps &
   VoiceReminderSectionProps): React.JSX.Element {
   const [payload, setPayload] = useState<ProvidersPayload | null>(null)
@@ -731,17 +729,6 @@ export function SettingsView({
             <span className="knob" />
           </button>
         </div>
-        <label className="field">
-          <span className="field-label">语音播报音色</span>
-          <select
-            value={voiceGender}
-            onChange={(e) => onSetVoiceGender(e.target.value as 'female' | 'male' | 'any')}
-          >
-            <option value="any">不限制</option>
-            <option value="female">女声</option>
-            <option value="male">男声</option>
-          </select>
-        </label>
         {foreignLoginItem && (
           <div className="settings-note warn">
             系统「登录项」里还残留着本应用（多来自旧版本），本开关无法移除它。请到

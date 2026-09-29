@@ -1,4 +1,4 @@
-// 语音模块测试（src/renderer/src/voice.ts）
+// 语音模块测试（src/renderer/src/voice.ts + src/shared/pet.ts + src/shared/tts-preset.ts）
 // 用法：node scripts/test-voice.mjs
 //
 // ⚠ 加载的是**真实源码**（esbuild 打包 src 下的 .ts），不在这里抄一份 voiceGender /
@@ -12,6 +12,10 @@
 import { loadTs } from './lib/load-ts.mjs'
 
 const { voiceGender, pickVoice, stopVoice } = await loadTs('src/renderer/src/voice.ts')
+const { PETS, PET_GENDER, petGender } = await loadTs('src/shared/pet.ts')
+const { TTS_VOICES, TTS_STYLES, DEFAULT_TTS_VOICE, DEFAULT_TTS_STYLE } = await loadTs(
+  'src/shared/tts-preset.ts'
+)
 
 let pass = 0
 let fail = 0
@@ -24,6 +28,25 @@ function eq(actual, expected, label) {
     console.log(`  ✗ ${label}`)
     console.log(`    期望: ${JSON.stringify(expected)}`)
     console.log(`    实际: ${JSON.stringify(actual)}`)
+  }
+}
+
+/**
+ * 数组 / 对象比较。`eq` 用的是 Object.is —— 它对数组永远为假（引用不同），
+ * 拿它断言「实际值和期望值打印出来一样」就会**恒红**，那是假断言而不是真通过。
+ * （与其把数组摊平成 join(',')，不如让比较方式与断言的类型对上。）
+ */
+function eqJson(actual, expected, label) {
+  const a = JSON.stringify(actual)
+  const e = JSON.stringify(expected)
+  if (a === e) {
+    pass++
+    console.log(`  ✓ ${label}`)
+  } else {
+    fail++
+    console.log(`  ✗ ${label}`)
+    console.log(`    期望: ${e}`)
+    console.log(`    实际: ${a}`)
   }
 }
 
@@ -255,6 +278,90 @@ console.log('\nE. stopVoice：两个通道的停法由 speechOut 兜着，这里
   } finally {
     if (prevWin !== undefined) globalThis.window = prevWin
   }
+}
+
+console.log('\nF. petGender：系统语音性别由助理身份决定（ui:voiceGender 已下线）')
+
+// 为什么放在这个文件：这一节和上面的 voiceGender 问的是**同一个事实**（谁算男声、谁算女声），
+// 只是判的是两张不同的表 —— voiceGender 判**系统**音色，petGender 判**助理身份**。
+// 上一轮把 Yu-Shu 判成男声的教训就在上面那节：性别是外部事实，必须有出处，
+// 光「代码符合测试」证明不了任何东西。
+
+{
+  eq(petGender('aria'), 'female', 'Aria → 女声（AC3）')
+  eq(petGender('ray'), 'male', 'Ray → 男声（AC3）')
+  // AC4：换助理即时生效 —— 因为是**现算**的，不读 state、不读 extras。
+  // 这条同时钉住「别把它改回持久化偏好」：那正是 ui:voiceGender 走过的老路。
+  eqJson(
+    [petGender('aria'), petGender('ray'), petGender('aria')],
+    ['female', 'male', 'female'],
+    '连续现算，每次都跟着 pet.id 走（AC4 切换即时生效）'
+  )
+  // 未知 id 不抛：与本文件其它入口（normalizePetId）一致，回落到第一位助理
+  eq(petGender('nope'), petGender(PETS[0].id), '未知助理 id → 归一后取第一位的性别，不抛')
+  // 穷举性：PET_GENDER 是 Record<PetId, …>，新增助理忘了填性别会是**编译错误**；
+  // 这条把「编译错误」管不到的另一半（键与 PETS 一一对应）也钉住
+  eqJson(
+    Object.keys(PET_GENDER).sort(),
+    PETS.map((p) => p.id).sort(),
+    'PET_GENDER 的键与 PETS 的助理一一对应（不多不少）'
+  )
+}
+
+console.log('\nG. TTS 音色 / 风格清单（抄自服务页面，不臆造）')
+
+{
+  eq(TTS_VOICES.length, 21, '21 个音色')
+  eq(TTS_STYLES.length, 11, '11 个语音风格')
+  // id 必须唯一：重复会让 <select> 的 key 撞车，「选中了哪一个」不再确定
+  eq(new Set(TTS_VOICES.map((v) => v.id)).size, 21, '音色 id 无重复')
+  eq(new Set(TTS_STYLES.map((s) => s.id)).size, 11, '风格 id 无重复')
+  // ⚠ 出厂默认必须落在清单里，否则设置页那个受控 select 会回退到第一项 ——
+  //   界面显示「晓晓」而实际发出去的仍是默认值（state-management.md 记过这个坑）
+  eq(
+    TTS_VOICES.some((v) => v.id === DEFAULT_TTS_VOICE),
+    true,
+    '出厂默认音色在清单里（否则下拉显示的第一项 ≠ 实际发送值）'
+  )
+  eq(
+    TTS_STYLES.some((s) => s.id === DEFAULT_TTS_STYLE),
+    true,
+    '出厂默认风格在风格清单里'
+  )
+  // 男女分布：服务页面上 13 女 + 8 男（2026-09-29 抓取）。这条不是为了好看，
+  // 是为了让「某一条被误分类」立刻可见 —— 少一条或多一条都会红。
+  eq(TTS_VOICES.filter((v) => v.gender === 'female').length, 13, '13 个女声')
+  eq(TTS_VOICES.filter((v) => v.gender === 'male').length, 8, '8 个男声')
+
+  // 负向断言：这些 id **不许**被认成女声。
+  //
+  // 云希 / Yunxi 在微软表里是实打实的男声，而它与「云夏 / Yunxia」只差一个字母 ——
+  // 上面 B 组那条「Yunxia 认不出性别」的教训说明这类前缀相近的名字极易滑过去。
+  // 云夏在本清单里按**服务页面的标注**记为男声（见 tts-preset.ts 的注释：微软自己的
+  // 表把它列为女声，两边对不上，而该字段只影响下拉分组、不参与系统语音性别判断）。
+  eq(
+    TTS_VOICES.filter((v) => v.id === 'zh-CN-YunxiNeural' && v.gender === 'female').length,
+    0,
+    '云希（Yunxi）不能被标成女声'
+  )
+  eq(
+    TTS_VOICES.filter((v) => v.id === 'zh-CN-YunjianNeural' && v.gender === 'female').length,
+    0,
+    '云健（Yunjian）不能被标成女声'
+  )
+  // 清单里的音色一律得是 Edge 命名：写成别的前缀服务端一律不认，
+  // 而界面上看着一切正常（用户只是听到的声音不对）
+  eq(
+    TTS_VOICES.every((v) => /^zh-CN-[A-Za-z]+Neural$/.test(v.id)),
+    true,
+    '音色 id 一律是 zh-CN-…Neural（写错前缀 = 服务端不认）'
+  )
+  // 性别只有两档：下拉按这两档分组渲染，多一档就会有一条音色**静默不出现在列表里**
+  eqJson(
+    [...new Set(TTS_VOICES.map((v) => v.gender))].sort(),
+    ['female', 'male'],
+    '性别只有 female / male 两档（分组渲染按这两档穷举）'
+  )
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

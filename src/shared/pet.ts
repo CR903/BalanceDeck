@@ -63,6 +63,26 @@ export function normalizePetId(v: unknown): PetId {
   return PETS[0].id
 }
 
+/**
+ * 系统语音的音色性别 —— **助理身份的一部分**，不是播报偏好。
+ *
+ * 为什么放这里：用户在设置页要回答的问题一直是「谁（哪个助理）替我说话」，
+ * 而原来的实现要他对着「女声/男声」这个技术概念另选一次，两处各答一遍还会打架。
+ * 现在性别由 `pet.id` 现算：换助理立刻生效，不必重启、也不必落盘。
+ * （原先的 ui:voiceGender 已下线，见 09-29-voice-settings-refactor/design.md §4。）
+ */
+export type VoiceGender = 'female' | 'male'
+
+export const PET_GENDER: Record<PetId, VoiceGender> = {
+  aria: 'female',
+  ray: 'male'
+}
+
+/** 助理对应的系统语音性别。未知 id 按 normalizePetId 归一，不抛（与本文件其它入口一致） */
+export function petGender(id: PetId): VoiceGender {
+  return PET_GENDER[normalizePetId(id)]
+}
+
 /** 数字助理的身份：选了谁、叫什么 */
 export interface PetState {
   version: 1

@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "extras 键表与 ui: 前缀副作用规则（ui:voiceGender 下线、ui:ttsConfig 加 style 的迁移）；定时器契约与 ref 镜像（性别现算不走 state、退避探测定时器）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "测试须 loadTs 加载真实源码、禁止内联副本；编排纯函数边界与「反例可验证」方法（三个缺陷各需一条能变红的断言）"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "无自定义 hook；effect cleanup 与自重排定时器规范（退避探测定时器的建立与清理）"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "VoiceReminderSection 的下拉/开关写法、optgroup 分组、token 驱动 CSS；删除字段后的 props 收敛"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TtsConfig 扩字段的向后兼容（旧配置缺 style 时的读取校验）；字面量联合穷举（音色性别）"}
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "外部 API 失败必须显式抛且可区分（探测自愈依赖错误分类）；401/403 不重试；串行请求"}
+{"file": ".trellis/tasks/09-29-voice-settings-refactor/prd.md", "reason": "需求与 AC1-AC10；三个缺陷的因果链说明"}
+{"file": ".trellis/tasks/09-29-voice-settings-refactor/design.md", "reason": "技术设计：bill 分流、退避探测、性别现算、style 去硬编码、文案原则"}

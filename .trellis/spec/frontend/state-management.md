@@ -157,11 +157,11 @@ Full key inventory:
 | `ui:petState` | `encodePetState` (`shared/pet.ts`) | versioned, migrates legacy ids |
 | `ui:pet` / `ui:alwaysOnTop` | `'1'` / `'0'` | `ui:petRing` 已随用量环开关下线、`ui:voiceOn` 已随播报迁移下线（两者都**只读不写**） |
 | `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:423`) |
-| `ui:voiceGender` | `'female'` / `'male'` / `'any'` | whitelisted on load; the **only** system-voice preference still wired (fallback path) |
+| `ui:voiceGender` | — | **已下线**（2026-09-29，`09-29-voice-settings-refactor`）。系统语音性别改由 `petGender(pet.id)` 每轮现算，不再读也不再写；旧值留在 extras 里不动。它是「谁替我说话」的第二个开关，与选助理问的是同一件事 |
 | `ui:hideBalance` | **`'1'` / `''`** | differs from every other boolean — don't copy |
 | `ui:ttsOn` | `'1'` / `'0'` | replaces the retired `ui:voiceOn` (read on load for migration) |
 | `ui:ttsPreset` | preset id, `'mytts'` / `''` | `''` = 自定义服务 |
-| `ui:ttsConfig` | `JSON.stringify` | TTS service (url/voice/speed). **Never holds a token** |
+| `ui:ttsConfig` | `JSON.stringify` | TTS service (url/voice/**style**/speed). **Never holds a token**. `style` 是 2026-09-29 新增的字段，旧配置里根本没有这个键（那时 `requestAudioBlob` 写死了 `'general'`），读不到是常态 —— 加载处补默认值，不要当异常 |
 | `ui:ttsTriggers` / `ui:ttsTriggerOn` | `JSON.stringify` | 5 thresholds / their on-off flags, split for validation |
 | `ui:ttsHistory` | `JSON.stringify` | sampled snapshots, cap `ui:ttsHistoryCap` (default 100) |
 | `ui:ttsTextFormat` | `'simple'` / `'detailed'` | |
@@ -265,6 +265,25 @@ data-push one beyond the data) without moving the new value into `alertCtxRef` f
 regression is not subtle — every toggle fires a broadcast — but it is *quiet*, and the old
 `speakBalance` design ("fire immediately on every run") made it look intentional.
 
+**A fourth timer exists, and it is NOT self-rescheduling**: the reachability backoff probe
+(`App.tsx` `stepProbe` / `runProbe`, pure state machine in `speechOut.probeStep`). It only exists
+while the TTS service is failing — `5s → 15s → 1min → 5min`, then it stops — and it re-arms from
+`stepProbe`, not from a `setInterval`. Two things make it easy to get wrong:
+
+- **`delayMs === null` does not mean "stop probing".** It also means *the chain is still running*
+  or *this round is exhausted*. Only `next.unreachable === false` (recovered) may clear a pending
+  timer; clearing on `null` pushes the next probe out forever and the feature silently dies.
+- **Its "am I still mounted?" flag must be reset in the effect body, not only in cleanup.**
+  The renderer mounts under `<React.StrictMode>` (`main.tsx`), and React 18 runs every effect as
+  mount → cleanup → mount in development. A ref written to `false` in cleanup and never restored
+  stays `false` for the rest of the session, so `runProbe` discards every result — the probe
+  silently stops working in `npm run dev` while production looks fine.
+
+It deliberately **does not share a ref or a chain with the broadcast timers**: folding it into the
+pending-poll chain would rebuild it on every data push. The `ttsOn === false` effect clears it
+along with the latch and pending queue — the user turned broadcasting off, so nothing should still
+be calling the service behind their back.
+
 > Historic note: this section used to describe a `setInterval` + `speakBalance` + `voiceOn` /
 > `voiceEvery` shape. That code is gone (the broadcast moved to `ui:tts*` + the trigger engine);
 > the spec was updated when 09-29-tts-smart-broadcast landed, per its own design.md D7.
@@ -303,6 +322,49 @@ the other.
 ### Don't: add a non-`ui:` extras key without knowing it triggers a recollect
 
 See `ipc.ts:191-193`. A "harmless" preference write becomes a network request.
+
+### Don't: put a rate gate on a shared path to protect one caller
+
+**Problem.** A quota guard (1/min, 10/hour) placed on a public broadcast entry point also
+throttles things that have nothing to do with quota. The 「测试播报」 button inherited it: the
+second click was silently dropped — no sound, no log, no message. Worse, it then *latched*:
+`onTtsOk` only fires after a successful TTS playback, so once the gate was in the way the
+unreachable flag could never clear itself.
+
+**Why it's bad:** the user sees 「提示服务不可达 + 点了没反应」 and concludes the feature is
+broken. Neither symptom is the service's fault, and the two are causally linked — fixing
+either alone changes nothing.
+
+**Instead:** mark the item, not the path.
+
+```ts
+export type SpeechItem = { text: string; urgent: boolean; bill: boolean }
+// playOne: if (item.bill && !allowCall(Date.now())) return
+```
+
+| Producer | `bill` | Why |
+|---|---|---|
+| scheduled / alert broadcasts | `true` | unattended; the quota guard exists for these |
+| user-initiated test | `false` | a deliberate click is not something to rate-limit |
+
+**Corollary — any self-healing retry needs a restart cooldown.** The alert poll re-fires every
+30 s behind the 1/min gate, so 「new failure → start a new probe chain」 means ~1/min. With a
+4-step backoff that is ~4 probes/min, unbounded over a long outage. `probeStep` therefore
+records `exhaustedAt` and refuses to restart within `PROBE_RESTART_COOLDOWN_MS`. Clear it on
+recovery — otherwise a service that just came back stays un-probed for the whole cooldown.
+
+### Don't: reset a "component is alive" ref only in the cleanup function
+
+**Problem.** `probeInFlightRef.current = false` in an effect's cleanup, never restored in the
+body. React 18's `<StrictMode>` double-invokes effects in dev (mount → cleanup → mount) while
+refs survive the fake unmount, so the flag stuck at `false` for the whole session and every
+probe result was discarded. Production looked perfect; `npm run dev` was silently broken.
+
+**Why it's bad:** no throw, no log — the only symptom is 「自愈在我机器上不生效，打包后却好」.
+That sends you debugging the wrong layer entirely.
+
+**Instead:** reset in the effect body, set false only in cleanup, and keep a guard (K18) that
+fails if the reset moves back into the cleanup.
 
 ### Don't: put a long-interval timer in a window that throttles in the background
 

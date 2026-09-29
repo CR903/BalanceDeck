@@ -2112,6 +2112,23 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 试听反馈：紧贴「测试播报」那一行，读起来像这一行的后半句而不是另一块内容。
+   `.settings-note` 自带 margin-top: 6px（0,2,0），得提一级才压得住 */
+.vrs-sec .vrs-test-note {
+  margin-top: 0;
+}
+.vrs-test-note.ok {
+  color: var(--ok);
+}
+/* 音色下拉的性别分组：分组标题压暗成「分类」的角色，组内条目仍用前景色。
+   不写这条的话 optgroup 会继承 --fg，与组内 option 同色，21 行看着像一坨 */
+.field select optgroup {
+  color: var(--fg-dim);
+  font-style: normal;
+}
+.field select optgroup option {
+  color: var(--fg);
+}
 /* 按供应商覆盖：每家一组，组间一条分隔线 */
 .vrs-ovr-group {
   display: flex;

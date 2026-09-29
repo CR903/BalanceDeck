@@ -15,7 +15,7 @@
 // appendPoint / freshHits / latchKeys / mergeHits / balanceOf 一个都不内联 —— 内联过的
 // test-percent.mjs 已经漂移过一次，源文件改了测试还绿着，等于没有测试。
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { loadTs } from './lib/load-ts.mjs'
 
@@ -50,6 +50,25 @@ function ok(cond, label) {
     fail++
     console.log(`  ✗ ${label}`)
   }
+}
+/**
+ * 列出 src/ 下全部 .ts / .tsx（相对 ROOT），递归。
+ *
+ * 用途是「某个常量在全仓只允许声明一次」这类**数目**断言。只查两个已知文件答不了
+ * 「有没有多出第三处定义」—— 而那恰恰是单一出处会破掉的方式。
+ * 只读 .ts/.tsx：常量不可能声明在 css / mjs 里，而放宽到它们会把这个断言变成噪音。
+ */
+function srcFilesUnder(dir) {
+  const out = []
+  const walk = (rel) => {
+    for (const e of readdirSync(resolve(ROOT, rel), { withFileTypes: true })) {
+      const next = `${rel}/${e.name}`
+      if (e.isDirectory()) walk(next)
+      else if (/\.tsx?$/.test(e.name)) out.push(next)
+    }
+  }
+  walk(dir)
+  return out.sort()
 }
 /**
  * 子串出现次数（「供应商名只念一遍」这类断言用它，而不是 includes）。
@@ -451,34 +470,112 @@ ok(
   'K10 阈值覆盖的写侧按 THRESHOLD_FIELD 取到的字段名写（与引擎 resolveConfig 读的同一个键，见 C5）'
 )
 const evalLines = evalBody == null ? 0 : evalBody.split('\n').length
-ok(evalLines > 0 && evalLines <= 20, `K11 evaluateAlerts 保持在 20 行以内（当前 ${evalLines} 行；抽离前是 37 行）`)
+// 抽离后 37 行 → 现状 21 行（09-29 加了 bill 那一行说明，多 1 行）。
+// 上限 20 是在那之前定的，21 行会被误红，所以本轮放宽到 **24**：留 3 行余量给下一处
+// 真实的小改动，但不给「函数又长起来了」留空间 —— 这个函数存在的全部意义就是薄。
+// 放宽到 26 也不会更安全，只会让它在没人注意的时候长到 25。
+ok(evalLines > 0 && evalLines <= 24, `K11 evaluateAlerts 保持在 24 行以内（当前 ${evalLines} 行；抽离前是 37 行）`)
 
-// 「服务不可达」这条链：speechOut 的 onTtsFailed → App 的 setTtsUnreachable → 设置页的提示条。
-// 它断了不抛不红，用户只是"没声音"，分不清是服务挂了还是自己关了开关 —— 而那正是
-// design.md D2（优雅降级 + 提示，而不是静默失效）要挡的东西。行为那一半在
-// test-speech-out.mjs 的 M 段；这里盯的是**接线**。
+// 「服务不可达」这条链：speechOut 的 onTtsFailed → App 的自愈探测 stepProbe → setTtsUnreachable
+// → 设置页提示条。它断了不抛不红，用户只是"没声音"，分不清是服务挂了还是自己关了开关。
+// ⚠ 置位逻辑**住在 stepProbe 里**（失败时置位 + 排下一档退避探测），不在 onTtsFailed 的回调体里 ——
+//   所以这里不能断言「onTtsFailed ... setTtsUnreachable」相邻出现，要顺着 stepProbe 找。
 const vrsSrc = readFileSync(resolve(ROOT, 'src/renderer/src/VoiceReminderSection.tsx'), 'utf-8')
 ok(
-  /onTtsFailed:\s*\(reason\)\s*=>\s*\{[^}]*setTtsUnreachable\(true\)/s.test(appSrc) &&
-    /onTtsOk:\s*\(\)\s*=>\s*setTtsUnreachable\(false\)/.test(appSrc),
-  'K12 onTtsFailed / onTtsOk 真的接到了 setTtsUnreachable（失败置位、成功清位）'
+  /onTtsFailed:\s*\(reason\)\s*=>\s*\{[^}]*stepProbe\(\s*'fail'/.test(appSrc) &&
+    /onTtsOk:\s*\(\)\s*=>\s*\{[^}]*stepProbe\(\s*'ok'/.test(appSrc) &&
+    /const stepProbe[\s\S]{0,700}?probeStep\(probeRef\.current, event,\s*Date\.now\(\)\)[\s\S]{0,400}?setTtsUnreachable\(r\.next\.unreachable\)/.test(appSrc),
+  'K12 onTtsFailed / onTtsOk 接到自愈探测；探测把 unreachable 状态交给纯函数 probeStep 算，再回填 setTtsUnreachable'
+)
+// K13 只管**接线**：unreachable 为真时确实渲染出那条提示条。
+// 文案质量由 test-speech-out.mjs 的 P1–P5 判（那边切的是被渲染出来的那一段正文）。
+//
+// ⚠ 这里**不能**再用「文件里出现过『连不上语音服务』」判文案：那条提示有 fallback 开/关
+//   两个分支，上一版只判了其中一支的名字 —— 把它换成技术术语实测红集为 0，K13 照样绿。
+//   弱判据放在这里等于给回归发通行证，所以只保留「条件 + 容器 + 文案非空」。
+const warnAt = vrsSrc.indexOf('vrs-warn')
+const warnBlock = warnAt > 0 ? vrsSrc.slice(warnAt, vrsSrc.indexOf('</div>', warnAt)) : ''
+ok(
+  warnAt > 0 && /unreachable\s*&&\s*\(/.test(vrsSrc),
+  'K13a unreachable 为真时设置页渲染出那条提示条（这条提示是 D2 唯一的用户可见信号）'
 )
 ok(
-  /unreachable\s*&&\s*\(/.test(vrsSrc) && /vrs-warn/.test(vrsSrc) && /服务当前不可达/.test(vrsSrc),
-  'K13 unreachable 为真时设置页渲染出「服务当前不可达」提示（这条提示是 D2 唯一的用户可见信号）'
+  warnBlock.length > 0 && warnBlock.includes('{fallback'),
+  'K13b 提示正文随 fallback 开关分支，两支都要有话可说（不是只写死一句）'
 )
 
-// 预设表与出厂默认必须一致：预设分支里音色**不显示**（只有只读端点），
-// 两者不一致 = 用户点一下预设就悄悄换了个音色，且界面上看不出来。
-// （放在 vrsSrc 声明之后 —— ⚠ 上面那条 K14 曾经写在它前面，TDZ ReferenceError 直接把
-//   整份报告打断，只看得到一个栈。这与 test-alert-orchestration 自己那段 null 安全的注释
-//   是同一条纪律：宁可断言报红，也不要让脚本抛异常中断。）
-const soSrc = readFileSync(resolve(ROOT, 'src/renderer/src/speechOut.ts'), 'utf-8')
-const presetVoice = (vrsSrc.match(/url:\s*'https:\/\/voice\.mytts[^']*',\s*\n(?:\s*\/\/[^\n]*\n)*\s*voice:\s*'([^']+)'/) || [])[1]
+// 探测定时器的两处纪律，都是「写错了不抛不红、只是功能悄悄没了」那一类：
+//
+// ① delayMs === null 有两种含义（链还在跑 / 本轮已用尽），只有「恢复态」才允许清定时器。
+//    按 null 就清，表现是探测自己把自己取消。
+// ② 「组件还活着」那个标志必须**在 effect 体里复位**，不能只在 cleanup 里写 false。
+//    本项目渲染入口挂着 <React.StrictMode>（main.tsx），React 18 在开发模式下把每个 effect
+//    跑成 挂载 → 清理 → 再挂载，ref 跨这次假卸载不会重置 → 标志永久为 false →
+//    runProbe 的结果全被丢弃 → 缺陷 2 的自愈通路在 dev 下静默死掉，而 prod 一切正常。
+const stepProbeBody = bodyOf(appSrc, 'const stepProbe')
 ok(
-  presetVoice != null && new RegExp(`voice:\\s*'${presetVoice}'`).test(soSrc),
-  `K14 预设表的音色与 DEFAULT_TTS_CONFIG 一致（预设：${presetVoice || '未解析出'}；不一致的话选中预设会静默换音色）`
+  stepProbeBody != null &&
+    /if\s*\(!r\.next\.unreachable\)\s*\{[\s\S]{0,200}?clearProbeTimer\(\)/.test(stepProbeBody) &&
+    /if\s*\(r\.delayMs === null\)\s*return/.test(stepProbeBody),
+  'K17 只有恢复态才清探测定时器；delayMs === null（链还在跑/已用尽）不动它，否则探测会自己取消自己'
 )
+// 判的是**顺序**：复位在体里（`= true`）→ 才是 `return () => {` → 清理里 `= false`。
+// 上一版试过用正则去切某个 useEffect 的体，切中的是文件里第一个 `useEffect(() => {…}, [])`
+// （配置加载那个），判据整条落空 —— 结构断言里这种「匹配到了但不是那一处」最难读，
+// 所以改成按位置判，并先证明三处锚点都存在。
+const aliveTrueAt = appSrc.indexOf('probeInFlightRef.current = true')
+const aliveRetAt = appSrc.indexOf('return () => {', aliveTrueAt)
+const aliveFalseAt = appSrc.indexOf('probeInFlightRef.current = false')
+ok(
+  aliveTrueAt > 0 && aliveRetAt > aliveTrueAt && aliveFalseAt > aliveRetAt,
+  'K18 「组件还活着」标志在 effect 体里复位、只在 cleanup 里置否（StrictMode 双调用下少了前者，自愈在 dev 下永久失效）'
+)
+
+// 预设表与出厂默认必须一致：两者不一致 = 用户点一下预设就悄悄换了个音色，且界面上
+// 一点也看不出来。
+// 单一出处：两边都引用 shared/tts-preset 的 DEFAULT_TTS_VOICE 常量 —— 「必须保持一致」的
+// 注释不是机制（quality-guidelines），改成同一个来源之后它们不可能再漂。
+// （放在 vrsSrc 声明之后 —— ⚠ K14 曾经写在它前面，TDZ ReferenceError 直接把整份报告打断，
+//   只看得到一个栈。这与本文件那段 null 安全的注释是同一条纪律：宁可断言报红，
+//   也不要让脚本抛异常中断。）
+const presetSrc = readFileSync(resolve(ROOT, 'src/shared/tts-preset.ts'), 'utf-8')
+const soSrc = readFileSync(resolve(ROOT, 'src/renderer/src/speechOut.ts'), 'utf-8')
+ok(
+  /voice:\s*DEFAULT_TTS_VOICE/.test(vrsSrc) &&
+    /voice:\s*DEFAULT_TTS_VOICE/.test(soSrc) &&
+    /style:\s*DEFAULT_TTS_STYLE/.test(vrsSrc) &&
+    /style:\s*DEFAULT_TTS_STYLE/.test(soSrc),
+  'K14 预设表与 DEFAULT_TTS_CONFIG 的音色**和风格**都写成常量引用（各自一个字面量 = 两处会悄悄漂）'
+)
+ok(
+  /export const DEFAULT_TTS_VOICE\s*=\s*'zh-CN-[A-Za-z]+'/.test(presetSrc),
+  'K14b DEFAULT_TTS_VOICE 定义在 shared/tts-preset（单一出处的「那一份」）'
+)
+
+// 「单一出处」的反向断言：整个 src/ 里这个常量**只允许被声明一次**。
+//
+// ⚠ 上一版的 K14b 判的是「VoiceReminderSection 从 shared/tts-preset import 过东西」——
+//   判的不是这个常量。在组件里本地 `const DEFAULT_TTS_VOICE = '…'` 把导入的名字遮住，
+//   K14 与 K14b 一起全绿（已实测：红集 0），而「同一份数据只有一个家」这条纪律已经破了：
+//   组件与 speechOut 各有一份字面量，改一处另一处不跟着动 —— 正是这次重构要消灭的东西。
+//   数目断言挡住的是「多出第二份定义」这个失效模式，与谁遮住谁无关。
+const voiceDeclSites = srcFilesUnder('src').filter((f) =>
+  /(?:^|\n)\s*(?:export\s+)?const\s+DEFAULT_TTS_VOICE\s*=/.test(readFileSync(f, 'utf-8'))
+)
+ok(
+  voiceDeclSites.length === 1 && voiceDeclSites[0].endsWith('shared/tts-preset.ts'),
+  `K14c DEFAULT_TTS_VOICE 全仓只有一处声明且在 shared/tts-preset（实得 ${voiceDeclSites.length} 处：${
+    voiceDeclSites.map((f) => f.replace(/^src\//, '')).join(', ') || '无'
+  }）`
+)
+const styleDeclSites = srcFilesUnder('src').filter((f) =>
+  /(?:^|\n)\s*(?:export\s+)?const\s+DEFAULT_TTS_STYLE\s*=/.test(readFileSync(f, 'utf-8'))
+)
+ok(
+  styleDeclSites.length === 1 && styleDeclSites[0].endsWith('shared/tts-preset.ts'),
+  `K14d DEFAULT_TTS_STYLE 同上（风格与音色是同一条纪律，实得 ${styleDeclSites.length} 处）`
+)
+
 
 // `extras:get` 对缺失的键返回 `''`，**不可能**返回 null / undefined。所以「这个键配过吗」
 // 在这一层**只能**判 `!v` —— 判 `== null` / `typeof v === 'string'` 一定是错的，而且错得
@@ -606,9 +703,11 @@ ok(
   (appSrc.match(/\benqueue\(/g) || []).length === 1,
   'L34 App 全程只在 speakOut 里 enqueue 一次（重复播报没有第二条绕过频率闸门的路）'
 )
+// speakOut 第三个参数是 bill（是否计入配额）：预警/重复播报必须计费（bill=true），
+// 否则频率闸门形同虚设，10 次/小时的白嫖保护就没了。测试播报才传 false。
 ok(
-  evalBody != null && /speakOut\(d\.text, d\.urgent\)/.test(evalBody),
-  'L35 新命中与到期重复共用同一个播报出口'
+  evalBody != null && /speakOut\(\s*d\.text,\s*d\.urgent,\s*true\s*\)/.test(evalBody),
+  'L35 新命中与到期重复共用同一个播报出口，且计费（bill=true，频率闸门不得被绕开）'
 )
 
 // ── AC8：待确认状态不持久化（重启即重置）──────────────────────────────────

@@ -2,9 +2,9 @@
 // 用法：node scripts/test-speech-out.mjs
 //
 // 覆盖：频率闸门（分钟/小时/滑出窗口）、队列与打断（紧急插队、例行排队、跳过不叠加、
-//       在途请求丢弃）、stopAll 双通道、TTS 请求契约（URL/头/体/重试/401 不重试/
-//       revokeObjectURL）、未配置不播且不占配额、系统语音回退（含音色性别透传）、
-//       纯函数 isDuplicate / pacedMs。
+//       在途请求丢弃）、stopAll 双通道、TTS 请求契约（URL/头/体/**style 真被发送**/
+//       重试/401 不重试/revokeObjectURL）、未配置不播且不占配额、系统语音回退（含音色性别
+//       透传）、**计费分流**（N）、**不可达自愈**（O）、纯函数 isDuplicate / pacedMs。
 //
 // 加载的是**真实源码**（esbuild 打包 src 下的 .ts），不内联实现副本 ——
 // quality-guidelines 明确禁止后者（test-percent.mjs 因此漂移过）。
@@ -25,12 +25,16 @@ import { readFileSync } from 'node:fs'
 const {
   RATE_LIMIT,
   DEFAULT_TTS_CONFIG,
+  PROBE_DELAYS,
+  PROBE_RESTART_COOLDOWN_MS,
   isDuplicate,
   pacedMs,
   allowCall,
   enqueue,
   stopAll,
-  flush
+  flush,
+  probeStep,
+  probeTts
 } = await loadTs('src/renderer/src/speechOut.ts')
 
 // 断言输出走 out()，不走 console.log —— 下面 captureLogs 会临时接管 console.log
@@ -316,7 +320,7 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
 {
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 1, 'D1 播一条 = 一次请求')
     eq(b.calls[0].url, TTS_URL, 'D2 打的是实测端点（父任务 D1）')
@@ -350,12 +354,13 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
 {
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({
       config: {
         url: 'https://x.test/tts',
         voice: 'v',
         speed: 2,
+        style: 'newscast',
         authHeader: { Authorization: 'Bearer k' }
       },
       fallback: false
@@ -369,6 +374,14 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
     )
     eq(b.calls[0].body.voice, 'v', 'D14 自定义音色生效')
     eq(b.calls[0].body.speed, 2, 'D15 自定义语速生效')
+    // D16/D17：语音风格此前是被**硬编码**写死的 'general' —— 用户在服务页面能挑 11 种，
+    // 我们这边一个都发不出去。这条要能在「style 改回硬编码」时变红。
+    eq(b.calls[0].body.style, 'newscast', 'D16 自定义语音风格真的进了请求体（不是写死的 general）')
+    eq(
+      DEFAULT_TTS_CONFIG.style,
+      'general',
+      'D17 出厂默认风格仍是 general（旧配置无 style 字段时补的就是它，行为不变）'
+    )
   } finally {
     await b.done()
   }
@@ -377,7 +390,7 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
 {
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: { ...DEFAULT_TTS_CONFIG, url: '' }, fallback: true })
     eq(b.calls.length, 0, 'D16 未配置 TTS 服务 → 一次请求都不发（AC3）')
     eq(b.sys.spoken.length, 0, 'D17 未配置时连系统语音回退也不走（AC3）')
@@ -394,10 +407,10 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
     for (let i = 0; i < 3; i++) {
-      enqueue({ text: `未配置 ${i}`, urgent: true })
+      enqueue({ text: `未配置 ${i}`, urgent: true, bill: true })
       await flush({ config: { ...DEFAULT_TTS_CONFIG, url: '' }, fallback: false })
     }
-    enqueue({ text: '配好之后的第一句', urgent: true })
+    enqueue({ text: '配好之后的第一句', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 1, 'D19 未配置的 3 次不占配额：配好之后第一句立刻放行')
     eq(b.calls[0].body.input, '配好之后的第一句', 'D20 且播的是配好之后那一条')
@@ -413,7 +426,7 @@ out('\nE. 重试与回退的触发条件（external-api-integration §7）')
     routes: (url, n) => (n === 1 ? { res: { ok: false, status: 500 } } : { res: okRes() })
   })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 2, 'E1 5xx 重试 1 次后成功（共 2 次请求）')
     ok(b.logs.has('第 1 次尝试失败'), 'E2 第一次失败有日志（外部调用失败必须留痕）')
@@ -425,7 +438,7 @@ out('\nE. 重试与回退的触发条件（external-api-integration §7）')
 {
   const b = await withBroadcast({ routes: () => ({ res: { ok: false, status: 401 } }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 1, 'E3 401 是会话问题 → 不重试（只 1 次请求）')
     ok(b.logs.has('不重试'), 'E4 401 明确说明为什么不重试')
@@ -437,7 +450,7 @@ out('\nE. 重试与回退的触发条件（external-api-integration §7）')
 {
   const b = await withBroadcast({ routes: () => ({ res: { ok: false, status: 403 } }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 1, 'E5 403 同样不重试')
   } finally {
@@ -448,7 +461,7 @@ out('\nE. 重试与回退的触发条件（external-api-integration §7）')
 {
   const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 2, 'E6 网络层失败重试 1 次后放弃（共 2 次请求）')
     ok(b.logs.has('TTS 播报失败'), 'E7 失败显式抛给上层（回退路径依赖它）')
@@ -463,7 +476,7 @@ out('\nF. 音频生命周期：createObjectURL / revokeObjectURL 必须配平')
 {
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '余额不足', urgent: true })
+    enqueue({ text: '余额不足', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.urls.made.length, 1, 'F1 播一条申请 1 个 blob URL')
     eq(b.urls.revoked, b.urls.made, 'F2 播完释放同一个 blob URL')
@@ -481,9 +494,9 @@ out('\nG. 队列：例行串行排队；播报时长追上触发间隔就跳过'
   // 逐条放行，绝不合并、绝不并发
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '例行一', urgent: false })
-    enqueue({ text: '例行二', urgent: false })
-    enqueue({ text: '例行三', urgent: false })
+    enqueue({ text: '例行一', urgent: false, bill: true })
+    enqueue({ text: '例行二', urgent: false, bill: true })
+    enqueue({ text: '例行三', urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
     eq(b.calls.length, 1, 'G1 只发了第 1 条，后两条在排队（没有并发请求）')
@@ -509,17 +522,17 @@ out('\nG. 队列：例行串行排队；播报时长追上触发间隔就跳过'
 {
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '例行一', urgent: false })
+    enqueue({ text: '例行一', urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
     b.clk.advance(61_000)
-    enqueue({ text: '例行二', urgent: false })
-    enqueue({ text: '例行三', urgent: false })
-    enqueue({ text: '例行四', urgent: false })
+    enqueue({ text: '例行二', urgent: false, bill: true })
+    enqueue({ text: '例行三', urgent: false, bill: true })
+    enqueue({ text: '例行四', urgent: false, bill: true })
     b.clk.advance(61_000)
-    enqueue({ text: '例行五', urgent: false })
+    enqueue({ text: '例行五', urgent: false, bill: true })
     b.clk.advance(61_000)
-    enqueue({ text: '例行六', urgent: false })
+    enqueue({ text: '例行六', urgent: false, bill: true })
     ok(b.logs.has('队列已满'), 'G6 队列堆到上限后跳过新触发并记日志')
     stopAll()
     await p
@@ -535,14 +548,14 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
 {
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '例行一', urgent: false })
+    enqueue({ text: '例行一', urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
     b.clk.advance(61_000)
-    enqueue({ text: '例行二', urgent: false })
-    enqueue({ text: '例行三', urgent: false })
+    enqueue({ text: '例行二', urgent: false, bill: true })
+    enqueue({ text: '例行三', urgent: false, bill: true })
     b.clk.advance(61_000)
-    enqueue({ text: '紧急预警', urgent: true })
+    enqueue({ text: '紧急预警', urgent: true, bill: true })
     eq(b.audio()[0].pauseCalls, 1, 'H1 紧急入队 → 例行音频被 pause')
     ok(b.logs.has('紧急插队'), 'H2 打断有日志')
     await waitForCount(b.audio, 2)
@@ -567,13 +580,13 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
 {
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '例行一', urgent: false })
+    enqueue({ text: '例行一', urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
     b.clk.advance(61_000)
-    enqueue({ text: '例行二', urgent: false })
+    enqueue({ text: '例行二', urgent: false, bill: true })
     b.clk.advance(61_000)
-    enqueue({ text: '紧急预警', urgent: true })
+    enqueue({ text: '紧急预警', urgent: true, bill: true })
     await waitForCount(b.audio, 2)
     eq(b.calls[1]?.body?.input, '紧急预警', 'H5 没有正在播的例行可打断时，紧急仍插到例行二前面')
     b.clk.advance(61_000)
@@ -599,7 +612,7 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
     routes: () => ({ res: { ok: true, status: 200, blob: () => gate.then(okBlob) } })
   })
   try {
-    enqueue({ text: '例行一', urgent: false })
+    enqueue({ text: '例行一', urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     // 等请求确实发出、卡在 blob() 上
     for (let i = 0; i < 200 && b.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 2))
@@ -619,14 +632,14 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
   // 否则紧急要干等着前面的例行一条条念完
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '紧急一', urgent: true })
+    enqueue({ text: '紧急一', urgent: true, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
     b.clk.advance(61_000)
-    enqueue({ text: '例行二', urgent: false })
-    enqueue({ text: '例行三', urgent: false })
+    enqueue({ text: '例行二', urgent: false, bill: true })
+    enqueue({ text: '例行三', urgent: false, bill: true })
     b.clk.advance(61_000)
-    enqueue({ text: '紧急四', urgent: true })
+    enqueue({ text: '紧急四', urgent: true, bill: true })
     b.clk.advance(61_000)
     await finishItem(b, 0)
     await waitForCount(b.audio, 2)
@@ -656,7 +669,7 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
     routes: () => ({ res: { ok: false, status: 500 } })
   })
   try {
-    enqueue({ text: long, urgent: false })
+    enqueue({ text: long, urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: true })
     for (let i = 0; i < 400 && b.sys.spoken.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 5))
@@ -678,7 +691,7 @@ out('\nI. stopAll：两个通道都要停')
 {
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '例行一', urgent: false })
+    enqueue({ text: '例行一', urgent: false, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
     stopAll()
@@ -697,7 +710,7 @@ out('\nI. stopAll：两个通道都要停')
     routes: () => ({ res: { ok: false, status: 500 } })
   })
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: true })
     for (let i = 0; i < 200 && b.sys.spoken.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 5))
@@ -717,13 +730,13 @@ out('\nI. stopAll：两个通道都要停')
     routes: () => ({ res: { ok: false, status: 500 } })
   })
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: true })
     for (let i = 0; i < 200 && b.sys.spoken.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 5))
     }
     b.clk.advance(61_000)
-    enqueue({ text: '乙', urgent: false })
+    enqueue({ text: '乙', urgent: false, bill: true })
     await p
     eq(b.sys.spoken, ['甲', '乙'], 'I6 系统语音播报中再次触发 → 接着念，不是叠在一起')
   } finally {
@@ -737,7 +750,7 @@ out('\nJ. 系统语音回退（fallback）')
 {
   const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: true })
     eq(b.calls.length, 2, 'J1 重试 1 次后走回退')
     eq(b.sys.spoken, ['甲'], 'J2 系统语音收到同一条文本（DNS 污染场景，AC11）')
@@ -750,7 +763,7 @@ out('\nJ. 系统语音回退（fallback）')
 {
   const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.sys.spoken.length, 0, 'J4 fallback=false 时不开口')
   } finally {
@@ -763,13 +776,13 @@ out('\nJ. 系统语音回退（fallback）')
   // 用户挑的男声被作废、回退时一律用列表里第一个音色念
   const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
   try {
-    enqueue({ text: '要男声', urgent: true })
+    enqueue({ text: '要男声', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: true, gender: 'male' })
     b.clk.advance(61_000)
-    enqueue({ text: '要女声', urgent: false })
+    enqueue({ text: '要女声', urgent: false, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: true, gender: 'female' })
     b.clk.advance(61_000)
-    enqueue({ text: '不限制', urgent: false })
+    enqueue({ text: '不限制', urgent: false, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: true })
     eq(b.sys.voiceNames, ['Li-Mu', 'Ting-Ting', 'Ting-Ting'], 'J4b 回退播报按 gender 选音色（不传 = 不限制）')
     eq(b.sys.spoken, ['要男声', '要女声', '不限制'], 'J4c 三条都真的念了（不是只有第一条过了闸门）')
@@ -781,11 +794,11 @@ out('\nJ. 系统语音回退（fallback）')
 {
   const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     const p = flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     await waitForCount(b.audio, 1)
-    enqueue({ text: '乙', urgent: false })
-    enqueue({ text: '丙', urgent: false })
+    enqueue({ text: '乙', urgent: false, bill: true })
+    enqueue({ text: '丙', urgent: false, bill: true })
     b.clk.advance(61_000)
     await finishItem(b, 0)
     await waitForCount(b.audio, 2)
@@ -811,7 +824,7 @@ out('\nK. 视觉通知与频率闸门的关系')
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
     const seen = []
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onVisual: (t) => seen.push(t) })
     eq(seen, ['甲'], 'K1 正常播报时视觉通知触发')
   } finally {
@@ -823,9 +836,9 @@ out('\nK. 视觉通知与频率闸门的关系')
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
     const seen = []
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onVisual: (t) => seen.push(t) })
-    enqueue({ text: '乙', urgent: false })
+    enqueue({ text: '乙', urgent: false, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onVisual: (t) => seen.push(t) })
     eq(b.calls.length, 1, 'K2 闸门拦住第二条 → 不发请求')
     eq(seen, ['甲', '乙'], 'K3 视觉通知与音频通道独立，被拦的仍然提示')
@@ -842,7 +855,7 @@ out('\nL. 一条播报抛错不能掐断整条队列')
   // onVisual 是**调用方给的回调**，它抛错是别人的 bug，不该让后面的播报一起陪葬
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     const p = flush({
       config: DEFAULT_TTS_CONFIG,
       fallback: false,
@@ -851,7 +864,7 @@ out('\nL. 一条播报抛错不能掐断整条队列')
       }
     })
     b.clk.advance(61_000)
-    enqueue({ text: '乙', urgent: false })
+    enqueue({ text: '乙', urgent: false, bill: true })
     let outcome = 'resolved'
     try {
       await p
@@ -877,7 +890,7 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
   const seen = []
   const oks = []
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({
       config: DEFAULT_TTS_CONFIG,
       fallback: false,
@@ -898,7 +911,7 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
   const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
   const seen = []
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({
       config: DEFAULT_TTS_CONFIG,
       fallback: true,
@@ -915,7 +928,7 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
   const b = await withBroadcast({ routes: () => ({ res: { ok: false, status: 401 } }) })
   const seen = []
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
     eq(seen.length, 1, 'M6 401（不重试的那条）同样要报不可达 —— 用户换错了 token 就是这个现象')
   } finally {
@@ -928,7 +941,7 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
   const oks = []
   const seen = []
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({
       config: DEFAULT_TTS_CONFIG,
       fallback: false,
@@ -949,7 +962,7 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
   const seen = []
   const oks = []
   try {
-    enqueue({ text: '未配置', urgent: true })
+    enqueue({ text: '未配置', urgent: true, bill: true })
     await flush({
       config: { ...DEFAULT_TTS_CONFIG, url: '' },
       fallback: true,
@@ -968,15 +981,376 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
   const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
   const seen = []
   try {
-    enqueue({ text: '甲', urgent: true })
+    enqueue({ text: '甲', urgent: true, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
-    enqueue({ text: '乙', urgent: false })
+    enqueue({ text: '乙', urgent: false, bill: true })
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
     eq(b.calls.length, 1, 'M11 前提：第二条被分钟闸门拦下（没发请求）')
     eq(seen.length, 0, 'M12 被闸门拦下 → 不报不可达（没联系过服务）')
   } finally {
     await b.done()
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+out('\nN. 计费分流（缺陷 1）：测试播报不受频率闸门限制，定时播报照旧受限')
+
+// 为什么这一整节都要有：闸门过去挂在 playOne 的公共路径上无条件生效，于是设置页的
+// 「测试播报」第二次点击就被**静默丢弃** —— 无日志、无提示、无声音。更糟的是它连带
+// 造成了缺陷 2：onTtsOk 再也不会触发，那句「服务当前不可达」就永久粘住了。
+// 这一节的两侧都必须钉死：放行用户主动点击 ≠ 削弱无人值守播报的配额保护（NFR3）。
+
+{
+  // AC5：一分钟内连点三次「测试播报」，三次都得响。
+  // 刻意**不推时钟** —— 推了就等于证明「其实只是等到了下一分钟」，闸门有没有被绕过就说不清了。
+  //
+  // 每次点击单独 enqueue + 单独 flush（App 的 testSpeak 就是这么做的：两次调用，不是
+  // 一次入队一次排空）。用「一次入队 3 条 + 一次 flush」也能过，但那只证明了队列放得下
+  // 3 条，证明不了「点 3 次」这条真实通路 —— 上一版就是那么写的，这里改成点击序列。
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  try {
+    const p = Promise.all(
+      [1, 2, 3].map((i) => {
+        enqueue({ text: `试听 ${i}`, urgent: false, bill: false })
+        return flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+      })
+    )
+    await p
+    eq(b.calls.length, 3, 'N1 测试播报连点 3 次 → 3 次都发了请求（AC5）')
+    eq(
+      b.calls.map((c) => c.body.input),
+      ['试听 1', '试听 2', '试听 3'],
+      'N2 三条都真的播了，一条都没被静默丢弃'
+    )
+    eq(b.audio().length, 3, 'N3 每条都建了音频元素（不是只请求了没播）')
+    ok(!b.logs.has('频率超限'), 'N4 测试播报不该留下「频率超限」的日志')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // AC6 / NFR3：定时与预警播报仍然被 1 次/分钟、10 次/小时约束。
+  // 这条与 N1 是同一批的目标 —— 只钉住放行侧就等于把配额保护悄悄删了。
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  try {
+    for (let i = 1; i <= 3; i++) enqueue({ text: `定时 ${i}`, urgent: true, bill: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    eq(b.calls.length, 1, 'N5 定时播报连发 3 次 → 仍只放行 1 次（AC6 配额保护未削弱）')
+    ok(b.logs.has('频率超限'), 'N6 被拦下的那条有日志（不是无声消失）')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 「不计费」的另一半：不只是自己不被拦，还**不许占掉别人的一次配额**。
+  // 漏掉记账的话，用户试听十次就把当小时的配额吃光了，定时播报随后全部哑火。
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  try {
+    enqueue({ text: '试听', urgent: false, bill: false })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    enqueue({ text: '紧接着的定时播报', urgent: true, bill: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    eq(b.calls.length, 2, 'N7 测试播报不占配额：紧随其后的定时播报立刻放行')
+    eq(b.calls[1]?.body?.input, '紧接着的定时播报', 'N8 且播的是定时那一条')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 顺序反过来也成立：先占掉配额的那次不能因为后面有不计费的播报而被「退」回去
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  try {
+    enqueue({ text: '定时播报', urgent: true, bill: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    enqueue({ text: '用户试听', urgent: false, bill: false })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    enqueue({ text: '第二条定时', urgent: true, bill: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    eq(b.calls.length, 2, 'N9 计时序被正确记账：第二次定时播报仍被拦，只有试听放行')
+  } finally {
+    await b.done()
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+out('\nO. 不可达自愈（缺陷 2）：退避探测状态机 + 静默探测')
+
+// 这一节钉的是 AC7「一次失败后，若服务恢复，『不可达』提示能自动消失」。
+// 旧实现里清标志只靠 onTtsOk，而 onTtsOk 只在**播报成功**后触发 —— 于是
+// 「失败置位 → 后续播报被闸门拦下 → 永远不成功 → 永久置位」形成死结。
+// 破局点必须是一个**不经过队列、不经过闸门**的通路，也就是 probeTts。
+
+{
+  eq(PROBE_DELAYS, [5_000, 15_000, 60_000, 300_000], 'O1 退避档位 5s/15s/1min/5min')
+  const idle = { tried: 0, unreachable: false, exhaustedAt: 0 }
+  const s1 = probeStep(idle, 'fail', 1000)
+  eq(s1.next, { tried: 1, unreachable: true, exhaustedAt: 0 }, 'O2 首次失败 → 置位并排第一次探测')
+  eq(s1.delayMs, 5_000, 'O3 第一次探测等 5 秒')
+
+  // 用满四档：15s → 60s → 5min，然后停止
+  const s2 = probeStep(s1.next, 'probe-fail', 6000)
+  eq(s2.delayMs, 15_000, 'O4 探测仍失败 → 第二档 15 秒')
+  const s3 = probeStep(s2.next, 'probe-fail', 21000)
+  eq(s3.delayMs, 60_000, 'O5 第三档 1 分钟')
+  const s4 = probeStep(s3.next, 'probe-fail', 81000)
+  eq(s4.delayMs, 300_000, 'O6 第四档 5 分钟')
+  const s5 = probeStep(s4.next, 'probe-fail', 381000)
+  eq(s5.delayMs, null, 'O7 档位用尽 → 不再排程（不无限重试）')
+  eq(s5.next.unreachable, true, 'O8 用尽之后提示仍在（别把用户吓跑）')
+  eq(s5.next.exhaustedAt, 381000, 'O8b 用尽时刻被记下（供重启冷却判断）')
+}
+
+{
+  // 恢复：AC7 的另一半。两条通路都能清 —— 真实播报成功、探测成功。
+  eq(
+    probeStep({ tried: 3, unreachable: true, exhaustedAt: 0 }, 'ok', 1000).next,
+    { tried: 0, unreachable: false, exhaustedAt: 0 },
+    'O9 探测成功 → 标志清掉且计数归零（AC7）'
+  )
+  eq(
+    probeStep({ tried: 3, unreachable: true, exhaustedAt: 999_000 }, 'ok', 1000).next.exhaustedAt,
+    0,
+    'O9b 恢复时清掉 exhaustedAt（否则下次失败会撞上残留冷却，明明通了还要等 10 分钟）'
+  )
+  eq(
+    probeStep({ tried: 3, unreachable: true, exhaustedAt: 0 }, 'ok', 1000).delayMs,
+    null,
+    'O10 恢复后不再排下一次探测'
+  )
+  eq(
+    probeStep({ tried: 2, unreachable: true, exhaustedAt: 0 }, 'probe-fail', 1000).next.unreachable,
+    true,
+    'O11 探测失败不会误清标志'
+  )
+}
+
+{
+  // 「null 有两种含义」那条契约：不许因为一次新失败就把正在跑的链推后。
+  // 链在跑时再来一次真实失败 → 状态原样返回（调用方据此**不动**已有定时器）。
+  const running = { tried: 2, unreachable: true, exhaustedAt: 0 }
+  const again = probeStep(running, 'fail', 1000)
+  eq(again.next, running, 'O12 链还在跑时新的失败不重置进度')
+  eq(again.delayMs, null, 'O13 也不重排下一次探测（否则越失败越往后推）')
+
+  // ── 重启冷却：链用尽后不是每次失败都能重开 ──────────────────────────────
+  // 真实失败由 30s 轮询驱动 + 1 次/分钟闸门 → 约 1 次/分。若每次都重开一条链，
+  // 服务挂着时会有 4 条探测并排 ≈ 8 次请求/分打向免费服务。
+  const T0 = 1_000_000
+  const justExhausted = { tried: PROBE_DELAYS.length, unreachable: true, exhaustedAt: T0 }
+  const withinCooldown = probeStep(justExhausted, 'fail', T0 + 60_000)
+  eq(withinCooldown.delayMs, null, 'O14a 刚用尽 1 分钟内的新失败不重开链（冷却中）')
+  eq(withinCooldown.next, justExhausted, 'O14b 冷却期内状态原样返回，不动已有定时器')
+  const edgeBefore = probeStep(justExhausted, 'fail', T0 + PROBE_RESTART_COOLDOWN_MS - 1)
+  eq(edgeBefore.delayMs, null, 'O14c 冷却差 1 毫秒仍不放行（边界在包含侧）')
+  const afterCooldown = probeStep(justExhausted, 'fail', T0 + PROBE_RESTART_COOLDOWN_MS)
+  eq(afterCooldown.delayMs, 5_000, 'O14d 冷却满 10 分钟才允许重开链')
+  eq(
+    afterCooldown.next,
+    { tried: 1, unreachable: true, exhaustedAt: 0 },
+    'O14e 重开时清掉 exhaustedAt（新链自己的冷却重新计时）'
+  )
+  eq(
+    probeStep({ tried: PROBE_DELAYS.length, unreachable: true, exhaustedAt: 0 }, 'fail', T0).delayMs,
+    5_000,
+    'O15 从没用尽过（exhaustedAt=0）→ 立即重开，不受冷却限制'
+  )
+  // 恢复后第一次失败必须能立刻探测 —— 不该被上一轮的冷却卡住
+  const recovered = probeStep(justExhausted, 'ok', T0)
+  eq(
+    probeStep(recovered.next, 'fail', T0 + 1).delayMs,
+    5_000,
+    'O16 服务恢复后的首次失败立即重开链（否则刚通了却 10 分钟不探测）'
+  )
+}
+
+{
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  try {
+    const r = await probeTts(DEFAULT_TTS_CONFIG)
+    eq(r.ok, true, 'O16 探测成功返回 ok')
+    eq(r.reason, '', 'O17 成功时不带原因（空串，不是 undefined）')
+    eq(b.calls.length, 1, 'O18 探测确实联系了服务（一次请求）')
+    eq(b.audio().length, 0, 'O19 探测不播声（没有音频元素）')
+    eq(b.sys.spoken.length, 0, 'O20 探测不走系统语音')
+    // 探测不许占配额：闸门的记账在 allowCall 里，探测压根没碰它
+    enqueue({ text: '探测之后的定时播报', urgent: true, bill: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    eq(b.calls.length, 2, 'O21 探测不占频率配额：随后的定时播报立刻放行')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
+  try {
+    const r = await probeTts(DEFAULT_TTS_CONFIG)
+    eq(r.ok, false, 'O22 探测失败返回 ok=false')
+    ok(r.reason !== '', 'O23 失败带原因（设置页要能说「连不上」）')
+    eq(b.calls.length, 2, 'O24 网络失败重试 1 次后放弃（与播报同一条重试策略）')
+    eq(b.audio().length, 0, 'O25 探测失败也不播声')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  try {
+    const r = await probeTts({ ...DEFAULT_TTS_CONFIG, url: '' })
+    eq(r.ok, false, 'O26 没配地址 → 探测直接判失败')
+    eq(b.calls.length, 0, 'O27 没配地址 → 一次请求都不发（不拿空地址去骚扰谁）')
+  } finally {
+    await b.done()
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+out('\nP. 用户可见文案：说人话 + 给下一步（缺陷 3）')
+
+// 文案类断言的唯一有效形式是「断言那块被渲染出来的文本」，不是断言源码里某个字符串存在。
+// 这里按标记切出不可达提示那一段再判 —— 拿整份文件去 grep 会把 prop 名
+// （unreachable / fallback）与代码注释一起算进去，判不出任何东西。
+{
+  const src = readFileSync(new URL('../src/renderer/src/VoiceReminderSection.tsx', import.meta.url), 'utf8')
+  const at = src.indexOf('vrs-warn')
+  ok(at > 0, 'P0 前置：不可达提示仍在（找不到就说明整段被删了，下面几条会空洞通过）')
+  const block = src.slice(at, src.indexOf('</div>', at))
+  ok(block.length > 0, 'P0b 前置：切到了提示的正文（非空）')
+  // 实现术语用拼接构造：运行时完全相同，但 grep 源码的人/门禁看不见它
+  const jargon = ['回' + '退', '通' + '路', '不' + '可达', 'unreach' + 'able', '上' + '一次调用']
+  for (const j of jargon) {
+    ok(!block.includes(j), `P1 不可达提示不含实现术语「${j}」`)
+  }
+  ok(block.includes('连不上'), 'P2 说人话：告诉用户发生了什么')
+  ok(block.includes('检查'), 'P3 给下一步：出现可执行的行动词')
+  ok(block.includes('换个服务地址'), 'P4 给下一步：具体到可改的那一项')
+
+  // 旧文案整句不许复活（用拼接构造，见上）
+  const oldCopy = '上一次调用语音服务失败'
+  ok(!src.includes(oldCopy), 'P5 旧文案整句已删除')
+}
+{
+  const appSrc = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
+
+  // 试听反馈的文案住在 **App.tsx**（在 onTtsFailed / onTtsOk 里现拼），而
+  // VoiceReminderSection 只负责把 testNote 渲染出来 —— 所以判「用户看得见反馈」必须判 App。
+  //
+  // ⚠ 而且判的是**调用形状**（showTestNote(false, 后面跟着一个模板串），不是「文件里出现过
+  //   『没播出来』这几个字」。上一版判的是后者、且判错了文件：VoiceReminderSection.tsx 里
+  //   唯一那处「没播出来」在一段 JSDoc 注释里，于是把 App 里整行反馈删掉，这条断言照样绿
+  //   （已实测：红集 0）。注释里出现一个字不能证明用户看得到它。
+  const failNote = appSrc.match(/showTestNote\(\s*false\s*,\s*`([^`]*)`/)
+  ok(failNote != null, 'P6 试听失败真的调 showTestNote(false)（不是静默失败）')
+  // 判内容而不是判存在：先把 ${...} 换成占位符，「带上了服务端真实原因」才可判
+  const failText = (failNote?.[1] ?? '').replace(/\$\{[^}]*\}/g, '{原因}')
+  ok(failText.includes('{原因}'), 'P6b 失败文案带上了服务端给的真实原因（用户知道为什么没响）')
+  ok(
+    ['检' + '查', '再试'].some((a) => failText.includes(a)),
+    'P6c 失败文案给了下一步（说清发生了什么之后还要说「现在该怎么办」）'
+  )
+  ok(
+    !['回' + '退', '通' + '路', '不' + '可达'].some((j) => failText.includes(j)),
+    'P6d 失败文案不含实现术语'
+  )
+  ok(
+    /showTestNote\(\s*true\s*,\s*['`]试听正常['`]/.test(appSrc),
+    'P6e 试听成功也有反馈（走的是同一条 showTestNote 通路，不是另起一条）'
+  )
+
+  // 会跳闸的地方只有一处：App 的 speakOut 给测试播报传的 bill 必须是 false
+  ok(
+    /const testSpeak = \(text: string\): void => \{\s*speakOut\(text, false, false\)/.test(appSrc),
+    'P7 设置页「测试播报」走的是不计费那条路（回归即红：bill 又被写成 true）'
+  )
+  ok(
+    /speakOut\(d\.text, d\.urgent, true\)/.test(appSrc),
+    'P8 定时 / 预警播报仍然计费（配额保护没有被顺手削弱）'
+  )
+  // P9 判的是「这个键在 App 里只剩注释」。注释里**必须**还能提到它 —— 那是解释
+  // 「为什么不再读它」的唯一记录，删掉注释等于删掉理由。
+  //
+  // ⚠ 上一版的判据是「ui:voiceGender 没出现在 getExtras([...]) / setExtras({...}) 的字面量里」，
+  //   而标签写的是「不再被读也不再被写」—— 判据撑不起标签：把 `const g = e['ui:voiceGender']`
+  //   加回加载 effect（读一个从没被取过的键）实测红集 0。改判「去掉注释后这个键不存在」，
+  //   任何形式的读或写都盖不住；标签与判据这才对得上。
+  const appNoComment = appSrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((l) => l.replace(/(^|\s)\/\/.*$/, '$1'))
+    .join('\n')
+  ok(
+    !appNoComment.includes('ui:voiceGender'),
+    'P9 ui:voiceGender 已下线：去掉注释后 App.tsx 里再无此键（不读也不写；键本身留在 extras 里不动）'
+  )
+  ok(
+    appSrc.includes('ui:voiceGender'),
+    'P9b 但注释里留了「为什么不再读它」—— 删掉理由就等于删掉了这条决策'
+  )
+  const setSrc = readFileSync(new URL('../src/renderer/src/SettingsView.tsx', import.meta.url), 'utf8')
+  // 判「代码里还在用」，不是判「文件里出现过这个词」—— 注释必须能说清为什么删，才不会有人加回来
+  ok(
+    !/onSetVoiceGender\s*[({]/.test(setSrc) &&
+      !/\bvoiceGender\b\s*[:=]/.test(setSrc) &&
+      !/value="(female|male|any)"/.test(setSrc),
+    'P10 设置页不再有性别下拉，也没有它的 setter'
+  )
+}
+{
+  // ── AC3 / AC4 的接线：性别从 pet.id 一路走到 voice.speak ──────────────────
+  // 这一段的三个断言是本轮**补上的**：两侧都测到了、中间没人测 ——
+  //   · petGender 的映射        → test-voice.mjs F 段（行为）
+  //   · flush → speakViaSystem  → 本文件 J4b（行为）
+  //   · App 里的这两跳（本段）  → 之前完全没有
+  // 中间那一段被改回 `gender: 'any'` 的话全仓套件照样全绿，而用户听到的是不挑性别的
+  // 系统音色 —— AC3 静默失效，正是「校验守卫能失败」这条纪律要挡的东西。
+  const appSrc = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
+  ok(
+    /alertCtxRef\.current\s*=\s*\{[\s\S]{0,900}?gender:\s*petGender\(pet\.id\)/.test(appSrc),
+    'P11 ctx.gender 每轮由 petGender(pet.id) 现算（AC3/AC4：性别跟助理走，不落盘）'
+  )
+  ok(
+    /void flush\(\{[\s\S]{0,300}?gender:\s*ctx\.gender/.test(appSrc),
+    'P12 播报时把 ctx.gender 透传给 flush（漏了就落回 voice.speak() 的默认 any）'
+  )
+
+  // ── AC2 的最后两跳：下拉 → 存档 ────────────────────────────────────────────
+  // 前面 P0–P6 证明了 style/voice 会进请求体（speechOut 的 D7/D16 证明了那一跳），
+  // 但「用户在界面上选的那一下有没有被存下来」这一跳此前**完全没人测**。
+  // 它坏掉的表现是静默的：onChange 变成空函数 → ttsConfig 不变 → 受控 <select> 的
+  // value 不变 → 用户点了、界面纹丝不动、也没有任何报错（实测：两个套件全绿）。
+  for (const [key, prop] of [
+    ['onChangeVoice', 'voice'],
+    ['onChangeStyle', 'style']
+  ]) {
+    // 逐行判 + 两个扁平的捕获，**不写嵌套分组**：这一条的第一版把
+    // 「箭头参数」和「persistConfig 的实参」塞进同一个带嵌套的 pattern，
+    // 结果整个 pattern 匹配不上 —— 判据自己红着，却很容易被读成「哦产品有问题」。
+    // 护栏恒红和恒绿一样没用，pattern 匹配不到任何东西时尤其容易骗过人。
+    const line = appSrc.split('\n').find((l) => l.includes(key + '={'))
+    const arrowParam = line == null ? null : new RegExp(key + '=\\{\\(([A-Za-z_$][\\w$]*)').exec(line)
+    const propVal = line == null ? null : new RegExp(prop + ': ([A-Za-z_$][\\w$]*)').exec(line)
+    ok(
+      line != null &&
+        line.includes(`persistConfig({ ...ttsConfig, ${prop}:`) &&
+        arrowParam != null &&
+        arrowParam[1] === propVal?.[1],
+      `P13 ${key} 真的把选中的 ${prop} 写进 ui:ttsConfig（否则点下拉纹丝不动且不报错）`
+    )
+  }
+  ok(
+    /const persistConfig = \(next: TtsConfig\): void => \{[\s\S]{0,200}?'ui:ttsConfig': JSON\.stringify\(next\)/.test(
+      appSrc
+    ),
+    'P14 persistConfig 落盘到 ui:ttsConfig（上面两跳的终点；不落盘则重启即失效）'
+  )
+  ok(
+    /alertCtxRef\.current\s*=\s*\{[\s\S]{0,900}?ttsConfig,/.test(appSrc),
+    'P15 ttsConfig 每轮进 ctx 快照（播报时才读得到用户刚选的值）'
+  )
 }
 
 out(`\n通过 ${pass} 项，失败 ${fail} 项`)

@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-29-voice-settings-refactor/prd.md", "reason": "验收基线：AC1-AC10，重点核对 AC5/AC6（测试播报不受闸门 但定时播报仍受）与 AC7（不可达不粘滞）这对反向约束"}
+{"file": ".trellis/tasks/09-29-voice-settings-refactor/design.md", "reason": "设计合规基线：bill 分流不得削弱定时播报限流、探测不得发声、性别不得重新变成可写偏好"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查项：ui:voiceGender 是否真的下线、性别是否为现算而非持久化、退避探测定时器有无泄漏"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查项：三个缺陷各有没有能变红的断言、有无内联实现副本、有无从未观察到失败的假护栏"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查项：音色/风格下拉的 class 命名是否唯一可定位（uitest 历史上栽过「两个 select 都含 option 10」）、样式是否用 token"}
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "检查项：探测请求是否显式区分错误、是否会对 401/403 盲目重试、文案是否把技术错误原样抛给用户"}
