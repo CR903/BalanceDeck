@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/prd.md", "reason": "验收基线：AC1-AC15，重点核对分级播报（AC14/AC15）、冷启动不误报（AC10）、恰好播报一次（AC9）、多场景合并去重（AC12）"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/design.md", "reason": "设计合规基线：D3 密钥禁入 extras、D4 autoplay 策略为必需项、D6 全部键须 ui: 前缀、D7 定时器依赖不得增加"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "无 linter，tsc + 断言脚本 + QA harness 是唯一质量闸门；测试必须 loadTs 加载真实源码而非内联副本"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查项：extras 键前缀副作用、加密/明文命名空间混用、读取处重新校验、播报定时器依赖契约"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查项：缺失值是否被填 0（历史数据尤甚）、字面量联合是否穷尽、读取是否类型守卫"}
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "检查项：失败是否显式抛而非静默、401/403 是否误重试、端点结论是否有真实请求支撑、降级提示是否对用户可见"}

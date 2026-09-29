@@ -468,8 +468,9 @@ export async function runUiTest(
   // 刷新频率：单一入口（10 秒 – 5 分钟），即改即存并立即生效
   //
   // 必须按 `.refresh-interval` 定位，**不能**按「第一个含 option value='10' 的 select」找：
-  // 播报间隔（`.voice-interval`）也有 option `10`（10 分钟），而它在 DOM 里排在前面，
-  // 那样会改到播报间隔去 —— 2026-09-26 实测踩过：intervalSaved/intervalFlash 双红而产品无 bug。
+  // 「语音提醒」的兜底间隔（`.vrs-routine-interval`，含 10/30/60）排在刷新频率之前，
+  // 那样会改到播报间隔去 —— 2026-09-26 实测踩过这个坑（当时挡在前面的是 `.voice-interval`，
+  // 那只开关随后随播报链路迁移删掉了，**但冲突源换成了 .vrs-routine-interval，问题依旧**）。
   const setRefreshInterval = (value: string) => exec(`(()=>{
       const sel=document.querySelector('.refresh-interval')
       if(!sel) return 'no-select'

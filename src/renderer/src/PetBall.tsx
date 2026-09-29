@@ -67,6 +67,12 @@ export interface PetBallProps {
   onMenu: () => Promise<string | null>
   onRename: (name: string) => void
   hideBalance: boolean
+  /**
+   * 语音提醒的视觉通知文案（'' = 无）。由 App 侧持有计时（12s 自动消失），本组件只负责
+   * 显示 —— 它和角色自己的说话泡泡共用一个位置，两者都是「一句话的临时提示」，
+   * 同时存在时通知优先：它带着余额数值，是用户真正要读的那句。
+   */
+  notice?: string
 }
 
 export function PetBall({
@@ -77,7 +83,8 @@ export function PetBall({
   onDragEnd,
   onMenu,
   onRename,
-  hideBalance
+  hideBalance,
+  notice
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const hitRef = useRef<HTMLDivElement | null>(null)
@@ -840,7 +847,7 @@ export function PetBall({
           aria-hidden="true"
         />
       )}
-      {bubble && (
+      {(notice || bubble) && (
         // 锚点是泡泡底边（translate(-50%,-100%)）：主体上方留白有限，两行文案高 46px，
         // 所以上移量最多 4 再按高度兜底，否则第一行被窗口顶切掉（R8）
         <div
@@ -848,7 +855,7 @@ export function PetBall({
           style={{ left: clampX(center.x, 95), top: Math.max(46, center.y - half.h - 4) }}
           aria-hidden="true"
         >
-          {bubble}
+          {notice || bubble}
         </div>
       )}
       {isStale(s ?? {}) && !failed && (

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "本任务核心是接入第三方 TTS HTTP API：该 guide 的 §1（确认真实端点而非读文档）、§2（实测机制而非冻结断言）、§7（同 host 串行+重试，401/403 不重试）、§8（测试必须能观察到失败）直接约束实现与测试写法"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "extras 键表与副作用规则：ipc.ts:191-193 非 ui: 前缀写入会触发全量重新采集；两命名空间（items 加密 / extras 明文）互不相通；读取必须重新校验；播报定时器依赖数组不得增加第四个依赖（D6/D7 直接依赖这些约束）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "缺失值必须保持缺失（不得填 0）——历史数据与阈值校验的核心规则；字面量联合 + Record 表风格"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 VoiceReminderSection 需遵循既有 props 约定、token 驱动 CSS、severity 拼写规范"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "本项目无自定义 hook；effect cleanup、ref 镜像模式是播报上下文与确认倒计时的实现基础"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/prd.md", "reason": "需求与验收标准：5 个触发场景、分级播报规则、AC1-AC15 全部验收项"}
+{"file": ".trellis/tasks/09-29-tts-smart-broadcast/design.md", "reason": "技术设计 D1-D9：已实测 TTS 端点、密钥加密 IPC、autoplay 策略、队列打断策略、extras 键表、历史数据形态"}

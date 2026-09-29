@@ -46,6 +46,13 @@ const api = {
   getExtras: (keys: string[]): Promise<Record<string, string>> => ipcRenderer.invoke('extras:get', keys),
   setExtras: (patch: Record<string, string>): Promise<void> => ipcRenderer.invoke('extras:set', patch),
 
+  // ─── TTS 自定义服务密钥（加密存储，不走上面的 getExtras/setExtras）─────────
+  /** 写入某个 TTS 服务的认证 token（空串 = 删除）；主进程落 items（密文），非 extras */
+  setTtsSecret: (id: string, value: string): Promise<void> =>
+    ipcRenderer.invoke('tts:setSecret', id, value),
+  /** 读取某个 TTS 服务的认证 token；未配置返回 null（渲染层需要它拼 Authorization 头） */
+  getTtsSecret: (id: string): Promise<string | null> => ipcRenderer.invoke('tts:getSecret', id),
+
   // ─── 测试观测点（仅 --uitest 时主进程侧注册）──────────────────────────────
   debugPush: (snapshots: unknown, offline?: boolean): Promise<void> =>
     ipcRenderer.invoke('debug:push', snapshots, offline === true),

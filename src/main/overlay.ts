@@ -156,7 +156,14 @@ export function createOverlay(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // 后台节流必须关掉：这个窗口常态是「用户没在看它」，而 Chromium 对
+      // 隐藏/非聚焦窗口的 setTimeout 会做 intensive throttling（1 分钟以上的
+      // 定时器被降到最低频率）。定时播报的间隔是 1 小时，被节流后就无法保证
+      // 「到点播报」——而且这个失败是静默的：定时器仍会触发，只是可能晚很多，
+      // 界面上看不出任何异常。与 3D 场景的 rAF（PetBall 已有 paused 机制）不同，
+      // 语音提醒走的是 setTimeout 自重排，且触发后要发网络请求，时序不能被压。
+      backgroundThrottling: false
     }
   })
   applyAlwaysOnTop()

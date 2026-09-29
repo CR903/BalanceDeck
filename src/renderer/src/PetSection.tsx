@@ -8,7 +8,13 @@ import { Icon } from './components'
 // 定位是数字助理，不是宠物 —— 等级 / 经验 / 亲密度 / 饱食度 / 心情 / 撸一把 / 喂食
 // 那一整套养成体系已下线（2026-09-21）。这里只剩：
 //   · 选一位（Aria / Ray）与改名
-//   · 两个开关：收起态形态（个性人物）、定时播报（含间隔）
+//   · 一个开关：收起态形态（个性人物）
+//
+// 播报（开关 / 间隔 / 阈值 / 服务配置）已整体搬到「语音提醒」分区（VoiceReminderSection，
+// 2026-09-29）。这里曾留着一条「定时播报 + 播报间隔」，在播报链路切到 TTS 之后它已经
+// 没有任何执行方 —— 界面上能点、extras 也照写，但什么都不会发生。留着的唯一效果是让
+// 用户以为设置生效了，故整条删掉；音色性别（ui:voiceGender）留着，它是系统语音回退
+// 路径真正在读的那个偏好。
 //
 // 头像直接用采集期 preview.png（bd-asset 直显，不占 WebGL 上下文）。
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -16,27 +22,17 @@ import { Icon } from './components'
 export interface PetSectionProps {
   pet: PetState
   petOn: boolean
-  /** 语音播报开关 */
-  voiceOn: boolean
-  /** 语音播报间隔（分钟） */
-  voiceEvery: number
   onChangePet: (id: PetId) => void
   onRenamePet: (name: string) => void
   onTogglePetBall: (on: boolean) => void
-  onToggleVoiceOn: (on: boolean) => void
-  onSetVoiceEvery: (minutes: number) => void
 }
 
 export function PetSection({
   pet,
   petOn,
-  voiceOn,
-  voiceEvery,
   onChangePet,
   onRenamePet,
-  onTogglePetBall,
-  onToggleVoiceOn,
-  onSetVoiceEvery
+  onTogglePetBall
 }: PetSectionProps): React.JSX.Element {
   const meta = petMeta(pet.id)
   /** 角色头像（bd-asset 直显 preview.png） */
@@ -134,40 +130,6 @@ export function PetSection({
             ? '开启中：收起后是这个人站在桌面上（无球壳、无进度环），读数显示在脚下；出场会从窗口外走进来，平时会随机做几个小动作。单击展开、拖动移动、右键菜单。'
             : '关闭中：收起后是一个 56×56 的小圆环（环心一个数，不加载人物素材、不占显存）。'}
         </div>
-
-        <div className="enable-row">
-          <span>
-            定时播报
-            <em className="tag env">系统语音</em>
-          </span>
-          <button
-            type="button"
-            className={'switch' + (voiceOn ? ' on' : '')}
-            title={voiceOn ? '关闭后不再播报' : '开启后按间隔播报焦点供应商余额与用量'}
-            onClick={() => onToggleVoiceOn(!voiceOn)}
-          >
-            <span className="knob" />
-          </button>
-        </div>
-
-        {voiceOn && (
-          <div className="enable-row">
-            <span>播报间隔</span>
-            <select
-              value={voiceEvery}
-              onChange={(e) => onSetVoiceEvery(parseInt(e.target.value, 10))}
-              className="voice-interval"
-            >
-              <option value={1}>1 分钟</option>
-              <option value={3}>3 分钟</option>
-              <option value={5}>5 分钟</option>
-              <option value={10}>10 分钟</option>
-              <option value={15}>15 分钟</option>
-              <option value={30}>30 分钟</option>
-              <option value={60}>60 分钟</option>
-            </select>
-          </div>
-        )}
 
         <div className="field-label pet-sec-label">换一位</div>
         <div className="pet-chips">

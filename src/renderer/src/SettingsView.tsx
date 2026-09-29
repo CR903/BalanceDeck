@@ -10,6 +10,7 @@ import type {
 import { Icon, IconButton } from './components'
 import { ProviderMark } from './ProviderMark'
 import { PetSection, type PetSectionProps } from './PetSection'
+import { VoiceReminderSection, type VoiceReminderSectionProps } from './VoiceReminderSection'
 import badgeIcon from './assets/icon.png?inline'
 
 // 设置页：供应商实例管理（添加 / 编辑 / 启停 / 删除）+ 外观 + 刷新频率 + 系统。
@@ -287,7 +288,7 @@ export function SettingsView({
   onToggleAlwaysTop,
   voiceGender,
   onSetVoiceGender,
-  ...petProps
+  ...sectionProps
 }: {
   onBack: () => void
   onDataChanged: () => void
@@ -300,7 +301,11 @@ export function SettingsView({
   /** 语音播报音色性别（ui:voiceGender） */
   voiceGender: 'female' | 'male' | 'any'
   onSetVoiceGender: (g: 'female' | 'male' | 'any') => void
-} & PetSectionProps): React.JSX.Element {
+  // 「数字助理」与「语音提醒」两个分区的 props 在同一个解构里只能有一个 rest，
+  // 所以合成一份 sectionProps 一起透传：两套接口都在类型上并了进来，少传任何一个
+  // prop 仍是编译错误；TS 不对 JSX 的变量展开做多余属性检查，两个分区各取自己那份即可。
+} & PetSectionProps &
+  VoiceReminderSectionProps): React.JSX.Element {
   const [payload, setPayload] = useState<ProvidersPayload | null>(null)
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -655,7 +660,9 @@ export function SettingsView({
           </div>
         )}
 
-        <PetSection {...petProps} />
+        <PetSection {...sectionProps} />
+
+        <VoiceReminderSection {...sectionProps} />
 
         <div className="section-title">外观</div>
         <label className="field">

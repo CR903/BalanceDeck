@@ -48,6 +48,26 @@ async function providersPayload(): Promise<ProvidersPayload> {
   return { providers, scanHits: hits }
 }
 
+/**
+ * TTS 自定义服务的密钥存储键名；id 不合法时返回 null（调用方按"没这条配置"处理）。
+ *
+ * 为什么要单独一个函数：凭据只有两条路，且**两个命名空间互不相通** ——
+ * `setKey`/`getKey` → `items`（safeStorage 加密落盘），
+ * `setExtra`/`getExtra` → `extras`（明文，state-management.md:208-217）。
+ * preload 只暴露了 getExtras/setExtras，所以自定义 TTS 的 token 只能从这里走；
+ * 图省事写进 extras 就等于把 token 明文留在磁盘上，且混用两个命名空间是**静默失败**
+ * （写进去读出来都是 null，界面只会显示"未配置"）。
+ *
+ * id 会被拼进存储键名，因此必须校验：只放行 `[A-Za-z0-9_-]` 且长度 1..64。
+ * 渲染层是不可信输入（type-safety.md §D 逐字段复验），一个 `../` 或冒号就能往
+ * keyspace 里塞脏键、或构造出与别的条目（实例 id 形如 `inst:xxx-yyy`）撞车的键名。
+ * 校验后 id 内无冒号，拼出的键恒为 `tts:secret:` + 安全字符，与其它命名空间不可能相撞。
+ */
+function ttsSecretKey(id: unknown): string | null {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return null
+  return `tts:secret:${id}`
+}
+
 export function registerIpc(): void {
   ipcMain.handle('debug:drag-state', () => consumeDragFired())
   ipcMain.handle('state:get', () => currentState())
@@ -190,6 +210,34 @@ export function registerIpc(): void {
     if (touchedInterval) reconfigure()
     // 纯界面偏好（ui:*，如隐藏余额）不触发采集，避免无畏的网络请求
     else if (!Object.keys(patch ?? {}).every((k) => k.startsWith('ui:'))) refreshNow()
+  })
+
+  // ─── TTS 自定义服务密钥（走加密 items；⛔ 禁止写 extras）────────────────────
+  //
+  // 紧挨着上面的 extras 段放，是为了留住这条对照：**不是所有偏好都能进 extras**。
+  // URL / 音色 / 开关这些是偏好（`ui:ttsConfig` 等，落 extras）；token 是凭据，
+  // 落 items（safeStorage 加密）。键名构造与 id 校验见 ttsSecretKey()。
+
+  // 写 token。value 为空串 = 删除（setKey('') 本身就是删除，store.ts:70-71，
+  // 所以"清空输入框"不需要额外分支）。id 不合法则静默忽略，不抛错也不回写。
+  ipcMain.handle('tts:setSecret', async (_e, id: string, value: string) => {
+    const key = ttsSecretKey(id)
+    if (!key) return
+    await setKey(key, typeof value === 'string' ? value.trim() : '')
+  })
+
+  // 读 token；未配置返回 null。
+  //
+  // 为什么**回传明文**而不是"只有没有"：token 的用途是给渲染层的 fetch 拼
+  // Authorization 头（design.md D4：TTS 请求在渲染进程发），明文终究要过渲染层，
+  // 藏不住也不该假装藏得住。这里真正兑现的保证是**落盘永不明文**（items 密文，
+  // 绝不进 extras），而不是"渲染层看不见明文"—— 那只能靠不返回来实现，届时
+  // 播报时还要多一次 IPC 往返换同样一份明文，纯属多一道可失败的中断点。
+  // 校验失败返回 null，与"未配置"同义：调用方无法区分，也无需区分。
+  ipcMain.handle('tts:getSecret', async (_e, id: string) => {
+    const key = ttsSecretKey(id)
+    if (!key) return null
+    return getKey(key)
   })
 
   // ─── 托盘图标（渲染层栅格化的供应商 logo，template PNG）────────────────────

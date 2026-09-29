@@ -1847,8 +1847,11 @@ textarea {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
-/* ─── 设置页「宠物」分区 ──────────────────────────────────────────────────── */
-.pet-sec {
+/* ─── 设置页「宠物 / 语音提醒」分区 ────────────────────────────────────────── */
+/* 两个分区同形（一堆开关行装在一张圆角卡片里），故并进同一条规则，
+   不复制第二份卡片样式 */
+.pet-sec,
+.vrs-sec {
   margin: 4px 0 2px;
   padding: 11px 12px;
   border-radius: var(--radius-md);
@@ -1922,7 +1925,8 @@ textarea {
   color: var(--fg);
   font-weight: 650;
 }
-.pet-sec .enable-row {
+.pet-sec .enable-row,
+.vrs-sec .enable-row {
   margin-top: 0;
 }
 
@@ -1949,6 +1953,105 @@ textarea {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ─── 设置页「语音提醒」分区（.vrs-）───────────────────────────────────────────
+   卡片外形复用 .pet-sec（见上），这里只补本分区自己用到的东西。
+
+   ⚠ 每个 select 都有独立 class：`.voice-interval`（旧播报间隔）与 `.refresh-interval`
+   都含 option value="10"，2026-09-26 踩过「第一个含某 option 的 select」定位抓错
+   （见 qa/uitest.ts:470-472），所以这里一律不靠 option 值定位。 */
+.vrs-sub {
+  margin-top: 2px;
+}
+/* 不可达提示：`.settings-note.warn` 自带 margin-top: 6px（0,2,0），得提一级才压得住，
+   否则它跟相邻开关行的间距会变成 15px（9px gap + 6px），看着不像同一组 */
+.vrs-sec .vrs-warn {
+  margin-top: 0;
+}
+/* 开关行右侧的「阈值输入 + 开关」 */
+.vrs-ctl {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 紧凑数字输入：.field input 的 32px 高度塞不进 40px 高的开关行。
+   用 `.vrs-sec` 提一级特异性，否则在 <label class="field"> 里的那两只
+   （语速 / 历史上限）会被 `.field input`（0,1,1）按 padding、height 赢回去。 */
+.vrs-sec .vrs-num {
+  width: 74px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 12px;
+  text-align: right;
+  outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.vrs-sec .vrs-num:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--surface-strong);
+}
+.vrs-sec .vrs-num::placeholder {
+  color: var(--fg-faint);
+}
+/* 「测试播报」一行：按钮 + 示例句（示例句会被长文案撑破，故省略号截断） */
+.vrs-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vrs-test {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.vrs-sample {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 按供应商覆盖：每家一组，组间一条分隔线 */
+.vrs-ovr-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 5px;
+}
+.vrs-ovr-group + .vrs-ovr-group {
+  border-top: 1px solid var(--border);
+}
+.vrs-ovr-row {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.vrs-ovr-ctl {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vrs-ovr-reset {
+  width: 26px;
+  padding: 0;
+  justify-content: center;
+}
+.vrs-ovr-reset:disabled {
+  opacity: 0.4;
+}
+.vrs-foot {
+  margin-top: 2px;
 }
 
 /* ─── 错误兜底 ────────────────────────────────────────────────────────────── */

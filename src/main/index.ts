@@ -34,6 +34,29 @@ if (process.env.BD_SANDBOX_OFF === '1') {
   app.commandLine.appendSwitch('enable-unsafe-swiftshader')
 }
 
+// ── 允许无用户手势的音频播放（必需项，不是优化）──────────────────────────────
+//
+// 余额预警 / 用量波动这类播报恰恰发生在**用户不在电脑前**的时候：人没盯屏、没有
+// 点击、窗口静置。在浏览器那边这正是 autoplay 策略拦人的场景 —— `audio.play()`
+// 被拒后只是一次 promise rejection，不抛错、不出声，现场完全查不出来。
+// TTS 返回的是一段 MP3，渲染层只能用 <audio> 播（design.md D4），所以这条策略是
+// 整条播报链路的**前置条件**。
+//
+// ⚠ 为什么是命令行开关而不是 `session.defaultSession.setAutoplayPolicy(...)`
+// （design.md D4 的原文写法）：**那个方法不存在**。Electron 37 的类型里 autoplay
+// 只有两个入口 —— `webPreferences.autoplayPolicy`（建窗时逐窗设置，而窗口在
+// ./overlay 的 createOverlay 里，不归本文件管）和 Chromium 的 `--autoplay-policy`
+// 开关。`Session` 与 `WebContents` 上都没有 setAutoplayPolicy，硬写只能靠 `as` 骗过
+// tsc，运行时炸。开关是它的全局等价物：一次设置，对**所有** webContents 生效，
+// 悬浮窗、--smoke/--uitest/--shots 的 QA 窗口、内嵌登录窗（opencode-auth 另建的
+// 隐藏窗口，webPreferences 与主窗不同）都覆盖到 —— 逐窗设置会漏掉后面这两个。
+//
+// 位置：必须在 app ready **之前**（Chromium 在浏览器进程初始化时读这批开关，
+// 当 ready 之后再 append 已经来不及），故与上面的 sandbox 开关放在一起。
+// 失败不阻断启动：appendSwitch 对未知开关静默忽略，拼错的后果只是回到默认策略
+// （Electron 的 webPreferences 默认本就是 no-user-gesture-required），而不是应用起不来。
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
 app.dock?.hide?.()
 
 // bd-asset:// 特权 scheme 必须在 ready 前注册（数字人素材用）

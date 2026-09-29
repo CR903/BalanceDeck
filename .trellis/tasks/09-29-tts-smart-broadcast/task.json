@@ -1,0 +1,31 @@
+{
+  "id": "tts-smart-broadcast",
+  "name": "tts-smart-broadcast",
+  "title": "TTS 集成与智能播报",
+  "description": "集成免费 TTS 服务替代系统语音，并实现智能播报触发机制（余额预警+用量波动检测）",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "zhou",
+  "assignee": "zhou",
+  "createdAt": "2026-09-29",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-29-speech-out",
+    "09-29-trigger-engine",
+    "09-29-tts-main-ipc",
+    "09-29-voice-reminder-ui"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
