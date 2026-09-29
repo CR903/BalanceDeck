@@ -254,6 +254,10 @@ async function finishItem(b, i) {
   await new Promise((r) => setTimeout(r, 2))
 }
 
+// 断言里的 `b.calls[n]?.body?.input` 一律 null 安全：改坏了实现（闸门调紧、串行被破坏…）
+// 时，第 n 条根本没发出去，直接 `b.calls[2].body` 会抛 TypeError 把整份报告打断 ——
+// 那样只看得到一个栈，看不全红集，batch 的声明目标集无法核对。与 test-alert-orchestration
+// 里 textOf / latchOf 同一条纪律。期望值仍是非空串：取到 undefined 照样红。
 // ═══════════════════════════════════════════════════════════════════════════════
 out('\nA. 频率闸门：滑动窗口 + 检查即记账（用显式 now 驱动）')
 
@@ -485,10 +489,10 @@ out('\nG. 队列：例行串行排队；播报时长追上触发间隔就跳过'
     eq(b.calls.length, 1, 'G1 只发了第 1 条，后两条在排队（没有并发请求）')
     await finishItem(b, 0)
     await waitForCount(b.audio, 2)
-    eq(b.calls[1].body.input, '例行二', 'G2 第 1 条播完才放第 2 条（串行）')
+    eq(b.calls[1]?.body?.input, '例行二', 'G2 第 1 条播完才放第 2 条（串行）')
     await finishItem(b, 1)
     await waitForCount(b.audio, 3)
-    eq(b.calls[2].body.input, '例行三', 'G3 第 2 条播完才放第 3 条（串行）')
+    eq(b.calls[2]?.body?.input, '例行三', 'G3 第 2 条播完才放第 3 条（串行）')
     await finishItem(b, 2)
     await p
     eq(
@@ -542,7 +546,7 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
     eq(b.audio()[0].pauseCalls, 1, 'H1 紧急入队 → 例行音频被 pause')
     ok(b.logs.has('紧急插队'), 'H2 打断有日志')
     await waitForCount(b.audio, 2)
-    eq(b.calls[1].body.input, '紧急预警', 'H3 紧急插到最前播')
+    eq(b.calls[1]?.body?.input, '紧急预警', 'H3 紧急插到最前播')
     // 让紧急播完，并给「若例行二/三没被清空」留出一个真能发请求的窗口：
     // 不断言这一点的话，只把「清空」改坏会让队列多播两条，而断言永远等不到
     b.clk.advance(61_000)
@@ -571,7 +575,7 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
     b.clk.advance(61_000)
     enqueue({ text: '紧急预警', urgent: true })
     await waitForCount(b.audio, 2)
-    eq(b.calls[1].body.input, '紧急预警', 'H5 没有正在播的例行可打断时，紧急仍插到例行二前面')
+    eq(b.calls[1]?.body?.input, '紧急预警', 'H5 没有正在播的例行可打断时，紧急仍插到例行二前面')
     b.clk.advance(61_000)
     await finishItem(b, 1)
     await new Promise((r) => setTimeout(r, 20))
@@ -626,10 +630,10 @@ out('\nH. 打断：紧急插队打断例行，并清空队列')
     b.clk.advance(61_000)
     await finishItem(b, 0)
     await waitForCount(b.audio, 2)
-    eq(b.calls[1].body.input, '紧急四', 'H10 紧急即使不能打断，也排到排队的例行前面')
+    eq(b.calls[1]?.body?.input, '紧急四', 'H10 紧急即使不能打断，也排到排队的例行前面')
     await finishItem(b, 1)
     await waitForCount(b.audio, 3)
-    eq(b.calls[2].body.input, '例行二', 'H11 紧急播完后回到例行的原顺序')
+    eq(b.calls[2]?.body?.input, '例行二', 'H11 紧急播完后回到例行的原顺序')
     await finishItem(b, 2)
     await waitForCount(b.audio, 4)
     await finishItem(b, 3)
@@ -857,6 +861,119 @@ out('\nL. 一条播报抛错不能掐断整条队列')
     eq(outcome, 'resolved', 'L1 单条抛错不会让 flush 整个 reject')
     eq(b.calls.map((c) => c.body.input), ['乙'], 'L2 出错的那条被跳过，后面的照常播')
     ok(b.logs.has('单条播报失败'), 'L3 跳过有日志')
+  } finally {
+    await b.done()
+  }
+}
+
+out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
+
+// 为什么这一整节都要有：onTtsFailed 是设置页那句「服务当前不可达」的唯一来源
+// （design.md D2 的优雅降级）。它断了不会抛、不会红 —— 用户只是「没声音」，
+// 分不清是服务挂了还是自己关了开关。那正是 D2 要挡的静默失效。
+
+{
+  const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
+  const seen = []
+  const oks = []
+  try {
+    enqueue({ text: '甲', urgent: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsFailed: (r) => seen.push(r),
+      onTtsOk: () => oks.push(1)
+    })
+    eq(seen.length, 1, 'M1 网络层失败 → onTtsFailed 回调一次（带原因）')
+    ok(seen[0] !== '', 'M2 回调带的是非空原因，不是空串（设置页要显示「为什么」）')
+    eq(oks.length, 0, 'M3 失败了不许顺带报成功')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 这一条最容易写错：回退到系统语音**播出来了**，但 TTS 服务**仍然是不可达的**。
+  // 少回调一次，用户看到的却是「一切正常」—— 而下一次真正的新命中仍然会失败。
+  const b = await withBroadcast({ routes: () => ({ throw: 'fetch failed' }) })
+  const seen = []
+  try {
+    enqueue({ text: '甲', urgent: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: true,
+      onTtsFailed: (r) => seen.push(r)
+    })
+    eq(b.sys.spoken.length, 1, 'M4 前提：回退确实开口了')
+    eq(seen.length, 1, 'M5 回退成功**仍然**要报不可达（服务还是挂着，只是不再静默）')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  const b = await withBroadcast({ routes: () => ({ res: { ok: false, status: 401 } }) })
+  const seen = []
+  try {
+    enqueue({ text: '甲', urgent: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
+    eq(seen.length, 1, 'M6 401（不重试的那条）同样要报不可达 —— 用户换错了 token 就是这个现象')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  const oks = []
+  const seen = []
+  try {
+    enqueue({ text: '甲', urgent: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsOk: () => oks.push(1),
+      onTtsFailed: (r) => seen.push(r)
+    })
+    eq(oks.length, 1, 'M7 成功 → onTtsOk 回调（用来清掉那句「不可达」提示）')
+    eq(seen.length, 0, 'M8 成功时不该同时报失败')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 没配置 / 被闸门拦下：根本没联系过服务，谈不上「可达或不可达」。
+  // 报了反而会让设置页挂着一句用户看不懂的警告。
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  const seen = []
+  const oks = []
+  try {
+    enqueue({ text: '未配置', urgent: true })
+    await flush({
+      config: { ...DEFAULT_TTS_CONFIG, url: '' },
+      fallback: true,
+      onTtsFailed: (r) => seen.push(r),
+      onTtsOk: () => oks.push(1)
+    })
+    eq(seen.length, 0, 'M9 未配置 TTS → 不报不可达（那是用户还没填地址，不是服务挂了）')
+    eq(oks.length, 0, 'M10 未配置 TTS → 也不报成功')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 闸门拦下时同理：这一轮压根没发请求
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  const seen = []
+  try {
+    enqueue({ text: '甲', urgent: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
+    enqueue({ text: '乙', urgent: false })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
+    eq(b.calls.length, 1, 'M11 前提：第二条被分钟闸门拦下（没发请求）')
+    eq(seen.length, 0, 'M12 被闸门拦下 → 不报不可达（没联系过服务）')
   } finally {
     await b.done()
   }

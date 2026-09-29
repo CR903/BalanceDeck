@@ -155,11 +155,12 @@ Full key inventory:
 | Key | Encoded as | Note |
 |---|---|---|
 | `ui:petState` | `encodePetState` (`shared/pet.ts`) | versioned, migrates legacy ids |
-| `ui:pet` / `ui:alwaysOnTop` / `ui:voiceOn` | `'1'` / `'0'` | `ui:petRing` 已随用量环开关下线（键不再读写） |
-| `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:221`) |
-| `ui:voiceEvery` | `String(minutes)` | re-validated against a whitelist (`App.tsx:227`) |
-| `ui:hideBalance` | **`'1'` / `''`** | differs from the other six booleans — don't copy |
+| `ui:pet` / `ui:alwaysOnTop` | `'1'` / `'0'` | `ui:petRing` 已随用量环开关下线、`ui:voiceOn` 已随播报迁移下线（两者都**只读不写**） |
+| `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:423`) |
+| `ui:voiceGender` | `'female'` / `'male'` / `'any'` | whitelisted on load; the **only** system-voice preference still wired (fallback path) |
+| `ui:hideBalance` | **`'1'` / `''`** | differs from every other boolean — don't copy |
 | `ui:ttsOn` | `'1'` / `'0'` | replaces the retired `ui:voiceOn` (read on load for migration) |
+| `ui:ttsPreset` | preset id, `'mytts'` / `''` | `''` = 自定义服务 |
 | `ui:ttsConfig` | `JSON.stringify` | TTS service (url/voice/speed). **Never holds a token** |
 | `ui:ttsTriggers` / `ui:ttsTriggerOn` | `JSON.stringify` | 5 thresholds / their on-off flags, split for validation |
 | `ui:ttsHistory` | `JSON.stringify` | sampled snapshots, cap `ui:ttsHistoryCap` (default 100) |
@@ -169,6 +170,14 @@ Full key inventory:
 | `ui:cardWindow:<id>` | window name, e.g. `本周` | per-provider, read in `CardView` |
 | `skin` / `refreshInterval` | plain id / `'10'…'300'` | |
 | `interval:plan` | — | legacy read-only, migration at `SettingsView.tsx:331` |
+
+> `ui:voiceEvery` (旧「播报间隔」) 已随播报迁移**彻底下线**：不再读也不再写。设置页里那个
+> 下拉与 `ui:ttsRoutineEvery` 不是同一个东西 —— 别把旧键加回来「保持兼容」，它没有任何
+> 执行方，留着只会让用户以为设置生效了（`PetSection.tsx` 的注释记了同一次教训）。
+
+**Every key the broadcast feature writes must carry the `ui:` prefix** — the side effect below
+turns a non-`ui:` write into a full recollect. `test-structure.mjs` E8 parses the `setExtras`
+calls in `App.tsx` and fails on any key without the prefix, so a new `ui:tts*` key can't drift.
 
 **Writes have a side effect that depends on the prefix** — this is the part that surprises people:
 
@@ -186,33 +195,79 @@ non-`ui:` preference will therefore cause a network round-trip on every toggle.
 downgrade, so load sites clamp: `App.tsx:221` type-guards the muted list, `App.tsx:227`
 re-validates the interval against a whitelist.
 
+**⚠ `extras:get` returns `''` for a key that was never written** (`ipc.ts:198`:
+`out[k] = (await getExtra(k)) ?? ''`) — **not** `undefined`. So on the read side:
+
+- "never set" is `!v`, **not** `v == null` and **not** `typeof v === 'string'`. Both of those
+  were written in `App.tsx` and both silently never fired: the `ui:ttsPreset` default left
+  every fresh install in the custom-service branch (no URL → no broadcasts at all), and the
+  `ui:voiceOn` → `ui:ttsOn` migration was dead code, so users who had broadcasting enabled
+  lost it on upgrade.
+- Do not let a *stored* value double as the "unset" sentinel. The custom-service option uses
+  `value="custom"`, not `value=""` — with `''` a user who picks a custom endpoint is
+  indistinguishable from one who never chose, and gets flipped back on restart.
+- A controlled `<select>` falls back to the **first option** when no option matches its value,
+  so asserting `select.value` cannot detect this class of bug. Assert the branch that rendered.
+
+`test-alert-orchestration.mjs` L38 pins the first rule's blast radius (no pending keys in
+extras) and `--uitest`'s `vrs*` block pins the rest.
+
 ---
 
 ## Timers
 
-11 timers in the renderer. Period, owner and cleanup are in
+Timers in the renderer. Period, owner and cleanup are in
 [`hook-guidelines.md`](./hook-guidelines.md).
 
-Two of them have a **self-rescheduling contract**. The voice-alert one polls every
-`ALERT_TICK_MS` (30 s) rather than aiming at an exact 5-minute boundary — a repeat that
-fires 20 s early is harmless, whereas an exact schedule has to compensate for sleep/wake.
-Polling is idempotent: it goes through the same `evaluateAlerts` as the data-push effect, so
-both paths hit the same latch + pending gate and cannot double-broadcast.
-
-One has a **self-rescheduling contract** and is the only timer worth reading in full:
+**Three of them have a self-rescheduling contract** (re-arm inside the callback rather than
+`setInterval`), and all three are the broadcast timers. They are the ones worth reading in full,
+because the contract below only holds for a re-arming chain.
 
 ```tsx
-// src/renderer/src/App.tsx:279-307 (abridged)
-// 立即触发一次
-speakBalance()
-// 自重排定时器：只有开关或间隔变化才会走到这里
-const id = window.setInterval(() => speakBalance(), voiceEvery * 60 * 1000)
+// src/renderer/src/App.tsx:608-617 — 待确认轮询（重复提醒 + 倒计时共用这一条）
+const armAlertTimer = (): void => {
+  alertTimerRef.current = window.setTimeout(() => {
+    evaluateAlerts()
+    if (alertPendingRef.current.length > 0) setAlertNow(Date.now())
+    armAlertTimer()          // ← 自重排
+  }, ALERT_TICK_MS)          // 30s 轮询，不是精确的 5 分钟边界
+}
+armAlertTimer()
 ```
 
-"Immediately on every run + re-arm only on `[voiceOn, voiceEvery]`" is only safe because
-`speakBalance` reads the **ref mirror** rather than closing over live values
-(`App.tsx:78-84`). **Do not add a fourth dependency to that array** — it will fire the
-broadcast once per toggle.
+```tsx
+// src/renderer/src/App.tsx:639-645 — 定时兜底播报
+const scheduleNext = (): void => {
+  voiceTimerRef.current = window.setTimeout(() => { speakRoutine(); scheduleNext() },
+    ttsRoutineEvery * 60 * 1000)
+}
+```
+
+The alert tick **polls** every 30 s rather than aiming at an exact 5-minute boundary: a repeat
+that fires 20 s early is harmless, whereas an exact schedule would have to compensate for
+sleep/wake. Polling is idempotent — it goes through the same `evaluateAlerts` as the data-push
+effect, so both paths hit the same latch + pending gate and cannot double-broadcast. There is
+deliberately **no `speakBalance()`-style "fire immediately on every run"** any more: the trigger
+source is the collected data, not the clock.
+
+**The dependency-array contract, restated for the current code.** These chains are safe *only*
+because their callbacks read the `alertCtxRef` mirror rather than closing over live values.
+The chains that arm them have a deliberately tiny dependency list:
+
+| Effect | Dependencies | Why nothing more |
+|---|---|---|
+| data-push evaluate | `[ttsOn, state.snapshots]` | the trigger **is** the data |
+| pending poll | `[ttsOn]` | adding anything rebuilds the chain on every push, pushing the next repeat's baseline later |
+| routine timer | `[ttsOn, ttsRoutine, ttsRoutineEvery]` | these three genuinely change *when* the next fire is due |
+
+**Do not add a dependency to the pending-poll chain** (nor a third `useState` dependency to the
+data-push one beyond the data) without moving the new value into `alertCtxRef` first. The
+regression is not subtle — every toggle fires a broadcast — but it is *quiet*, and the old
+`speakBalance` design ("fire immediately on every run") made it look intentional.
+
+> Historic note: this section used to describe a `setInterval` + `speakBalance` + `voiceOn` /
+> `voiceEvery` shape. That code is gone (the broadcast moved to `ui:tts*` + the trigger engine);
+> the spec was updated when 09-29-tts-smart-broadcast landed, per its own design.md D7.
 
 ---
 

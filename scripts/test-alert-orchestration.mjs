@@ -24,6 +24,10 @@ const { evaluate, confirm, latestPending, pendingCountdown, REPEAT_MS, AUTO_CONF
   await loadTs('src/renderer/src/alertOrchestrate.ts')
 const { DEFAULT_TRIGGER_CONFIG, THRESHOLD_FIELD, checkTriggers } =
   await loadTs('src/renderer/src/smartBroadcast.ts')
+// 频率闸门住在另一个模块里。AC7 的「重复间隔 5 分钟」与闸门的「10 次/小时」是**两个
+// 模块各自的数字**，谁都不知道对方 —— 它们的相容性没有任何一层代码或测试看得见，
+// 所以这里把两个模块的数字放在一起验一次（唯一的跨模块不变量断言）。
+const { RATE_LIMIT } = await loadTs('src/renderer/src/speechOut.ts')
 
 let pass = 0
 let fail = 0
@@ -449,6 +453,53 @@ ok(
 const evalLines = evalBody == null ? 0 : evalBody.split('\n').length
 ok(evalLines > 0 && evalLines <= 20, `K11 evaluateAlerts 保持在 20 行以内（当前 ${evalLines} 行；抽离前是 37 行）`)
 
+// 「服务不可达」这条链：speechOut 的 onTtsFailed → App 的 setTtsUnreachable → 设置页的提示条。
+// 它断了不抛不红，用户只是"没声音"，分不清是服务挂了还是自己关了开关 —— 而那正是
+// design.md D2（优雅降级 + 提示，而不是静默失效）要挡的东西。行为那一半在
+// test-speech-out.mjs 的 M 段；这里盯的是**接线**。
+const vrsSrc = readFileSync(resolve(ROOT, 'src/renderer/src/VoiceReminderSection.tsx'), 'utf-8')
+ok(
+  /onTtsFailed:\s*\(reason\)\s*=>\s*\{[^}]*setTtsUnreachable\(true\)/s.test(appSrc) &&
+    /onTtsOk:\s*\(\)\s*=>\s*setTtsUnreachable\(false\)/.test(appSrc),
+  'K12 onTtsFailed / onTtsOk 真的接到了 setTtsUnreachable（失败置位、成功清位）'
+)
+ok(
+  /unreachable\s*&&\s*\(/.test(vrsSrc) && /vrs-warn/.test(vrsSrc) && /服务当前不可达/.test(vrsSrc),
+  'K13 unreachable 为真时设置页渲染出「服务当前不可达」提示（这条提示是 D2 唯一的用户可见信号）'
+)
+
+// 预设表与出厂默认必须一致：预设分支里音色**不显示**（只有只读端点），
+// 两者不一致 = 用户点一下预设就悄悄换了个音色，且界面上看不出来。
+// （放在 vrsSrc 声明之后 —— ⚠ 上面那条 K14 曾经写在它前面，TDZ ReferenceError 直接把
+//   整份报告打断，只看得到一个栈。这与 test-alert-orchestration 自己那段 null 安全的注释
+//   是同一条纪律：宁可断言报红，也不要让脚本抛异常中断。）
+const soSrc = readFileSync(resolve(ROOT, 'src/renderer/src/speechOut.ts'), 'utf-8')
+const presetVoice = (vrsSrc.match(/url:\s*'https:\/\/voice\.mytts[^']*',\s*\n(?:\s*\/\/[^\n]*\n)*\s*voice:\s*'([^']+)'/) || [])[1]
+ok(
+  presetVoice != null && new RegExp(`voice:\\s*'${presetVoice}'`).test(soSrc),
+  `K14 预设表的音色与 DEFAULT_TTS_CONFIG 一致（预设：${presetVoice || '未解析出'}；不一致的话选中预设会静默换音色）`
+)
+
+// `extras:get` 对缺失的键返回 `''`，**不可能**返回 null / undefined。所以「这个键配过吗」
+// 在这一层**只能**判 `!v` —— 判 `== null` / `typeof v === 'string'` 一定是错的，而且错得
+// 悄无声息：迁移逻辑不触发、新用户落在「自定义服务」（地址为空 → 整个播报不工作）。
+// 真实踩过两处，都在本文件的守卫之前就写好了。
+//
+// ⚠ 这是**静态门**，不是行为断言：真正的行为面在 --uitest 的 vrs* 段（那里能观察到
+//   渲染出来的分支），但迁移读侧没有行为断言 —— 老实记着，别把它当行为覆盖。
+const loadEffect = (() => {
+  const from = appSrc.indexOf('void window.api.getExtras(KEYS)')
+  if (from < 0) return null
+  const end = appSrc.indexOf("}, [])", from)
+  return end < 0 ? null : appSrc.slice(from, end)
+})()
+ok(loadEffect != null, 'K15a 前置：取得到 TTS 配置的加载 effect 源码（下面的负向断言不能空洞通过）')
+ok(
+  loadEffect != null && !/\[[^\]]*ui:tts[^\]]*\]\s*==\s*null/.test(loadEffect) &&
+    !/typeof\s+e\['ui:tts[^']*'\]\s*===\s*'string'/.test(loadEffect),
+  'K15 extras 读侧不用 null / undefined 判「键缺失」（extras:get 只给 \'\'；判错会让迁移与默认值静默失效）'
+)
+
 // ═══ L. 重复提醒直到确认（AC7）══════════════════════════════════════════════
 // 状态机：**播 → 未确认则按间隔重复 → 确认（或超窗 / 条件解除）→ 停止**。
 //
@@ -578,6 +629,34 @@ eq(cdOf(l3b, T0), AUTO_CONFIRM_MS / 1000, 'L41 倒计时从**首播**起算')
 eq(cdOf(l3b, T0 + REPEAT_MS), (AUTO_CONFIRM_MS - REPEAT_MS) / 1000, 'L42 重复之后按剩余窗口走（不是重新给 15 分钟）')
 eq(cdOf(l3b, T0 + AUTO_CONFIRM_MS), 0, 'L43 到点为 0')
 eq(cdOf(l3b, T0 + AUTO_CONFIRM_MS + 60_000), 0, 'L44 超时之后钳在 0，不出现负数')
+
+// ── 接缝：重复节奏 vs 频率闸门（跨模块，两边的数字谁都不知道对方）───────────
+//
+// 编排层答「该不该播」，speechOut 的闸门答「允不允许播」。两边的数字在**不同模块**里，
+// 没有任何一层代码看得见它们的相容性（重复走同一条 speakOut，闸门也在那里，但
+// 「重复 5 分钟一次」与「每小时最多 10 次」谁也没跟谁对过账）。
+//
+// 出问题时的症状特别安静：闸门把某次重复挡掉 → 编排照样推进 lastSpokenAt →
+// 倒计时照走、确认条照显，用户却**什么都听不到**。L33 只验了 1 分钟内不重复，
+// 没有验过「整段 AC7 周期不会被闸门吃光」。
+
+// 一个未确认批次在整个自动确认窗口内最多发出几次：首播 1 次 + 每个重复间隔 1 次
+const perBatch = 1 + Math.floor(AUTO_CONFIRM_MS / REPEAT_MS)
+ok(
+  REPEAT_MS >= RATE_LIMIT.MAX_PER_MINUTE * 60_000,
+  `L33b 重复间隔（${REPEAT_MS / 60_000} 分钟）≥ 分钟闸门（${RATE_LIMIT.MAX_PER_MINUTE} 次/分钟）：否则重复永远被闸门挡在门外`
+)
+ok(
+  perBatch <= RATE_LIMIT.MAX_PER_HOUR,
+  `L33c 单个未确认批次最多 ${perBatch} 次播报 ≤ 小时闸门 ${RATE_LIMIT.MAX_PER_HOUR} 次/小时（否则 AC7 会被静默吃光）`
+)
+// 同一时刻可能挂着几批？L22/L27 明确要求「余额预警」与「用量耗尽」各自成批、互不确认，
+// 所以至少要容得下 2 批不互相挤掉。这条是那两条的行为侧前提。
+const concurrentBatches = Math.floor(RATE_LIMIT.MAX_PER_HOUR / perBatch)
+ok(
+  concurrentBatches >= 2,
+  `L33d 小时闸门至少容得下 2 个并发待确认批次（实得 ${concurrentBatches}；L22/L27 要求两批各自独立重复）`
+)
 
 // ── 接线：轮询链 / 确认回调 / props ───────────────────────────────────────
 const alertEffectAt = appSrc.indexOf('const armAlertTimer')

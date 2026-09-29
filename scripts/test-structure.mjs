@@ -6,7 +6,8 @@
 // src/main/qa/ 之后入口只剩 411 行。这个文件把那次收口的成果变成可执行的约定：
 // 谁再把测试代码写回入口，`npm test` 就会红。
 //
-// 这里断言的是**结构**而非行为，所以只做便宜的静态检查（读文件，不启动 electron）。
+// 这里断言的是**结构与跨进程前提**而非行为，所以只做便宜的静态检查（读文件，不启动 electron）。
+// A–D 守「不许长回去」，E 守「播报链路的主进程前提不许被静默拆掉」。
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -316,6 +317,106 @@ const fbLayers = shadowLayers(fb['box-shadow'] || '')
 ok(
   fallbackBody != null && fbLayers.length > 0,
   `D6 inset-3d 球盘的立体感由 inset 阴影提供，box-shadow 至少 1 层（实际 ${fbLayers.length} 层）`
+)
+
+// ─── E. 语音播报链路的主进程前提（09-29-tts-smart-broadcast）────────────────
+//
+// 这四条**改坏了不会抛、不会红、界面上看不出任何异常** —— 它们各自只让「某次播报
+// 静默地没发生」，而那正是 TTS 这个功能最典型的失败形态。因此必须有守卫把它们钉住。
+//
+// 2026-09-29 集成复核实测：把这四条逐一破坏（见每条的「破坏即红」），**改动前全套件
+// 一个都不红**。「盲审 49 条断言全绿」那次的教训在跨进程这一层重演了一次：
+// 渲染层的套件再多，也照不到主进程的一个 webPreferences 字段上。
+
+// 剥掉注释再判：这几条判的是**生效配置**，不是「文件里出现过这个词」。
+// overlay.ts 的 webPreferences 上方就有 7 行解释为什么必须关节流，那段注释里
+// 「后台节流」「节流」都出现了 —— 裸 grep 门永远是绿的。
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+console.log('\nE. 语音播报链路的主进程前提')
+
+const overlaySrc = stripComments(read('src/main/overlay.ts'))
+ok(overlaySrc.length > 0, 'E0 前置：overlay.ts 读得到（下面的负向断言不能空洞通过）')
+ok(
+  /backgroundThrottling:\s*false/.test(overlaySrc),
+  'E1 no-background-throttling 悬浮窗关掉后台节流（否则 1 小时定时器被 Chromium 压成「一小时之后的某个时刻」，且完全静默）'
+)
+
+// autoplay 策略：Chromium 在浏览器进程初始化时读这批开关，ready 之后再 append 已经来不及
+const indexCode = stripComments(index)
+const autoplayAt = indexCode.indexOf("appendSwitch('autoplay-policy'")
+const readyAt = indexCode.indexOf('app.whenReady()')
+ok(autoplayAt >= 0, 'E2 autoplay-policy 开关存在（无人手势的 audio.play() 否则只是一次 promise rejection，不出声、查不出）')
+ok(
+  autoplayAt >= 0 && readyAt >= 0 && autoplayAt < readyAt,
+  `E2b autoplay-policy 开关在 app.whenReady() **之前**（实测 ${autoplayAt} vs ${readyAt}；晚一步就静默失效）`
+)
+
+// 密钥：必须走 keystore 的 items 命名空间（safeStorage 加密），⛔ 不能走 extras（明文）
+const ipcSrc = stripComments(read('src/main/ipc.ts'))
+/** 取 `ipcMain.handle('<channel>'` 起到该 handler 收尾 `\n  })` 为止的源码 */
+function handlerBody(src, channel) {
+  const from = src.indexOf(`ipcMain.handle('${channel}'`)
+  if (from < 0) return null
+  const end = src.indexOf('\n  })', from)
+  return end < 0 ? null : src.slice(from, end)
+}
+const setSecretBody = handlerBody(ipcSrc, 'tts:setSecret')
+const getSecretBody = handlerBody(ipcSrc, 'tts:getSecret')
+ok(setSecretBody != null, 'E3a 取得到 tts:setSecret 的 handler')
+ok(getSecretBody != null, 'E3b 取得到 tts:getSecret 的 handler')
+ok(
+  setSecretBody != null && /\bsetKey\(/.test(setSecretBody),
+  'E3 tts:setSecret 走 setKey（items · safeStorage 加密落盘）'
+)
+ok(
+  setSecretBody != null && !/\bsetExtra\(/.test(setSecretBody),
+  'E3b tts:setSecret 不碰 setExtra（extras 是明文 —— 破坏即红：把 setKey 改成 setExtra）'
+)
+ok(
+  getSecretBody != null && /\bgetKey\(/.test(getSecretBody) && !/\bgetExtra\(/.test(getSecretBody),
+  'E3c tts:getSecret 走 getKey（与 setKey 同一命名空间；混用两个命名空间是静默失败，恒为 null）'
+)
+ok(
+  /function ttsSecretKey\(/.test(ipcSrc) && /\^\[A-Za-z0-9_-\]\{1,64\}\$/.test(ipcSrc),
+  'E4 密钥键名拼装前校验 id（冒号会撞上 `tts:secret:` 命名空间前缀）'
+)
+
+// preload 必须走**专用**通道，不能顺手复用 getExtras/setExtras（那两个只碰 extras）
+// 写侧带返回类型标注（`(id: string, value: string): Promise<void> =>`），所以箭头前用 `[^=]*`
+// 而不是 `\([^)]*\)` —— 后者在 `): Promise<void>` 这个 `: Promise` 处就断了。
+const preloadSrc = read('src/preload/index.ts')
+ok(
+  /setTtsSecret:[^=]*=>[\s\S]{0,120}?invoke\('tts:setSecret'/.test(preloadSrc) &&
+    /getTtsSecret:[^=]*=>[\s\S]{0,120}?invoke\('tts:getSecret'/.test(preloadSrc),
+  'E5 preload 暴露专用的 setTtsSecret / getTtsSecret（不经过 getExtras / setExtras）'
+)
+
+// 渲染层：token 明文只许待在 ref 里，绝不能进 extras，也绝不能进 React state
+const appSrc2 = read('src/renderer/src/App.tsx')
+const extrasWrites = appSrc2.match(/setExtras\(\s*\{[^}]*\}/g) || []
+ok(extrasWrites.length > 0, 'E6a 前置：App 里确实有 setExtras 调用（下面的负向断言不能空洞通过）')
+ok(
+  !extrasWrites.some((c) => /ttsSecret|ttsToken|token|secret/i.test(c)),
+  'E6 TTS token 不经 setExtras 落盘（破坏即红：把 setTtsSecret 换成 setExtras）'
+)
+ok(
+  /const ttsSecretRef = useRef\(''\)/.test(appSrc2) && /ttsSecretRef\.current = /.test(appSrc2),
+  'E7 token 明文只存 ref（不进 useState —— state 会跟着 devtools / 错误上报一起走）'
+)
+ok(
+  /setTtsHasSecret\(!!s\)|setTtsHasSecret\(!!v\)/.test(appSrc2),
+  'E7b state 里只有「有没有」这一个布尔，明文不进 state'
+)
+
+// D6：ipc.ts:191-193 —— 非 `ui:` 前缀的 extras 写入会触发一次全量重新采集。
+// 播报这一族键（ui:tts*）全部是界面偏好，少一个前缀就等于每次切开关发一轮网络请求。
+const appExtrasKeys = [...appSrc2.matchAll(/setExtras\(\s*\{\s*'([^']+)'/g)].map((m) => m[1])
+const nonUi = appExtrasKeys.filter((k) => !k.startsWith('ui:'))
+ok(appExtrasKeys.length > 0, 'E8a 前置：解析出了 App 写的 extras 键（下面的负向断言不能空洞通过）')
+ok(
+  nonUi.length === 0,
+  `E8 extras 键全部 ui: 前缀（非 ui: 的写入会触发全量重新采集，越界键：${nonUi.join(', ') || '无'}）`
 )
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

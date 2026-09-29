@@ -4,7 +4,7 @@
 > `glob '{.eslintrc*,eslint.config.*,.prettierrc*,prettier.config.*,biome.json,.editorconfig,oxlint*}'`
 > → no files. No husky, no lint-staged, no `.github/`.
 >
-> The quality gate is **`tsc` + 10 hand-rolled assertion scripts + a real-Electron QA harness.**
+> The quality gate is **`tsc` + 13 hand-rolled assertion scripts + a real-Electron QA harness.**
 > Formatting is therefore *de facto*, not enforced: 2-space indent, **no semicolons**, single
 > quotes, ~110–120 col soft width, `// ─── section ───` banner comments with box-drawing
 > rules, Chinese comments and Chinese commit messages.
@@ -197,12 +197,12 @@ percent → ssr → quality → tray → pet → gesture → adapters → struct
 | `test-pet.mjs` | `loadTs` | identity model, serialization, migration |
 | `test-gesture.mjs` | `loadTs` ×2 + `fs` | clip catalog consistency, scheduling |
 | `test-adapters.mjs` | `loadTs` ×12 | golden samples A–N, production net R, fan-out S, store T, parity U |
-| `test-structure.mjs` | static file reads | 28 architectural guards |
+| `test-structure.mjs` | static file reads | 45 architectural guards (A–E: entry / qa / ball surface / **broadcast main-process preconditions**) |
 | `test-read-model.mjs` | `loadTs` ×2 | read model + formatting |
-| `test-voice.mjs` | `loadTs` | system-voice gender matching (was an inline copy; it hid a real `Siri 声音 1` mismatch) |
-| `test-speech-out.mjs` | `loadTs` | queue / interrupt / rate gate / TTS-vs-fallback |
+| `test-voice.mjs` | `loadTs` | system-voice gender matching (was an inline copy; it hid a real `Siri 声音 1` mismatch — and later, see below, a *wrong* fact) |
+| `test-speech-out.mjs` | `loadTs` | queue / interrupt / rate gate / TTS-vs-fallback / the "service unreachable" signal |
 | `test-trigger-engine.mjs` | `loadTs` ×2 | 5 trigger scenarios, grading, merge/dedupe |
-| `test-alert-orchestration.mjs` | `loadTs` ×3 | **calling order** into the trigger engine (see below) |
+| `test-alert-orchestration.mjs` | `loadTs` ×3 | **calling order** into the trigger engine + the repeat-until-confirmed state machine |
 
 **The script convention** (uniform across all): a `//` header stating
 `用法：node scripts/<name>.mjs` plus what it covers; then `let pass = 0; let fail = 0`; then
@@ -266,14 +266,21 @@ Rules that make this boundary work (each was learned the hard way):
 
 **Testing it** needs no new dependency: `loadTs` the pure module the same way as any other.
 
-**Verify the guard can fail** — inject all four historical bugs and confirm each goes red:
+**Verify the guard can fail** — inject all four historical bugs and confirm each goes red.
+Red sets are the **measured** numbers (2026-09-29 re-measured after the AC7 batch landed, so
+they moved from the original figures — record what you measure, not what you remember):
 
-| Injection | Red assertions |
+| Injection | Red assertions (measured) |
 |---|---|
-| feed `checkTriggers` the already-appended history | 14 |
+| feed `checkTriggers` the already-appended history | 10 |
 | latch `hits` instead of `speakable` | 2 |
-| drop `perProvider` | 4 |
-| remove latching entirely | 4 |
+| drop `perProvider` in the engine | 4 (orchestration) + 1 (engine) |
+| remove latching entirely | 20 |
+| `AUTO_CONFIRM_MS` = 1 min | 23 |
+| `REPEAT_MS` = 1 min | 6 |
+| drop a fourth dependency on the broadcast timer | 1 |
+| `RATE_LIMIT.MAX_PER_MINUTE` = 99 | 7 (speech-out) + 1 (orchestration) |
+| `RATE_LIMIT.MAX_PER_HOUR` = 2 | 2 (orchestration) |
 
 ### Pattern: a repeat-until-confirmed window must outlast the repeat interval
 
@@ -327,8 +334,93 @@ uses `lastIndexOf`. Structural JSX assertions are the most fragile guards in thi
 prefer behavioural ones, and re-verify any you add by mutating the code.
 
 
-### Don't: signal "no broadcast" with the same value as "no change"
+### Pattern: loading the real source cannot catch a wrong *fact*
 
+**Problem.** `voice.ts`'s `voiceGender` classified the macOS Chinese voice **Yu-shu** as male.
+It isn't — Apple's own voice bundle is `com.apple.ttsbundle.siri_**female**_zh-CN_compact`.
+`test-voice.mjs` asserted `Yu-Shu → male`, and the *same subagent* wrote both. Loading the real
+module (the rule this file otherwise insists on) therefore passed, and the reverse-verification
+step passed too: mutating the keyword table made the suite go red, so the guard "had teeth".
+
+The guard did have teeth. It was guarding a **false belief**.
+
+**Why it's bad:** a user who picks 男声 for the system-voice fallback on macOS gets a female
+voice — exactly the class of bug the whole `voiceGender` function exists to prevent. And the
+wider keywords that made it worse (`yu`, `shu`) then hit the prefix trap from the other side:
+`"yunxi"` is a substring of `"yunxia"`, and **Yunxia is female**.
+
+**Rule:** a guard proves the *code* matches the *test*. Only a lookup against the real system
+proves either matches the *world*. When a test's expected value encodes an external fact, cite
+where that fact came from — in the fixture, next to the value.
+
+**Guard it:** the fix is a *negative* assertion about a name that must NOT be claimed, plus a
+word-boundary matcher instead of a prefix:
+
+```js
+eq(voiceGender({ name: 'Yu-Shu', lang: 'zh-CN' }), 'female', '…（siri_FEMALE_zh-CN；曾错判成 male）')
+eq(voiceGender({ name: 'Microsoft Yunxia', lang: 'zh-CN' }), 'unknown', '不能因 "yun" 判成男声')
+```
+
+And make the *un*helpful direction the tested one: a `pickVoice` assertion over a **reversed**
+voice list, so "the fixture happened to be ordered favourably" stops counting as a pass.
+
+**Check the real thing when you can.** `say -v '?'` on the build machine lists the installed
+voices; that is a mechanism, not a memory. The corrected table cites both it and the bundle id.
+
+
+### Pattern: an `extras` read cannot tell "absent" from "empty"
+
+**Problem.** `extras:get` fills in `''` for keys that were never written
+(`out[k] = (await getExtra(k)) ?? ''`, `ipc.ts:198`). Two broadcast settings tested for absence
+with `typeof v === 'string'` / `v == null`, and both silently never fired:
+
+- `setTtsPreset(e['ui:ttsPreset'] === '' ? … : 'mytts')` never chose the free preset, so a
+  **fresh install landed in the custom-service branch with an empty URL** — no service
+  configured, so nothing ever broadcast (AC1/AC2/AC3 dead on day one).
+- `e['ui:ttsOn'] == null && legacyOn` was never true, so the `ui:voiceOn` → `ui:ttsOn`
+  migration was **dead code**: users who had broadcasting on lost it on upgrade.
+
+**Rule:** read absence as falsy, and never let a stored value *be* the sentinel that means
+"unset". The second half is the subtler one: the custom-service option used `value=""`, so
+choosing it wrote `''` — indistinguishable from never-chosen, and a user who picked a custom
+endpoint got flipped back to the preset on restart. Give it a real id (`'custom'`).
+
+**Guard it.** This class of bug is invisible to the pure-function suites — it lives in an
+`extras` round trip through a real window. `--uitest` covers it:
+
+```js
+// the branch that actually rendered, not the control's value — see the <select> note below
+r.vrsEndpoint = (await exec("!!document.querySelector('.vrs-endpoint')?.value?.includes('mytts')")) ? 'ok' : 'fail:no-endpoint'
+```
+
+Verified by reverting the fix: `vrsEndpoint` goes red, nothing else does.
+
+**Problem.** The repeat-until-confirmed cadence lives in `alertOrchestrate.ts` (`REPEAT_MS =
+5min`, `AUTO_CONFIRM_MS = 15min`); the app-level rate cap lives in `speechOut.ts` (`1/min`,
+`10/hour`). The repeat path deliberately reuses the same `speakOut` exit, so **neither module
+can see the other's numbers** — and no test compared them either.
+
+The failure this would produce is silent in a specific way: the hourly cap swallows a repeat →
+the orchestration still advances `lastSpokenAt` → the countdown keeps ticking and the confirm
+bar keeps showing, but the user hears nothing. Nothing throws; the alert just "stops working".
+
+**Rule:** when feature A's cadence crosses a budget enforced by feature B, assert the
+arithmetic **in one test that loads both modules**. This is the only cross-module invariant
+assertion in the repo, and it exists because the two files have no shared import.
+
+```js
+// scripts/test-alert-orchestration.mjs — L33b…L33d
+const perBatch = 1 + Math.floor(AUTO_CONFIRM_MS / REPEAT_MS)   // 一个未确认批次最多播几次
+ok(REPEAT_MS >= RATE_LIMIT.MAX_PER_MINUTE * 60_000, …)
+ok(perBatch <= RATE_LIMIT.MAX_PER_HOUR, …)
+ok(Math.floor(RATE_LIMIT.MAX_PER_HOUR / perBatch) >= 2, …)      // AC6 要求两批能并存
+```
+
+The `>= 2` is the load-bearing one: the behavioural assertions (L22/L27) prove two batches are
+*independent*, and this proves they also *fit* in the budget. Neither alone is enough.
+
+
+### Don't: signal "no broadcast" with the same value as "no change"
 **Problem.** A single `null` return for both "the whole round is a no-op" and "there is
 nothing to say this round" makes the caller skip history and latch updates in the second case
 too.
@@ -340,7 +432,7 @@ silently never fires — and no assertion fails, because every individual step i
 "changed, but nothing to say" (and the caller still persists history + latch).
 
 
-### `test-structure.mjs` — the architectural guard (28 assertions, pure static)
+### `test-structure.mjs` — the architectural guard (45 assertions, pure static)
 
 ```js
 // :35-38
@@ -394,7 +486,7 @@ not the signal** (`qa/modes.ts:14-15`: "UI 断言以 JSON 打到 stdout，**不�
 | Command | Handler | Env vars |
 |---|---|---|
 | `npm run smoke` | `qa/modes.ts:49` `runSmoke` | `SMOKE_WAIT_MS` (6000), `BD_TRACE` |
-| `npm run uitest` | `qa/uitest.ts` — 109 assertions (2026-09-28) | `BD_TRACE`, `BALANCEDECK_AUTOSTART_DIR` (forced to a temp dir) |
+| `npm run uitest` | `qa/uitest.ts` — 119 ok / 135 keys (2026-09-29, +23 for the voice-reminder settings section) | `BD_TRACE`, `BALANCEDECK_AUTOSTART_DIR` (forced to a temp dir) |
 | `npm run shots` | `qa/shots.ts` → `/tmp/balancedeck-shots/` | none |
 | `npm run details:test` | `qa/modes.ts:119` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_COOKIE` |
 | `--ballshot` (direct) | `qa/ballshot.ts` | `BD_PET`, `BD_PET_ID`, `BD_PETS`, `BD_FAKE_DATA`, `BD_SKIP_COLLAPSE`, `BD_ONLY`, `BD_TOGGLE`, `BD_ISOLATE`, `BD_SETTINGS`, `BD_SKINS`, `BD_DEBUG_RING` |
@@ -405,11 +497,33 @@ Parse uitest output by counting `"ok` and grepping `fail`; do **not** trust `$?`
 > 判据是「**键数齐全 + `execErrors` 已打印**」，随后手动杀进程；**既不许把挂起当失败，
 > 也不许把这一轮丢掉不报**。`$?` 不可信，这条在挂起时尤其成立。
 
+**`petFigureUnchanged` 在 DPR=1 的机器上必然红，这不是回归。** 它的 `FIG_BASE` 记的是
+`canvas: [426, 586, 213, 293]`（`capturePage` 风格的 2× 设备像素）；DPR=1 的机器上读回来是
+`[213, 293, 213, 293]`，于是逐位比对失配。诊断时要先看**是哪几个字段**不同 —— 十个字段里
+只有 canvas 变了就说明是 DPR，不是代码。别去「修」它：这条断言的整个价值就在于逐位钉死。
+
 **Locating controls in `--uitest` must be by class name, never by option value.** Settings has
 several `<select>`s and the "播报间隔" one also has an option valued `10`, so a
 "first select with an option `10`" selector kept mutating the voice interval and reporting
 `intervalSaved: fail` for weeks while the product was fine (`uitest.ts:247-251`, fixed in
 `e7d782b`). **Add a class when you need a hook; there is no attribute-based selector layer.**
+
+The same collision came back in another shape when the voice section landed: the retired
+`.voice-interval` disappeared and `.vrs-routine-interval` (values 5/10/…/60) took its place
+in front of `.refresh-interval`. The *fix* was not needed, the *selector* was — and the comment
+at `uitest.ts:470-473` records that the culprit changed identity.
+
+**A controlled `<select>` hides "no option matches its value".** With `value=''` and no
+`<option value=''>`, the DOM silently falls back to the first option, so `s.value` reads back
+the *first* option. An assertion on `select.value` therefore stays **green** while the component
+is rendering a different branch than you think — this cost a real bug a round of review
+(`vrsPreset` green, `vrsEndpoint` red). **Assert the branch that got rendered, not the
+control's value.**
+
+**`executeJavaScript` is not a module: top-level `await` throws.** A probe written as
+`JSON.stringify(await window.api.getExtras([...]))` fails with `Script failed to execute`, which
+surfaces only in the aggregate `execErrors` field — every other assertion in the run still
+reports `ok`, so it reads as a flake. Use `.then(...)` and let `exec` await the promise.
 
 ### Proving an assertion can fail — break-once, with an exact red set
 

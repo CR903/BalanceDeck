@@ -19,12 +19,14 @@ import {
 // design.md（D1 端点 / D6 extras 键表）。
 //
 // ⚠ class 约定：本分区里**每个 select 都有独立 class**（vrs-preset / vrs-text-format /
-// vrs-routine-interval），每个数字输入也是（vrs-threshold / vrs-override / vrs-speed /
-// vrs-history-cap）。`.voice-interval` 与 `.refresh-interval` 都含 option value="10"，
+// vrs-routine-interval），每个开关与数字输入也是（vrs-power / vrs-threshold / vrs-override /
+// vrs-speed / vrs-history-cap）。`.voice-interval` 与 `.refresh-interval` 都含 option value="10"，
 // 2026-09-26 踩过「第一个含某 option 的 select」定位抓错（qa/uitest.ts:470-472）。
 // 其中 vrs-preset / vrs-url / vrs-voice / vrs-secret / vrs-endpoint / vrs-text-format /
 // vrs-routine-interval 在 skins.css 里**没有规则** —— 外观由 .field 里的既有规则给，
 // 这些 class 是给 --uitest 用的定位钩子（同 refresh-interval 的性质）。
+// vrs-power 之所以必须有：智能播报开关与分区里另外 6 个开关共用 `.switch`，
+// 没有专属 class 时只能靠「第几个」定位，而开关数量一改定位就悄悄指向别人。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── TTS 服务预设（仅免费服务；付费服务不在 Out of Scope 之外的任何承诺里）────────
@@ -42,18 +44,42 @@ const TTS_PRESETS: Record<TtsPresetId, TtsPreset> = {
   mytts: {
     label: '免费 · Edge TTS（中文音色）',
     url: 'https://voice.mytts.ccwu.cc/v1/audio/speech',
-    voice: 'zh-CN-XiaoxiaoNeural'
+    // ⚠ 必须与 speechOut 的 DEFAULT_TTS_CONFIG.voice **一致**（本表是预设的唯一定义处）。
+    //   不一致的话，「选中这个预设」会顺带把音色从出厂默认换成另一个，用户没有任何提示 ——
+    //   而预设分支里音色是**不显示**的（只有只读端点），那次切换等于偷偷换了个人在说话。
+    voice: 'zh-CN-YunxiNeural'
   }
 }
 
 const TTS_PRESET_IDS: TtsPresetId[] = ['mytts']
 
-/** 下拉里的「自定义服务」选项值：空串 = 不匹配任何预设 */
-const TTS_CUSTOM = ''
+/**
+ * 下拉里「自定义服务」那一项的 value。
+ *
+ * ⚠ 必须是**非空**的稳定标识，不能是 `''`：`extras:get` 对**缺失的键**也返回 `''`
+ *   （ipc.ts:198），所以拿 `''` 当「自定义」的值，用户一旦选了就再也存不回来 ——
+ *   重启时读到的 `''` 与「没设过」完全同形，`setTtsPreset(raw || 'mytts')` 会把
+ *   他翻回免费预设，而他的自定义地址还留在 `ui:ttsConfig.url` 里被静默使用。
+ *   用一个显式的 `'custom'`，「自定义」与「没配过」才是两种状态。
+ */
+const TTS_CUSTOM = 'custom'
 
 function ttsPreset(id: string): TtsPreset | null {
+  // TTS_CUSTOM 不在表里，所以「自定义服务」天然落在这条的 else 上
   if (!Object.hasOwn(TTS_PRESETS, id)) return null
   return TTS_PRESETS[id as TtsPresetId]
+}
+
+/**
+ * 预设对应的服务配置；非预设 id（自定义）返回 null。
+ *
+ * 导出给 App 侧：切到预设时**必须**把 url/voice 一起写进 `ui:ttsConfig`。否则界面上的
+ * 只读端点（读的是本表）与真正发请求用的 `ui:ttsConfig.url` 会各说各话 —— 用户在
+ * 「预设 / 自定义」之间来回切一次，就出现「界面写着免费服务，请求打向自定义地址」。
+ */
+export function presetConfig(id: string): { url: string; voice: string } | null {
+  const p = ttsPreset(id)
+  return p ? { url: p.url, voice: p.voice } : null
 }
 
 // ─── 触发场景 ─────────────────────────────────────────────────────────────────
@@ -356,7 +382,7 @@ export function VoiceReminderSection({
           </span>
           <button
             type="button"
-            className={'switch' + (ttsOn ? ' on' : '')}
+            className={'switch vrs-power' + (ttsOn ? ' on' : '')}
             title={ttsOn ? '关闭后不再播报' : '开启后按触发条件播报余额与用量'}
             onClick={() => onToggleTts(!ttsOn)}
           >

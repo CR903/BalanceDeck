@@ -3,6 +3,7 @@ import type { AppState, ProviderSnapshot } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
+import { presetConfig } from './VoiceReminderSection'
 import { PetBall } from './PetBall'
 import { renderTrayIcon } from './ProviderMark'
 import {
@@ -278,10 +279,18 @@ export default function App(): React.JSX.Element {
       'ui:ttsRoutineEvery', 'ui:ttsHistoryCap', 'ui:ttsHistory', 'ui:voiceOn'
     ]
     void window.api.getExtras(KEYS).then((e) => {
-      // 旧版 ui:voiceOn 迁移：播报开关从「系统语音」平移到「语音提醒」，不丢用户既有配置
-      const legacyOn = e['ui:voiceOn'] === '1'
-      setTtsOn(e['ui:ttsOn'] === '1' || (e['ui:ttsOn'] == null && legacyOn))
-      setTtsPreset(typeof e['ui:ttsPreset'] === 'string' ? e['ui:ttsPreset'] : 'mytts')
+      // ⚠ `extras:get` 对**不存在的键**返回 `''`（`out[k] = getExtra(k) ?? ''`，ipc.ts:198），
+      //   不是 undefined。所以「键缺失」只能判 `!v`，**判 `v == null` 永远为假** ——
+      //   本来就是这么写的，于是下面两条都静默失效过（新用户落在自定义服务、迁移永不触发）。
+      const raw = (k: string): string => e[k] ?? ''
+
+      // 旧版 ui:voiceOn 迁移：播报开关从「系统语音」平移到「语音提醒」，不丢用户既有配置。
+      // 判据：ui:ttsOn 明确写过就以它为准（`'0'` = 用户主动关了，不许被旧键翻回开）；
+      // 没写过（''）才回落到旧键。
+      const legacyOn = raw('ui:voiceOn') === '1'
+      setTtsOn(raw('ui:ttsOn') === '1' || (raw('ui:ttsOn') !== '0' && legacyOn))
+      // 预设同理：缺省落在免费服务上，而不是「自定义」（自定义下地址是空的，等于没配服务 → 不播报）
+      setTtsPreset(raw('ui:ttsPreset') || 'mytts')
 
       try {
         const c = JSON.parse(e['ui:ttsConfig'] || '{}') as Partial<TtsConfig>
@@ -824,6 +833,13 @@ export default function App(): React.JSX.Element {
             onChangePreset={(id) => {
               setTtsPreset(id)
               void window.api.setExtras({ 'ui:ttsPreset': id })
+              // 切到预设时把 url/voice 一并落进 ui:ttsConfig —— 预设分支里界面显示的是
+              // 只读端点（读自预设表），而真正发请求用的是 ui:ttsConfig.url。不同步的话，
+              // 用户在「预设 / 自定义」之间来回切一次，界面写着免费服务、请求却打向他
+              // 之前填的自定义地址，且没有任何提示。
+              // 切到「自定义服务」时**不动**配置：那三项本来就是用户自己填的。
+              const p = presetConfig(id)
+              if (p) persistConfig({ ...ttsConfig, url: p.url, voice: p.voice })
             }}
             ttsUrl={ttsConfig.url}
             onChangeUrl={(url) => persistConfig({ ...ttsConfig, url })}

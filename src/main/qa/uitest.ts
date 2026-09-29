@@ -491,6 +491,147 @@ export async function runUiTest(
   await setRefreshInterval('60')
   await sleep(600)
   r.settingsSave = consoleErrors.length === 0 ? 'ok' : `console-errors:${consoleErrors.length}`
+
+  // ── 「语音提醒」分区（09-29-tts-smart-broadcast）─────────────────────────
+  //
+  // 为什么这一段必须有：整个语音提醒功能此前**一条 UI 断言都没有**。单元套件
+  // （speech-out / trigger-engine / alert-orchestration）全是纯函数，测不到「设置页上
+  // 真的有这些控件、改了真的落盘」。而 AC2（配置界面）与 AC5（间隔可调）恰恰是**界面**
+  // 层面的验收标准 —— 上一轮的实现把它们判成「已完成」，依据只有「代码里写了」。
+  //
+  // ⚠ 一律按 class 定位，绝不按「第几个 select」：设置页里有好几个 <select>，
+  //   而 .refresh-interval 与 .vrs-routine-interval 的 option 里有相同的值（10/30/60）——
+  //   2026-09-26 实测踩过，那时挡在前面的是已下线的 .voice-interval，**冲突源换成了
+  //   .vrs-routine-interval，问题原样复发**。
+  const vrsSelect = (sel: string, value: string) =>
+    exec(`(()=>{
+      const el=document.querySelector(${JSON.stringify(sel)})
+      if(!el) return 'no-select'
+      const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
+      setter.call(el,${JSON.stringify(value)})
+      el.dispatchEvent(new Event('change',{bubbles:true}))
+      return 'set'
+    })()`)
+
+  // 分区标题常在（不受总开关控制）
+  r.vrsSection =
+    (await exec("[...document.querySelectorAll('.section-title')].some(e=>e.textContent==='语音提醒')"))
+      ? 'ok'
+      : 'fail:no-section-title'
+  // 总开关关着时，**整块配置都不该渲染**（默认关 = 默认不发声、不发请求）
+  r.vrsHiddenWhenOff = (await exec("!!document.querySelector('.vrs-preset') || !!document.querySelector('.vrs-power')?.classList.contains('on')"))
+    ? 'fail:shown-while-off'
+    : 'ok'
+  // 开 → 配置区出现，且总开关落盘 ui:ttsOn
+  await exec("document.querySelector('.vrs-power')?.click()")
+  await sleep(700)
+  r.vrsPowerOn = (await exec("!!document.querySelector('.vrs-preset') && !!document.querySelector('.vrs-threshold')"))
+    ? 'ok'
+    : 'fail:no-controls'
+  r.vrsPowerSaved =
+    (await exec("window.api.getExtras(['ui:ttsOn']).then(e=>e['ui:ttsOn']==='1')")) === true
+      ? 'ok'
+      : 'fail:not-saved'
+
+  // AC2：预设下拉给出「免费服务」与「自定义服务」两项。
+  //
+  // ⚠ 这条**测不出**「新用户默认落在自定义」那个 bug，实测过：受控 <select> 的 value 在
+  //   没有任何 option 匹配时会被浏览器**回退到第一项**，于是 s.value 照样是 'mytts'，
+  //   断言绿着，而组件其实已经走自定义分支了。真正抓住它的是下一条 vrsEndpoint ——
+  //   读的是**渲染出来的分支**（预设分支才有只读端点），不受 value 回退影响。
+  //   留这条在这儿是为了钉住「选项集合 + 自定义项的哨兵值」，那是 vrsEndpoint 管不到的。
+  r.vrsPreset = String(
+    await exec(`(()=>{const s=document.querySelector('.vrs-preset')
+      return s ? [...s.options].map(o=>o.value).join('|')+'@'+s.value : 'no-select'})()`)
+  )
+  r.vrsPreset = r.vrsPreset === 'mytts|custom@mytts' ? 'ok' : `fail:${r.vrsPreset}`
+  // 新用户（没有 ui:ttsPreset）必须**默认落在免费服务**上：落在「自定义」的话地址是空的，
+  // 等于没配 TTS，播报整体不工作（AC3 的反面）。反向验证实测：把 App 里的默认值改回
+  // `typeof e['ui:ttsPreset'] === 'string' ? … : 'mytts'` 只有这一条变红。
+  r.vrsEndpoint = (await exec("!!document.querySelector('.vrs-endpoint')?.value?.includes('mytts')"))
+    ? 'ok'
+    : 'fail:no-endpoint'
+  // 切到「自定义服务」→ 可编辑的地址 / 音色 / 语速三项出现
+  r.vrsPresetSet = String(await vrsSelect('.vrs-preset', 'custom'))
+  await sleep(600)
+  r.vrsCustom = (await exec("!!document.querySelector('.vrs-url') && !!document.querySelector('.vrs-voice') && !!document.querySelector('.vrs-speed')"))
+    ? 'ok'
+    : 'fail:no-custom-fields'
+  r.vrsPresetSaved =
+    (await exec("window.api.getExtras(['ui:ttsPreset']).then(e=>e['ui:ttsPreset']==='custom')")) === true
+      ? 'ok'
+      : 'fail:not-saved'
+  // 自定义模式下**不能**把 token 写进 extras（密钥只走主进程加密 IPC）。
+  // ⚠ 写法：executeJavaScript 不是模块，顶层 await 会直接 "Script failed to execute"。
+  //   一律用 .then() 把 promise 化掉，再由 exec 自己 await。
+  r.vrsSecretNoExtras = String(
+    await exec(
+      "window.api.getExtras(['ui:ttsSecret','ui:ttsToken']).then(e=>e['ui:ttsSecret']+'/'+e['ui:ttsToken'])"
+    )
+  )
+  r.vrsSecretNoExtras = r.vrsSecretNoExtras === '/' ? 'ok' : `fail:extras-holds=${r.vrsSecretNoExtras}`
+  // 切回预设必须**同时**把 url 写进 ui:ttsConfig（否则界面显示的端点与真正发请求的地址不一致）
+  r.vrsPresetBack = String(await vrsSelect('.vrs-preset', 'mytts'))
+  await sleep(600)
+  r.vrsPresetUrlSynced =
+    (await exec(
+      "window.api.getExtras(['ui:ttsConfig']).then(e=>(JSON.parse(e['ui:ttsConfig']||'{}').url||'').includes('mytts'))"
+    )) === true
+      ? 'ok'
+      : 'fail:url-not-synced'
+
+  // 5 个触发场景的阈值输入都在，且带 data-trigger 供定位
+  r.vrsTriggers = String(
+    await exec(`(()=>{const n=document.querySelectorAll('.vrs-threshold[data-trigger]').length
+      return [...document.querySelectorAll('.vrs-threshold')].map(i=>i.dataset.trigger||'?').join('|')+'/n='+n})()`)
+  )
+  r.vrsTriggers =
+    r.vrsTriggers === 'balance|fluctuation|exhaustion|idle|abnormal/n=5' ? 'ok' : `fail:${r.vrsTriggers}`
+
+  // 播报内容格式（简洁 / 详细）
+  r.vrsFormatSet = String(await vrsSelect('.vrs-text-format', 'detailed'))
+  await sleep(500)
+  r.vrsFormatSaved =
+    (await exec("window.api.getExtras(['ui:ttsTextFormat']).then(e=>e['ui:ttsTextFormat']==='detailed')")) === true
+      ? 'ok'
+      : 'fail:not-saved'
+
+  // AC5：兜底间隔**默认不渲染**（定时兜底默认关），打开开关后才出现，且档位含 60（默认 1 小时）
+  r.vrsRoutineHidden = (await exec("!!document.querySelector('.vrs-routine-interval')")) ? 'fail:shown-while-off' : 'ok'
+  await exec(`(()=>{const rows=[...document.querySelectorAll('.vrs-sec .enable-row')]
+    rows.find(x=>/定时兜底播报/.test(x.textContent||''))?.querySelector('button.switch')?.click()})()`)
+  await sleep(700)
+  r.vrsRoutineOn =
+    (await exec("window.api.getExtras(['ui:ttsRoutine']).then(e=>e['ui:ttsRoutine']==='1')")) === true ? 'ok' : 'fail:not-saved'
+  r.vrsRoutineSteps = String(
+    await exec(`(()=>{const s=document.querySelector('.vrs-routine-interval')
+      return s ? [...s.options].map(o=>o.value).join('|') : 'no-select'})()`)
+  )
+  r.vrsRoutineSteps = r.vrsRoutineSteps.includes('|60|') ? 'ok' : `fail:${r.vrsRoutineSteps}`
+  r.vrsRoutineSet = String(await vrsSelect('.vrs-routine-interval', '30'))
+  await sleep(500)
+  r.vrsRoutineSaved =
+    (await exec("window.api.getExtras(['ui:ttsRoutineEvery']).then(e=>e['ui:ttsRoutineEvery']==='30')")) === true
+      ? 'ok'
+      : 'fail:not-saved'
+
+  // AC13：历史上限输入存在，且**不是** 0（0 会让历史立刻清空、异常检测永久失效）
+  const capRaw = String(await exec("(()=>{const i=document.querySelector('.vrs-history-cap');return i?String(i.value):'no-input'})()"))
+  r.vrsHistoryCap = Number(capRaw) > 0 ? 'ok' : `fail:${capRaw}`
+
+  // AC14/AC15 的分级说明必须**写在界面上**（用户在改阈值之前就该知道展开态只播紧急）
+  r.vrsGradeNote = (await exec("/分级/.test(document.querySelector('.vrs-foot')?.textContent||'')"))
+    ? 'ok'
+    : 'fail:no-grading-note'
+
+  // 还原：关掉播报，免得后面的轮次被 30s 轮询带着跑
+  await exec("document.querySelector('.vrs-power')?.click()")
+  await sleep(600)
+  r.vrsPowerOff =
+    (await exec("window.api.getExtras(['ui:ttsOn']).then(e=>e['ui:ttsOn']==='0')")) === true
+      ? 'ok'
+      : 'fail:not-saved'
+
   await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
   await sleep(600)
   r.settingsBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'

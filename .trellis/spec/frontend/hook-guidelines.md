@@ -103,50 +103,54 @@ calls them explicitly, because it also does async work in the same effect.
 read without re-running:
 
 ```tsx
-// src/renderer/src/App.tsx:78-84
-   * 为什么必须如此：依赖数组里一旦带上 collapsed / view，每次收/展面板、切视图
-   * 都会重跑 effect 并「立即触发一次」—— 间隔设成 1 分钟就会感觉被播报了好几次。
-  const speakCtxRef = useRef({ collapsed: false, snapshots: state.snapshots, hideBalance: false, muted: voiceMuted })
-  speakCtxRef.current = { collapsed, snapshots: state.snapshots, hideBalance, muted: voiceMuted }
+// src/renderer/src/App.tsx:452-485（播报上下文镜像，节选）
+  // 播报定时器依赖数组里**不得**再加第四个依赖，否则每次切换都会立即播一次
+  // （定时器契约见 state-management.md）—— 所以这些值全部走 ref 读。
+  const alertCtxRef = useRef({ collapsed: true, snapshots: [], /* … */ })
+  alertCtxRef.current = { collapsed, snapshots: state.snapshots, /* … */ }
 ```
 
 The assignment during render (not in an effect) is the point: the ref is always fresh, so the
-effect body can read `.current` and the dependency array can stay empty. This is what makes
-the self-rescheduling voice timer possible:
+effect body can read `.current` and the dependency array can stay as small as the contract
+allows. This is what makes the self-rescheduling alert timer possible:
 
 ```tsx
-// src/renderer/src/App.tsx:279-307 (abridged)
-// 立即触发一次
-speakBalance()
-// 自重排定时器：只有开关或间隔变化才会走到这里
+// src/renderer/src/App.tsx:608-617（节选）
+const armAlertTimer = (): void => {
+  alertTimerRef.current = window.setTimeout(() => { evaluateAlerts(); armAlertTimer() }, ALERT_TICK_MS)
+}
 ```
 
-The same trick appears at `App.tsx:63-64`, `CardView.tsx:275-276`, `PetBall.tsx:75-76` —
-**without a comment**. When you add a fourth, copy the comment from `App.tsx:78-82`.
+The same trick appears at `App.tsx:94-95` (`petRef`), `CardView.tsx:275-276`,
+`PetBall.tsx:75-76` — **without a comment**. When you add a fourth, copy the comment from
+`App.tsx:450-451`.
 
 ---
 
 ## Effect cleanup
 
-Every timer, listener, observer and rAF loop has a teardown. The 17 in the renderer:
+Every timer, listener, observer and rAF loop has a teardown. Full table (period / owner / line
+numbers) lives in the renderer; the contracts worth knowing:
 
 | Created | Teardown |
 |---|---|
 | 15 s clock `CardView.tsx:217` · 30 s clock `DetailView.tsx:155` | `clearInterval` in the same effect |
-| drag watchdog + 6 window listeners `CardView.tsx:391-399` | `:401-406` |
-| voice interval `App.tsx:297` | `:301-306`, plus `:280-286` early clear on disable |
-| `flashTimer` `SettingsView.tsx:346` | re-arm `:345` + unmount `:348-353` |
-| `bubbleTimer` `PetBall.tsx:96` | re-arm `:95` + unmount `:85-90` |
-| `MutationObserver` on `data-skin` `PetBall.tsx:180` | `obs.disconnect()` `:182` |
-| carousel + hitbox intervals `PetBall.tsx:214,242` | `:234`, `:243` |
-| 3 global pointer listeners `PetBall.tsx:321-323` | `:324-328` |
-| rAF loop `pet3d/scene.ts:766` | `cancelAnimationFrame(raf)` `:910` |
-| `ResizeObserver` `pet3d/scene.ts:606` | `ro.disconnect()` `:911` |
+| drag watchdog + window listeners `CardView.tsx:391-399` | same effect, `:401-406` |
+| **待确认轮询** `App.tsx:609` | same effect `:618-623`（自重排链，`[ttsOn]`） |
+| **定时兜底播报** `App.tsx:640` | same effect `:646-651`（自重排链，`[ttsOn, ttsRoutine, ttsRoutineEvery]`）+ `:631-637` 关闭时提前清 |
+| `flashTimer` `SettingsView.tsx:346` | re-arm + unmount |
+| `bubbleTimer` `PetBall.tsx:96` | re-arm + unmount |
+| `MutationObserver` on `data-skin` `PetBall.tsx:180` | `obs.disconnect()` |
+| carousel + hitbox intervals `PetBall.tsx:214,242` | same effect |
+| global pointer listeners `PetBall.tsx:321-323` | same effect |
+| rAF loop `pet3d/scene.ts:766` | `cancelAnimationFrame(raf)` |
+| `ResizeObserver` `pet3d/scene.ts:606` | `ro.disconnect()` |
 
 **Timer globals come in two spellings**, both in use:
 - bare `setInterval` / `clearInterval` with a local const — `CardView.tsx:217-218`
-- `window.setInterval` + a `useRef<number|null>` slot, so the handle can also be cleared
-  mid-effect — `App.tsx:297-306`, `SettingsView.tsx:345-350`, `PetBall.tsx:95-96`
+- `window.setTimeout` + a `useRef<number|null>` slot, so the handle can also be cleared
+  mid-effect and re-armed from the callback — `App.tsx:609,640`,
+  `SettingsView.tsx:345-350`, `PetBall.tsx:95-96`
 
 Use the `useRef` form whenever the effect both re-arms and needs an early exit.
 
