@@ -275,6 +275,58 @@ Rules that make this boundary work (each was learned the hard way):
 | drop `perProvider` | 4 |
 | remove latching entirely | 4 |
 
+### Pattern: a repeat-until-confirmed window must outlast the repeat interval
+
+**Problem.** Two settings that sound independently reasonable can cancel each other out
+completely. "Repeat the alert every 5 minutes" plus "auto-confirm after 1 minute" means the
+alert fires **exactly once** — identical to not repeating at all, with twice the machinery.
+
+**Why it's bad:** nothing throws. Both features work exactly as written; the composition is
+what is wrong. The spec that asked for both looked reasonable on its own, which is why it
+survived into implementation.
+
+**Rule:** any auto-stop window must cover at least N repeat periods. In
+`alertOrchestrate.ts` that is `AUTO_CONFIRM_MS = 15 * 60_000` against `REPEAT_MS = 5 * 60_000`.
+
+**Guard it.** The regression is a one-character edit, so it needs an assertion:
+
+```js
+// scripts/test-alert-orchestration.mjs — L0b/L0c
+ok(AUTO_CONFIRM_MS > REPEAT_MS, '自动确认窗口必须大于重复间隔（否则重复永不发生，AC7 是空功能）')
+```
+
+Injecting `AUTO_CONFIRM_MS = 60_000` reddened 23 assertions — the widest blast radius of any
+mutation in this suite, which is the point: this invariant is load-bearing everywhere
+downstream, not just at its own definition site.
+
+### Don't: hide an interactive control inside `aria-hidden`
+
+**Problem.** `.petball-bubble` is `aria-hidden="true"` (a decorative readout). Adding a
+`<button>` inside it makes the control invisible to assistive tech and breaks the
+"hidden content is not focusable" rule, while still looking interactive and being clickable.
+
+**Instead:** make the confirm bar a **sibling** of the bubble:
+
+```tsx
+<div className="petball-confirm" role="status">
+  <span className="petball-confirm-text">{alertText}</span>
+  <span className="petball-confirm-eta" aria-hidden="true">{alertMinutes} 分</span>
+  <button type="button" onClick={() => onConfirmAlert?.()}>知道了</button>
+</div>
+```
+
+`role="status"` makes the alert text announced as a state change; the button is genuinely
+focusable; the purely decorative countdown is separately hidden. Guarded by a structural
+assertion (L53/L59) — see below for how brittle that turned out to be.
+
+**Note on slicing JSX in assertions.** The first version of that guard located the confirm bar
+by a text anchor, which went green under mutation because the moved bar landed outside the
+slice. Matching on `<div` / `</div>` still failed: the search ran *forward* from an index
+already inside the opening tag, so it matched the confirm bar's own tag. The working version
+uses `lastIndexOf`. Structural JSX assertions are the most fragile guards in this repo —
+prefer behavioural ones, and re-verify any you add by mutating the code.
+
+
 ### Don't: signal "no broadcast" with the same value as "no change"
 
 **Problem.** A single `null` return for both "the whole round is a no-op" and "there is

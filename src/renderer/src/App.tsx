@@ -32,7 +32,23 @@ import {
   type TriggerKind
 } from './smartBroadcast'
 import { DEFAULT_HISTORY_CAP, type HistoryPoint } from './history'
-import { evaluate } from './alertOrchestrate'
+import {
+  confirm,
+  evaluate,
+  latestPending,
+  pendingCountdown,
+  type PendingAlert
+} from './alertOrchestrate'
+
+/**
+ * 待确认预警的轮询周期。
+ *
+ * 为什么是轮询而不是「精确 5 分钟后排一次」：重复间隔是「**至少**隔这么久」，早几秒无所谓；
+ * 精确调度要额外处理系统休眠唤醒后的补偿，而 30s 的粒度下最坏也就早播 30 秒。
+ * 唯一的一处近似是不播时评估得比数据推送勤（纯函数 + appendPoint，上限 100 条，开销可忽略），
+ * 换来的是唤醒后立刻恢复。`backgroundThrottling: false` 已关（main/overlay.ts）。
+ */
+const ALERT_TICK_MS = 30_000
 
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
@@ -139,6 +155,20 @@ export default function App(): React.JSX.Element {
    */
   const ttsSecretRef = useRef('')
   const voiceTimerRef = useRef<number | null>(null)
+  /**
+   * 待确认预警（AC7）：已播但用户还没点「知道了」的批次。
+   *
+   * 内存态、**不落盘**（NFR4）：用户重启应用说明他已经看到过屏幕，把「上次播过」跨重启
+   * 记下来只会让重启后的第一轮永远不播。给引用（而不是直接读 state）是为了让轮询定时器
+   * 读到最新值而不必把它加进依赖数组 —— 定时器契约见 state-management.md。
+   */
+  const alertPendingRef = useRef<PendingAlert[]>([])
+  /** 确认条要显示的批次与倒计时（渲染用；真正的时钟在 evaluateAlerts 里取） */
+  const [alertPending, setAlertPending] = useState<PendingAlert[]>([])
+  /** 倒计时的**显示**时钟。0 = 还没起表（首帧用真实时钟兜底），之后由 30s 轮询顺带推进 */
+  const [alertNow, setAlertNow] = useState(0)
+  /** 待确认轮询的 setTimeout 句柄（自重排链，与兜底播报那个是两条） */
+  const alertTimerRef = useRef<number | null>(null)
 
   const persistPet = (s: PetState): void => {
     void window.api.setExtras({ 'ui:petState': encodePetState(s) })
@@ -429,6 +459,7 @@ export default function App(): React.JSX.Element {
     format: 'simple' as 'simple' | 'detailed',
     hideBalance: false,
     muted: [] as string[],
+    pending: [] as PendingAlert[],
     ttsConfig: DEFAULT_TTS_CONFIG as TtsConfig,
     fallback: true,
     visual: false,
@@ -445,6 +476,7 @@ export default function App(): React.JSX.Element {
     format: ttsFormat,
     hideBalance,
     muted: voiceMuted,
+    pending: alertPendingRef.current,
     ttsConfig,
     fallback: ttsFallback,
     visual: ttsVisual,
@@ -496,10 +528,16 @@ export default function App(): React.JSX.Element {
   /**
    * 一轮评估：**组装 ctx → 调纯函数 → 落副作用**。返回是否真的产生了新播报。
    *
-   * 6 步编排（先判后记、锁存、分级、合并成一条）都在 alertOrchestrate.ts 里 —— 它此前
-   * 住在这个函数体内，而盲审在这里找出 3 个致命 bug：判定时序颠倒、锁存缺失、阈值覆盖
+   * 编排（先判后记、锁存、分级、合并成一条、到期重复与待确认裁剪）都在 alertOrchestrate.ts 里
+   * —— 它此前住在这个函数体内，而盲审在这里找出 3 个致命 bug：判定时序颠倒、锁存缺失、阈值覆盖
    * 被丢弃，全部发生在「引擎答不了、只有调用方答得了」的那一层。抽成纯函数后这层终于
    * 有测试盯着（scripts/test-alert-orchestration.mjs）。
+   *
+   * 数据推送与 30s 轮询**都走这里**（AC7 的重复提醒就靠后者推动），两者天然幂等：
+   * 锁存挡「不新鲜」，pending 管「没确认就再播一遍」，两道门各管一段。
+   *
+   * 两种 reason 走的是同一个 speakOut：频率闸门（每分钟 1 次 / 每小时 10 次）住在那里，
+   * 重复播报必须被它约束，不许另开一条绕过 allowCall 的路（NFR1）。
    *
    * 这里仍然走 ref 镜像读实时值：定时器/推送 effect 的依赖数组里不得再加第四个依赖
    * （state-management.md 的定时器契约），所以 ctx 是**这一轮**的显式快照而不是闭包。
@@ -516,9 +554,27 @@ export default function App(): React.JSX.Element {
     ctx.history = d.nextHistory
     // 锁存必须写回：漏了这一句就退回「每 60s 数据推送重播同一句」（AC9）
     alertLatchRef.current = d.nextLatched
+    // 同理：待确认批次没动就不 setState，否则每 30s 空转一次渲染
+    alertPendingRef.current = d.nextPending
+    if (d.nextPending !== ctx.pending) setAlertPending(d.nextPending)
     if (!d.text) return false
+    // 「新命中」与「到期重复」走**同一条**播出口 —— 频率闸门在 speakOut 里，重复不能绕开它
     speakOut(d.text, d.urgent)
     return true
+  }
+
+  /**
+   * 点「知道了」：只确认**最近播的那一批**（用户回应的是他刚听到的那句），其余批次原样保留
+   * —— 确认余额预警不该让用量耗尽的提醒跟着停（FR7 / AC6）。
+   * 紧接着重评估一轮：已确认的批次会在那一步被裁掉，同一轮里到期的重复也顺带处理。
+   */
+  const onConfirmAlert = (): void => {
+    const next = confirm(alertPendingRef.current, Date.now())
+    // confirm 没有可确认的批次时原样返回同一引用 —— 别为一次空操作触发渲染
+    if (next === alertPendingRef.current) return
+    alertPendingRef.current = next
+    setAlertPending(next)
+    evaluateAlerts()
   }
 
   /** 定时兜底播报：只念当前读数，不判触发 */
@@ -545,7 +601,32 @@ export default function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ttsOn, state.snapshots])
 
-  // ② 定时兜底
+  // ② 待确认预警的轮询钟：AC7 的重复提醒与倒计时自动确认**共用这一条**自重排 setTimeout 链，
+  //    不为它们各加一个定时器（NFR2）。
+  useEffect(() => {
+    if (!ttsOn) return
+    const armAlertTimer = (): void => {
+      alertTimerRef.current = window.setTimeout(() => {
+        evaluateAlerts()
+        // 倒计时的显示时钟只在真的有批次待确认时推：没有待确认的预警就没有倒计时可显示，
+        // 这一次 setState 纯属浪费一次渲染
+        if (alertPendingRef.current.length > 0) setAlertNow(Date.now())
+        armAlertTimer()
+      }, ALERT_TICK_MS)
+    }
+    armAlertTimer()
+    return () => {
+      if (alertTimerRef.current) {
+        window.clearTimeout(alertTimerRef.current)
+        alertTimerRef.current = null
+      }
+    }
+    // ⚠ 依赖**只有** [ttsOn]：其余全走 alertCtxRef 镜像。加任何一个都会在每次数据推送时
+    //   重建整条链，把下一次重复的时间基准推后（定时器契约见 state-management.md）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsOn])
+
+  // ③ 定时兜底
   useEffect(() => {
     if (!ttsOn || !ttsRoutine) {
       if (voiceTimerRef.current) {
@@ -570,11 +651,15 @@ export default function App(): React.JSX.Element {
     }
   }, [ttsOn, ttsRoutine, ttsRoutineEvery])
 
-  // ③ 关闭播报时把在途音频停掉，并清掉锁存（下次开启按新的一轮算）
+  // ④ 关闭播报时把在途音频停掉，并清掉锁存与待确认（下次开启按新的一轮算）。
+  //    待确认必须一起清：不清理的话用户关掉再打开，会看到一条早该消失的「知道了」，
+  //    而且那一批还会按旧的时间表继续重复播下去。
   useEffect(() => {
     if (ttsOn) return
     stopAll()
     alertLatchRef.current = new Set()
+    alertPendingRef.current = []
+    setAlertPending([])
   }, [ttsOn])
 
   // ─── 语音提醒：设置页回调 ─────────────────────────────────────────────────
@@ -687,6 +772,18 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  /**
+   * 确认条要显示什么。**只有最近播的那一批**（latestPending）：用户点的「知道了」
+   * 回应的是他刚听到的那一句，同时这一条也保证了「一次确认只关一批」（AC6）。
+   *
+   * 倒计时取**分钟**而不是秒：它由 30s 轮询推进（NFR2 不为倒计时另加一个定时器），
+   * 秒级显示会是一个永远慢半拍的数字。alertNow 为 0（还没起表）时用真实时钟兜底，
+   * 首帧的显示与起表后完全一致。
+   */
+  const alert = latestPending(alertPending)
+  const alertText = alert?.text ?? ''
+  const alertMinutes = alert ? Math.ceil(pendingCountdown(alert, alertNow || Date.now()) / 60) : 0
+
   return (
     <ErrorBoundary>
       <div className="app" data-skin={skin}>
@@ -702,6 +799,9 @@ export default function App(): React.JSX.Element {
             onMenu={petMenu}
             onRename={renamePet}
             notice={ttsVisualText}
+            alertText={alertText}
+            alertMinutes={alertMinutes}
+            onConfirmAlert={onConfirmAlert}
           />
         ) : view === 'settings' ? (
           <SettingsView

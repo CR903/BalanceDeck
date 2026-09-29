@@ -193,6 +193,12 @@ re-validates the interval against a whitelist.
 11 timers in the renderer. Period, owner and cleanup are in
 [`hook-guidelines.md`](./hook-guidelines.md).
 
+Two of them have a **self-rescheduling contract**. The voice-alert one polls every
+`ALERT_TICK_MS` (30 s) rather than aiming at an exact 5-minute boundary — a repeat that
+fires 20 s early is harmless, whereas an exact schedule has to compensate for sleep/wake.
+Polling is idempotent: it goes through the same `evaluateAlerts` as the data-push effect, so
+both paths hit the same latch + pending gate and cannot double-broadcast.
+
 One has a **self-rescheduling contract** and is the only timer worth reading in full:
 
 ```tsx

@@ -73,6 +73,15 @@ export interface PetBallProps {
    * 同时存在时通知优先：它带着余额数值，是用户真正要读的那句。
    */
   notice?: string
+  /**
+   * 待确认预警的原文（'' = 无待确认的预警，AC7）。由 App 从 alertOrchestrate 的待确认批次
+   * 里派生，本组件不持有任何计时 —— 重复间隔与倒计时都归那条 30s 轮询链管。
+   */
+  alertText?: string
+  /** 距自动确认还剩几分钟（由 App 侧按分钟粒度给，见 App 里那段注释） */
+  alertMinutes?: number
+  /** 点「知道了」：确认最近播的那一批，停止重复 */
+  onConfirmAlert?: () => void
 }
 
 export function PetBall({
@@ -84,7 +93,10 @@ export function PetBall({
   onMenu,
   onRename,
   hideBalance,
-  notice
+  notice,
+  alertText,
+  alertMinutes = 0,
+  onConfirmAlert
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const hitRef = useRef<HTMLDivElement | null>(null)
@@ -523,6 +535,28 @@ export function PetBall({
     return Math.min(Math.max(x, pad), w - pad)
   }
 
+  /**
+   * 确认条的锚点与宽度上限 —— 按「**鼠标命中区在哪**」反推，不是按「窗口有多大」猜。
+   *
+   * 为什么必须这样算：主进程只按渲染层上报的那**一个**矩形决定窗口哪一块接收鼠标
+   * （main/overlay.ts 的 cursorInsideHit，未命中即 setIgnoreMouseEvents 穿透到桌面）。
+   * 三种形态的命中区各不相同：
+   *   · 球形态（56×56 窗口）→ 报告的就是整块窗口，贴哪都在里面；
+   *   · 人物形态 WebGL 失败（213×293 窗口里的 56×56 小环）→ 命中区只有居中那 56 宽，
+   *     贴窗口底部会落在环外，按钮画得出、点不动；
+   *   · 人物形态 → 命中区是角色的投影矩形（center / half 由场景按投影持续给）。
+   * 所以 2D 环这一支按环盒的上沿定位（球形态正好落在窗口顶，人物形态兜底落在环的上沿），
+   * 人物形态那一支用与 .petball-caption 同一套 clampX + 投影矩形。
+   */
+  const confirmAnchor = dot2d
+    ? {
+        left: '50%',
+        top: (viewSize.h - BALL_VIEW.height) / 2,
+        // 命中区 = 环盒（56 宽）+ 主进程的 pad 3，两侧各留 3px 余量
+        maxWidth: Math.min(62, viewSize.w - 8)
+      }
+    : { left: clampX(center.x, 95), top: Math.max(24, center.y + half.h - 30), maxWidth: 190 }
+
   useEffect(() => {
     sceneRef.current?.setPaused(renaming)
   }, [renaming])
@@ -856,6 +890,28 @@ export function PetBall({
           aria-hidden="true"
         >
           {notice || bubble}
+        </div>
+      )}
+      {alertText && (
+        // ⚠ 确认条是泡泡的**兄弟节点**，不是它的子节点 —— .petball-bubble 是
+        //   aria-hidden="true" 的纯装饰（见上面），交互元素藏进去对辅助技术不可见，
+        //   而且 aria-hidden 容器里的可聚焦元素会破坏「隐藏内容不可聚焦」。
+        //   不新增浮层（NFR3）：它只是泡泡下面多出来的一条小控件。
+        // role="status" 挂在容器上，让播报内容作为状态变化被读出；真正的按钮在它**内部**，
+        // 可聚焦、可点击（这不是 aria-hidden 装饰件）。
+        <div className="petball-confirm" style={confirmAnchor} role="status">
+          <span className="petball-confirm-text">{alertText}</span>
+          <span className="petball-confirm-eta" aria-hidden="true">
+            {alertMinutes} 分
+          </span>
+          <button
+            type="button"
+            className="petball-confirm-btn"
+            title="知道了"
+            onClick={() => onConfirmAlert?.()}
+          >
+            知道了
+          </button>
         </div>
       )}
       {isStale(s ?? {}) && !failed && (

@@ -1643,6 +1643,96 @@ textarea {
   }
 }
 
+/* 预警确认条（AC7「重复提醒直到确认」）
+   ⚠ 它是 .petball-bubble 的**兄弟节点**，不是泡泡的一部分 —— 泡泡带 aria-hidden="true"，
+      纯装饰；交互元素藏在里面对辅助技术不可见。
+   位置由 PetBall 内联给（confirmAnchor），按「鼠标命中区在哪」反推：主进程只按上报的
+   那个矩形决定窗口哪一块接收鼠标，贴到命中区之外会画得出、点不动。
+   全部走 token，不硬编码颜色 —— 皮肤切换后它跟着 .app 的 data-skin 变。 */
+.petball-confirm {
+  position: absolute;
+  /* 锚点是条子自己的中线（PetBall 给的是中心点，left 用百分比居中不依赖 clampX：
+     球形态窗口只有 56 宽，clampX 那套按 213 宽算会算出负值） */
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  /* 用 --bg-solid（不透明）而不是半透明的 --surface-*：这个条子浮在**用户的任意壁纸**上，
+     半透明表面 + 浅色皮肤（--fg 是深色）会糊成一片，深色皮肤（--surface-strong alpha 0.08）
+     在浅壁纸上则整个看不见。各皮肤都定义了 --bg-solid 且与 --fg 成对，天然可读。 */
+  background: var(--bg-solid);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  /* ⚠ .petball 整体是 pointer-events: none（容器不吃事件），交互控件必须自己开回来，
+     否则按钮画得出来却收不到点击。 */
+  pointer-events: auto;
+  /* 同 .petball-rename input：不放 outer box-shadow。这个条子与球一样活在**很小的窗口**
+     里（球形态整块 56×56），外阴影没有容放的地方，会被窗口裁成一个方框。
+     也不复用 petball-bubble-in 的入场动画 —— 那条 keyframe 的终态带 translate(-50%,-100%)，
+     会把这里的 translateX(-50%) 顶掉，锚点当场错位。 */
+}
+.petball-confirm-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+}
+.petball-confirm-eta {
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.petball-confirm-btn {
+  /* 24×24 是 WCAG 2.2 的最小点击目标。球形态下这一条几乎占满整块 56×56 窗口的顶边，
+     再小就点不准了。 */
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.petball-confirm-btn:hover {
+  background: var(--surface-hover);
+}
+.petball-confirm-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* 球形态（56×56 窗口，命中区是整块窗口）：横向只剩 48px、纵向要留给读数，
+   所以只留按钮，文案与倒计时退给语音与那 15 分钟窗口本身。
+   人物形态 WebGL 失败时也是这一支 —— 此时的命中区是居中 56 宽的环，同样放不下整行。 */
+.petball.no3d .petball-confirm {
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.petball.no3d .petball-confirm-text,
+.petball.no3d .petball-confirm-eta {
+  display: none;
+}
+.petball.no3d .petball-confirm-btn {
+  padding: 0 5px;
+  font-size: 10.5px;
+  background: var(--bg-solid);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
 /* 改名输入（右键菜单 → 改名…） */
 .petball-rename {
   position: absolute;

@@ -20,7 +20,8 @@ import { resolve } from 'node:path'
 import { loadTs } from './lib/load-ts.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const { evaluate } = await loadTs('src/renderer/src/alertOrchestrate.ts')
+const { evaluate, confirm, latestPending, pendingCountdown, REPEAT_MS, AUTO_CONFIRM_MS } =
+  await loadTs('src/renderer/src/alertOrchestrate.ts')
 const { DEFAULT_TRIGGER_CONFIG, THRESHOLD_FIELD, checkTriggers } =
   await loadTs('src/renderer/src/smartBroadcast.ts')
 
@@ -75,11 +76,13 @@ const pt = (o = {}) => ({ t: T0, id: 'x', balance: null, percent: null, ...o })
 /** 充值余额型（kind=balance）：窗口的 used 本身就是账户余额 */
 const cash = (balance, o = {}) =>
   snap({ id: 'cash', name: 'DeepSeek', kind: 'balance', windows: [{ name: '账户余额', used: balance, unit: 'cny' }], ...o })
+/** 套餐型且限额未知 → 判不出余额（否则会顺带命中余额预警），只命中「用量耗尽」 */
+const goHigh = snap({ id: 'go', name: 'Go', windows: [win({ used: 58, limit: undefined, percent: 95 })] })
 
 const ALL_ON = { balance: true, fluctuation: true, exhaustion: true, idle: true, abnormal: true }
 const cfg = (o = {}) => ({ ...DEFAULT_TRIGGER_CONFIG, ...o })
 
-/** 一轮评估的完整上下文；`o` 覆盖任何一项。默认收起态、5 个场景全开。 */
+/** 一轮评估的完整上下文；`o` 覆盖任何一项。默认收起态、5 个场景全开、无待确认批次 */
 const ctx = (o = {}) => ({
   snapshots: [],
   history: [],
@@ -90,6 +93,7 @@ const ctx = (o = {}) => ({
   muted: [],
   collapsed: true,
   latched: [],
+  pending: [],
   historyCap: 100,
   now: T0,
   ...o
@@ -112,6 +116,11 @@ const histOf = (d, field) => (d?.nextHistory ?? []).map((p) => p[field])
 const rowsOf = (d) => (d?.nextHistory ?? []).map((p) => [p.t, p.balance])
 /** 播报文本，null 当空串 —— 只给 `.includes` 这类子串断言用；要断言 null 本身的地方用 textOf */
 const speech = (d) => d?.text ?? ''
+
+/** 待确认批次的三个取数器（AC7）。同样 null 安全，让断言报红而不是抛 TypeError */
+const pendingOf = (d) => d?.nextPending ?? []
+const reasonOf = (d) => d?.reason ?? null
+const pendText = (list) => list.map((b) => b.text)
 
 // ─── 夹具 ──────────────────────────────────────────────────────────────────
 // 25 小时里 4 条一动不动的采样：判得出「长时间未使用」（例行级），判不出波动
@@ -344,7 +353,11 @@ eq(round({}), null, 'H2 默认空上下文同样是 null')
     text: d?.text ?? null,
     urgent: d?.urgent ?? null,
     nextHistory: d?.nextHistory ?? null,
-    nextLatched: [...(d?.nextLatched ?? [])].sort()
+    nextLatched: [...(d?.nextLatched ?? [])].sort(),
+    // AC7 的两个新字段同样要进纯度比较：跨轮次的隐藏状态（上一批的 firstSpokenAt 之类）
+    // 恰恰是它们最容易藏的地方
+    nextPending: JSON.stringify(d?.nextPending ?? null),
+    reason: d?.reason ?? null
   })
   const p1 = evaluate(pCtx)
   const p2 = evaluate(pCtx)
@@ -435,6 +448,260 @@ ok(
 )
 const evalLines = evalBody == null ? 0 : evalBody.split('\n').length
 ok(evalLines > 0 && evalLines <= 20, `K11 evaluateAlerts 保持在 20 行以内（当前 ${evalLines} 行；抽离前是 37 行）`)
+
+// ═══ L. 重复提醒直到确认（AC7）══════════════════════════════════════════════
+// 状态机：**播 → 未确认则按间隔重复 → 确认（或超窗 / 条件解除）→ 停止**。
+//
+// 为什么这一段与 B 段（锁存）不是一件事：锁存管「同一条件下**首播恰好一次**」，
+// 这里是「首播之后、确认之前**还要再播**」。少了 pending，只有 B 的话用户离开电脑边
+// 只会听到一次 —— 那正是 AC7 要补的洞；少了 B，只有 pending 的话每 60s 数据推送
+// 就会重播一遍（AC9 崩塌）。两道门必须都在。
+
+console.log('\nL. 重复提醒直到确认（AC7）')
+
+// 间隔/窗口取自被测源码本身，本文件不另写一份 5min/15min —— 数字改了这里会跟着红
+ok(REPEAT_MS === 5 * 60_000, 'L0 重复间隔 = 5 分钟（用户裁定）')
+ok(AUTO_CONFIRM_MS === 3 * REPEAT_MS, 'L0b 自动确认窗口 = 3 个重复周期（15 分钟）')
+// ⚠ 这条是 AC7 能不能成立的前提，不是口味：窗口 ≤ 间隔时重复永远等不到，
+//   「重复提醒直到确认」就退化成「播一次」
+ok(AUTO_CONFIRM_MS > REPEAT_MS, 'L0c 自动确认窗口必须**大于**重复间隔（否则 AC7 是空功能）')
+
+/** 把上一轮的输出接到下一轮：history / latched / pending 全部沿用上一轮的结果 */
+const chain = (d, o = {}) => ({
+  history: d?.nextHistory ?? [],
+  latched: d?.nextLatched ?? [],
+  pending: d?.nextPending ?? [],
+  ...o
+})
+
+// ── AC1：首播后 5 分钟内再次播报同一条 ──────────────────────────────────────
+const l1 = round({ snapshots: [cash(8)], now: T0 })
+eq(reasonOf(l1), 'new', 'L1 首播 reason=new')
+eq(pendText(pendingOf(l1)), ['DeepSeek 余额不足，剩余 8 元'], 'L2 首播开出一批待确认')
+const l2 = round(chain(l1, { snapshots: [cash(7)], now: T0 + 2 * 60_000 }))
+eq(reasonOf(l2), null, 'L3 还没到重复间隔 → 不播（数据每 60s 推一次）')
+eq(pendingOf(l2).length, 1, 'L4 批次仍在待确认，只是没到重播时间')
+// 余额在这 5 分钟里从 8 掉到 7：正是「重复时重算文案」会露馅的地方
+const l3 = round(chain(l1, { snapshots: [cash(7)], now: T0 + REPEAT_MS }))
+eq(reasonOf(l3), 'repeat', 'L5 满 5 分钟 → reason=repeat（AC1）')
+eq(textOf(l3), textOf(l1), 'L6 重复的是**同一条原文**（不重算：余额变了也不会说成别的数）')
+eq(pendingOf(l3)[0]?.firstSpokenAt, T0, 'L7 重复不推迟首播时刻（自动确认窗口从首播起算）')
+eq(pendingOf(l3)[0]?.lastSpokenAt, T0 + REPEAT_MS, 'L8 只有 lastSpokenAt 被推进')
+eq(pendingOf(l3).length, 1, 'L9 重复**不开新批次**（否则每 5 分钟多攒一条待确认）')
+
+// ── AC2 / AC4：点「知道了」后立即停止；条件仍成立也不再播 ────────────────────
+const confirmed = confirm(l1.nextPending, T0 + 90_000)
+eq(confirmed[0]?.confirmedAt, T0 + 90_000, 'L10 confirm 给最近播的那批打上确认时刻')
+eq(confirmed.length, 1, 'L11 confirm 不删批次（标记，等下一轮 evaluate 裁掉）')
+const l4 = round(chain(l1, { pending: confirmed, snapshots: [cash(8)], now: T0 + REPEAT_MS }))
+eq(textOf(l4), null, 'L12 确认后条件持续成立 → 永不再播（AC4）')
+eq(pendingOf(l4), [], 'L13 已确认的批次被裁掉')
+ok(latchOf(l4).length === 1, 'L14 确认**不**动锁存（否则确认一次就把 AC9 也一起解除了）')
+
+// ── AC3：倒计时到期自动确认 ────────────────────────────────────────────────
+const l5 = round(chain(l1, { snapshots: [cash(8)], now: T0 + AUTO_CONFIRM_MS }))
+eq(textOf(l5), null, 'L15 到自动确认窗口 → 不再重复（AC3）')
+eq(pendingOf(l5), [], 'L16 超窗批次被裁掉')
+eq(latchOf(l5), ['cash balance'], 'L17 自动确认≠解锁：条件还成立，锁存保持（否则每 15 分钟重开一轮）')
+
+// ── AC5：条件解除后重新越过阈值能再播（与 AC4 相反，两条都必须有）────────────
+const noWave = { ...ALL_ON, fluctuation: false }
+const m1 = round(chain(l1, { snapshots: [cash(50)], triggerOn: noWave, now: T0 + 10 * 60_000 }))
+eq(pendingOf(m1), [], 'L18 条件解除（充值）→ 待确认批次作废，不再重复提醒')
+eq(latchOf(m1), [], 'L19 锁存随之清掉')
+// 「解除即作废」的**另一半**：余额早就回到阈值以上，绝不能再拿「余额不足，剩余 8 元」
+// 这句旧文案重播。L18 只验了「批次没了」，这两条验的是「它确实不会再张嘴」——
+// 且时间刻意落在 15 分钟窗口**之内**：落在窗口外的话，超窗裁剪会替它把 bug 遮掉
+eq(textOf(m1), null, 'L19b 条件解除的那一轮不重播旧文案（仍在自动确认窗口之内）')
+eq(reasonOf(m1), null, 'L19c 同上：reason 也必须是 null（不是「到期重复」）')
+const m2 = round(chain(m1, { snapshots: [cash(8)], triggerOn: noWave, now: T0 + 20 * 60_000 }))
+eq(reasonOf(m2), 'new', 'L20 再次越过阈值 → 又是一轮「新命中」（AC5）')
+eq(pendText(pendingOf(m2)), ['DeepSeek 余额不足，剩余 8 元'], 'L21 重新开一批待确认')
+
+// ── AC6 / AC9：紧急与例行各自独立待确认；倒计时期间的新命中立即播 ───────────
+const n0 = round({ snapshots: [cash(8)], triggerOn: noWave, now: T0 })
+const n1 = round(chain(n0, { snapshots: [cash(8), goHigh], now: T0 + 2 * 60_000 }))
+eq(pendingOf(n1).length, 2, 'L22 余额预警与用量耗尽各自成批（FR7 / AC6）')
+eq(
+  pendText(pendingOf(n1)),
+  ['DeepSeek 余额不足，剩余 8 元', 'Go 用量已用 95%'],
+  'L23 新命中只播**新增的那部分**（已锁存的余额预警不跟着重念）'
+)
+eq(latestPending(n1.nextPending)?.text, 'Go 用量已用 95%', 'L24 确认条指向最近播的那一批')
+eq(pendingOf(n1)[1]?.firstSpokenAt, T0 + 2 * 60_000, 'L25 倒计时期间出现新命中 → 立即开新批次，从那一刻起算窗口（AC9）')
+eq(pendingOf(n1)[0]?.firstSpokenAt, T0, 'L26 旧批次的计时不被新命中重置（FR8 重置的是新批次自己）')
+const n2 = confirm(n1.nextPending, T0 + 3 * 60_000)
+// confirm 的目标是**最近播的那批**（= Go 那批，用户刚听到的是它）。所以：
+//   · Go 批被打上确认时刻，DeepSeek 批原封不动
+//   · 下一轮该重复的是**剩下**那批 —— 确认余额预警没有误伤，额度耗尽的提醒还在继续
+// 这组断言合起来正是「confirm 清掉全部批次而非指定的那一批」这个变异的红集
+eq(n2.length, 2, 'L27 confirm 不删批次：两批都还在，只有被点的那批被标记')
+eq(n2[1]?.confirmedAt, T0 + 3 * 60_000, 'L28 被点的那批（最近播的 Go）打上确认时刻')
+eq(n2[0]?.confirmedAt, null, 'L29 另一批（余额预警）的确认态没被动过 —— AC6')
+const n3 = round(chain(n1, { pending: n2, snapshots: [cash(8), goHigh], now: T0 + 7 * 60_000 }))
+eq(textOf(n3), 'DeepSeek 余额不足，剩余 8 元', 'L30 剩下那批到点照常重复（确认没有误伤）')
+eq(pendingOf(n3).length, 1, 'L31 下一轮把已确认的那批裁掉，留下的继续计时')
+eq(latestPending(pendingOf(n3))?.text, 'DeepSeek 余额不足，剩余 8 元', 'L32 确认条切回剩下的那批')
+
+// ── AC7：重复播报受频率闸门约束 ───────────────────────────────────────────
+// 闸门本身在 speechOut（1 次/分钟、10 次/小时，scripts/test-speech-out.mjs 已覆盖）。
+// 编排层只答「该不该播」，**不许**为了重复提醒另开一条绕过 allowCall 的路（NFR1）。
+eq(
+  reasonOf(round(chain(l1, { snapshots: [cash(8)], now: T0 + 60_000 }))),
+  null,
+  'L33 首播后 1 分钟内的第二次触发不重复（重复间隔是 5 分钟）'
+)
+ok(
+  (appSrc.match(/\benqueue\(/g) || []).length === 1,
+  'L34 App 全程只在 speakOut 里 enqueue 一次（重复播报没有第二条绕过频率闸门的路）'
+)
+ok(
+  evalBody != null && /speakOut\(d\.text, d\.urgent\)/.test(evalBody),
+  'L35 新命中与到期重复共用同一个播报出口'
+)
+
+// ── AC8：待确认状态不持久化（重启即重置）──────────────────────────────────
+const extrasCalls = appSrc.match(/setExtras\(\s*\{[^}]*\}/g) || []
+ok(extrasCalls.length > 0, 'L36 前置：App 里确实有 setExtras 调用（下面的负向断言不能空洞通过）')
+ok(!extrasCalls.some((c) => /pending|alert/i.test(c)), 'L37 待确认状态不进 extras（重启即重置，NFR4）')
+ok(!/ui:[A-Za-z]*pending/i.test(appSrc), 'L38 extras 键表里没有 pending 相关键')
+ok(
+  /alertPendingRef\s*=\s*useRef/.test(appSrc) && /const \[alertPending, setAlertPending\] = useState/.test(appSrc),
+  'L39 待确认是内存态（ref 给编排读、state 给渲染），不是从 extras 读回来的'
+)
+
+// ── 倒计时取值（给 UI 用的那个数）─────────────────────────────────────────
+const cdOf = (b, now) => (b ? pendingCountdown(b, now) : -1)
+ok(pendingOf(l3)[0] != null, 'L40 前置：l3 确实有批次在待确认（否则下面在比 -1）')
+const l3b = pendingOf(l3)[0]
+eq(cdOf(l3b, T0), AUTO_CONFIRM_MS / 1000, 'L41 倒计时从**首播**起算')
+eq(cdOf(l3b, T0 + REPEAT_MS), (AUTO_CONFIRM_MS - REPEAT_MS) / 1000, 'L42 重复之后按剩余窗口走（不是重新给 15 分钟）')
+eq(cdOf(l3b, T0 + AUTO_CONFIRM_MS), 0, 'L43 到点为 0')
+eq(cdOf(l3b, T0 + AUTO_CONFIRM_MS + 60_000), 0, 'L44 超时之后钳在 0，不出现负数')
+
+// ── 接线：轮询链 / 确认回调 / props ───────────────────────────────────────
+const alertEffectAt = appSrc.indexOf('const armAlertTimer')
+const alertEffectEnd = appSrc.indexOf('}, [ttsOn])', alertEffectAt)
+const alertEffect = alertEffectAt < 0 || alertEffectEnd < 0 ? null : appSrc.slice(alertEffectAt, alertEffectEnd)
+ok(alertEffect != null, 'L45 取得到待确认轮询 effect 的源码')
+ok(
+  alertEffect != null && (alertEffect.match(/setTimeout\(/g) || []).length === 1,
+  'L46 重复播报与倒计时共用**同一条** setTimeout 链，不新增独立定时器（NFR2）'
+)
+ok(
+  alertEffect != null && (alertEffect.match(/armAlertTimer\(\)/g) || []).length >= 2,
+  'L47 那条链是自重排的（回调里重新排下一次，不是跑一次就完）'
+)
+ok(
+  /}, \[ttsOn\]\)/.test(appSrc.slice(alertEffectEnd, alertEffectEnd + 20)),
+  'L48 轮询 effect 的依赖数组**只含** [ttsOn]（定时器契约，见 state-management.md）'
+)
+ok(
+  /confirm\(alertPendingRef\.current, Date\.now\(\)\)/.test(appSrc),
+  'L49 onConfirmAlert 走纯函数的 confirm()，不在组件里手搓一份状态机'
+)
+ok(
+  /alertText=\{alertText\}/.test(appSrc) && /onConfirmAlert=\{onConfirmAlert\}/.test(appSrc),
+  'L50 确认条与回调从 App 接到 PetBall（props 链没断）'
+)
+
+// ── UI：确认条是泡泡的**兄弟节点**，不是泡泡的子节点 ────────────────────────
+const petSrc = readFileSync(resolve(ROOT, 'src/renderer/src/PetBall.tsx'), 'utf-8')
+
+/**
+ * 从 `from` 处最近的 `<div` 起，按开闭配对取出**整个**元素的源码（含收尾 `</div>`）。
+ *
+ * ⚠ 边界必须来自**结构**，不能来自内容。反向验证实测过两处：
+ *   ① 用 `{notice || bubble}` 当结束标记的那版，在「把确认条搬进泡泡内部、放在那句话
+ *      **之后**」这个真实变异下**全绿** —— 切片压根没覆盖到确认条；
+ *   ② `<div` 用 indexOf 向前找也不对：`from` 是 `className="petball-bubble"` 的位置，
+ *      **已经在那个开标签里面**，向前找只会找到**下一个** div（确认条自己），于是
+ *      「泡泡的块」变成了确认条的块，L53 恒红 —— 假红和上面那个假绿一样有害。
+ *   所以要**向前**找最近的那个 `<div`。自闭合的 `<div … />`（本文件的 .petball-stage
+ *   就是）不参与配对计数，否则后面的层级会算错。
+ */
+function jsxDivBlock(src, from) {
+  const start = src.lastIndexOf('<div', from)
+  if (start < 0) return null
+  let depth = 0
+  for (let i = start; i < src.length; i++) {
+    if (src.startsWith('<div', i)) {
+      const tagEnd = src.indexOf('>', i)
+      if (tagEnd < 0) return null
+      if (src[tagEnd - 1] !== '/') depth++
+      i = tagEnd
+    } else if (src.startsWith('</div>', i)) {
+      depth--
+      i += 5
+      if (depth === 0) return { text: src.slice(start, i + 1), end: i + 1 }
+    }
+  }
+  return null
+}
+
+const bubbleAt = petSrc.indexOf('className="petball-bubble"')
+const bubbleBlock = jsxDivBlock(petSrc, bubbleAt)
+ok(bubbleBlock != null, 'L51 前置：取得到 .petball-bubble 的整个 JSX 元素')
+ok(bubbleBlock != null && /aria-hidden="true"/.test(bubbleBlock.text), 'L52 泡泡仍是 aria-hidden 的纯装饰')
+ok(
+  bubbleBlock != null && !/petball-confirm|<button/.test(bubbleBlock.text),
+  'L53 泡泡内**没有**交互元素（确认条绝不能塞进 aria-hidden 容器）'
+)
+
+const confirmAt = petSrc.indexOf('className="petball-confirm"')
+// 结束位置取「下一个同层级的 `{` 兄弟」（6 空格缩进）。取不到就一路读到文件尾 ——
+// 正向断言（role/button）仍然成立，作用域只会变宽不会变松
+const confirmEnd = confirmAt < 0 ? -1 : petSrc.indexOf('\n      {', confirmAt)
+const confirmBlock = confirmAt < 0 ? null : petSrc.slice(confirmAt, confirmEnd < 0 ? undefined : confirmEnd)
+ok(confirmBlock != null, 'L54 取得到确认条的 JSX 片段')
+ok(confirmBlock != null && /role="status"/.test(confirmBlock), 'L55 确认条带 role="status"（它是活的通知，不是装饰）')
+ok(
+  confirmBlock != null && /<button[\s\S]*?type="button"[\s\S]*?onClick/.test(confirmBlock),
+  'L56 确认条里是真实的 <button type="button" onClick>（不是 div 模拟的）'
+)
+// 关键：确认条**容器自己**不能是 aria-hidden —— 那样整条（含按钮）对辅助技术就不可见了。
+// 内部那一格倒计时带 aria-hidden 反而是有意的：它每 30s 变一次，live region 会把
+// 「还剩 14 分 / 13 分 / 12 分」一句句念出来。所以这里只钉容器，不钉整块片段。
+const confirmOpenTag = confirmAt < 0 ? null : petSrc.slice(confirmAt, petSrc.indexOf('>', confirmAt) + 1)
+ok(confirmOpenTag != null, 'L57 取得到确认条容器的开标签')
+ok(confirmOpenTag != null && !/aria-hidden/.test(confirmOpenTag), 'L58 确认条容器不是 aria-hidden（否则按钮对辅助技术不可见）')
+// 落在泡泡元素**之外**才是兄弟节点。与 L53 互补：L53 盯「泡泡里没有它」，
+// 这一条盯「它确实在泡泡元素结束之后」，两者一起把「塞进去」与「整条删掉」都变红
+ok(
+  bubbleBlock != null && confirmAt > bubbleAt && confirmAt >= bubbleBlock.end,
+  'L59 确认条落在 .petball-bubble 元素之外（兄弟节点，不是它的子节点）'
+)
+
+// ── 样式：复用 token、够得着的点击区、不许 outer box-shadow ────────────────
+const cssSrc = readFileSync(resolve(ROOT, 'src/renderer/src/skins.css'), 'utf-8')
+function cssBody(src, sel) {
+  const i = src.indexOf(`${sel} {`)
+  if (i < 0) return null
+  const end = src.indexOf('}', i)
+  return end < 0 ? null : src.slice(i + sel.length + 2, end)
+}
+const confirmCss = cssBody(cssSrc, '.petball-confirm')
+const btnCss = cssBody(cssSrc, '.petball-confirm-btn')
+ok(confirmCss != null && btnCss != null, 'L59 取得到确认条的两条 CSS 规则')
+ok(confirmCss != null && /pointer-events:\s*auto/.test(confirmCss), 'L60 确认条自己开回 pointer-events（.petball 整体是 none）')
+ok(
+  btnCss != null && parseFloat((btnCss.match(/min-height:\s*([\d.]+)px/) || [])[1]) >= 24,
+  'L61 按钮点击区 ≥ 24×24（WCAG 2.2 最小目标尺寸）'
+)
+// 禁硬编码颜色：皮肤是令牌驱动的，写死一个 hex 就等于新皮肤里它不跟着变
+const COLOR_PROPS = /(?:^|;)\s*(color|background|background-color|border|border-color|box-shadow)\s*:\s*([^;]+)/g
+const hardCoded = [confirmCss, btnCss]
+  .flatMap((b) => (b == null ? [] : [...b.matchAll(COLOR_PROPS)].filter((m) => !/var\(/.test(m[2])).map((m) => m[1])))
+ok(hardCoded.length === 0, `L60 确认条样式全部走 token，无硬编码颜色（实际硬编码：${hardCoded.join(' / ') || '无'}）`)
+// 与球盘同一条纪律：元素与窗口同量级时 outer box-shadow 会被窗口裁成方框
+const outerShadows = ['.petball-confirm', '.petball-confirm-btn', '.petball.no3d .petball-confirm', '.petball.no3d .petball-confirm-btn']
+  .flatMap((sel) => {
+    const body = cssBody(cssSrc, sel)
+    if (body == null) return []
+    const v = (body.match(/box-shadow:\s*([^;]+)/) || [])[1] || ''
+    return v && !/^inset\b/.test(v.trim()) ? [`${sel}: ${v.trim()}`] : []
+  })
+ok(outerShadows.length === 0, `L61 确认条没有 outer box-shadow（实际：${outerShadows.join(' / ') || '无'}）`)
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)
