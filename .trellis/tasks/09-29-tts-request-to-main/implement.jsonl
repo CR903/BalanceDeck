@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "外部 API 接入纪律：失败必须显式抛且可区分（原因码）、401/403 不重试、串行+重试、连着 host 的请求要串行；以及「标签声称实测要核实机制」——curl 不受 CSP 约束，正是本任务教训"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "extras 与 items 两命名空间（token 走 setKey 加密）；CSP 下外连必须走主进程的架构约定；后台节流与 autoplay 两条渲染层设置仍适用"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "测试须 loadTs 加载真实源码、禁止内联副本；反向验证（守卫要能变红）；本任务新增「禁止断言只命中注释」「三元分支要分别断言」等静态守卫纪律"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "跨 IPC 的错误原因码是字面量联合，需穷举校验；url 校验（禁 file:/javascript:）属输入校验；缺失值不得填 0"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "主进程出网的既有契约：request.ts 的超时+记账模式、错误如何向上抛、适配器如何依赖能力而非 electron —— TTS 出口须照此模式而非另起炉灶"}
+{"file": ".trellis/tasks/09-29-tts-request-to-main/prd.md", "reason": "需求与 AC1-AC8；CSP 阻断的根因与三轮修复建立在错误前提上的事实"}
+{"file": ".trellis/tasks/09-29-tts-request-to-main/design.md", "reason": "技术设计：IPC 契约与原因码、二进制回传、复用 request.ts 模式而非函数、自建 URL 的安全边界、token 收口"}

@@ -407,6 +407,31 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 Six keys use `'1'/'0'`, one uses `'1'/''`. There is no helper. Add one, or at minimum note
 which spelling you matched.
 
+### Don't: call `fetch` from the renderer — CSP will reject it before it leaves the page
+
+`src/renderer/index.html` sets `connect-src 'self' data: blob: bd-asset:`. The renderer may
+only talk to itself and those three internal schemes; any other origin is refused by the
+browser with `TypeError: Failed to fetch`. The message looks like a network failure, so it
+gets mis-read as "service is down" — and no amount of service-side verification will
+contradict that, because `curl` is not subject to CSP.
+
+**Instead:** send the request from the main process over IPC. `src/main/ipc.ts` is the
+established home for outbound HTTP (`adapters`, `request.ts`, `tts:speak`); the renderer
+passes `{url, headers, body}` and gets bytes or a reason-coded error back.
+
+| Renderer wants to… | Do this |
+|---|---|
+| fetch a JSON/binary API | IPC handler in `src/main/ipc.ts` |
+| load local assets | `bd-asset://` (already allow-listed) |
+| blob/data URLs | already allow-listed |
+
+**The CSP is a red line.** Do not widen `connect-src` to make a fetch work — that converts a
+per-feature bug into a page-wide egress hole. `test-structure.mjs` F1 locks the value
+verbatim; if it goes red, the fix is to move the request, not to edit `index.html`.
+
+Related: [`../guides/external-api-integration.md`](../guides/external-api-integration.md)
+Step 9 (verify from the layer that actually issues the request).
+
 ## Related
 
 - [`hook-guidelines.md`](./hook-guidelines.md) ·

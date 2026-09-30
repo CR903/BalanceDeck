@@ -7,7 +7,8 @@
 // 谁再把测试代码写回入口，`npm test` 就会红。
 //
 // 这里断言的是**结构与跨进程前提**而非行为，所以只做便宜的静态检查（读文件，不启动 electron）。
-// A–D 守「不许长回去」，E 守「播报链路的主进程前提不许被静默拆掉」。
+// A–D 守「不许长回去」，E 守「播报链路的主进程前提不许被静默拆掉」，
+// F 守「TTS 请求必须留在主进程」—— CSP 逐字不变、渲染层不再 fetch、tts:speak 出口不缺。
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -362,9 +363,12 @@ function handlerBody(src, channel) {
   return end < 0 ? null : src.slice(from, end)
 }
 const setSecretBody = handlerBody(ipcSrc, 'tts:setSecret')
-const getSecretBody = handlerBody(ipcSrc, 'tts:getSecret')
+const hasSecretBody = handlerBody(ipcSrc, 'tts:hasSecret')
 ok(setSecretBody != null, 'E3a 取得到 tts:setSecret 的 handler')
-ok(getSecretBody != null, 'E3b 取得到 tts:getSecret 的 handler')
+ok(
+  hasSecretBody != null,
+  'E3b 取得到 tts:hasSecret 的 handler（渲染层只问「有没有」；tts:getSecret 已随本次任务下线）'
+)
 ok(
   setSecretBody != null && /\bsetKey\(/.test(setSecretBody),
   'E3 tts:setSecret 走 setKey（items · safeStorage 加密落盘）'
@@ -373,9 +377,16 @@ ok(
   setSecretBody != null && !/\bsetExtra\(/.test(setSecretBody),
   'E3b tts:setSecret 不碰 setExtra（extras 是明文 —— 破坏即红：把 setKey 改成 setExtra）'
 )
+// 这条原先是「tts:getSecret 走 getKey」。取明文的通道本身没了，于是断言的**对象**换成
+// 剩下那个读取方 —— 判据（必须走 items，不能混进 extras，混用是静默失败恒为 null）
+// 一模一样地保留着，只是主体换了。
 ok(
-  getSecretBody != null && /\bgetKey\(/.test(getSecretBody) && !/\bgetExtra\(/.test(getSecretBody),
-  'E3c tts:getSecret 走 getKey（与 setKey 同一命名空间；混用两个命名空间是静默失败，恒为 null）'
+  hasSecretBody != null && /\bgetKey\(/.test(hasSecretBody) && !/\bgetExtra\(/.test(hasSecretBody),
+  'E3c tts:hasSecret 走 getKey（与 setKey 同一命名空间；混用两个命名空间是静默失败，恒为 false）'
+)
+ok(
+  handlerBody(ipcSrc, 'tts:getSecret') === null,
+  'E3d tts:getSecret handler 已删除（明文不再出主进程，FR6 —— 加回来即红）'
 )
 ok(
   /function ttsSecretKey\(/.test(ipcSrc) && /\^\[A-Za-z0-9_-\]\{1,64\}\$/.test(ipcSrc),
@@ -388,21 +399,41 @@ ok(
 const preloadSrc = read('src/preload/index.ts')
 ok(
   /setTtsSecret:[^=]*=>[\s\S]{0,120}?invoke\('tts:setSecret'/.test(preloadSrc) &&
-    /getTtsSecret:[^=]*=>[\s\S]{0,120}?invoke\('tts:getSecret'/.test(preloadSrc),
-  'E5 preload 暴露专用的 setTtsSecret / getTtsSecret（不经过 getExtras / setExtras）'
+    /ttsHasSecret:[^=]*=>[\s\S]{0,120}?invoke\('tts:hasSecret'/.test(preloadSrc),
+  'E5 preload 暴露专用的 setTtsSecret / ttsHasSecret（不经过 getExtras / setExtras）'
+)
+// 读取明文的通道必须**关掉**，而不只是「现在没人调」。`setTtsSecret:` 同时作为前置 ——
+// preload 被清空时它一起红，负向断言才不会空洞通过。
+ok(
+  /setTtsSecret:/.test(preloadSrc) && !/getTtsSecret\s*:/.test(preloadSrc),
+  'E5b preload 不再暴露 getTtsSecret（FR6 明文读取通道关闭 —— 加回来即红）'
 )
 
-// 渲染层：token 明文只许待在 ref 里，绝不能进 extras，也绝不能进 React state
+// 渲染层：token 明文落盘走不了 extras，**读取通道在本次任务里整个关掉了**
 const appSrc2 = read('src/renderer/src/App.tsx')
+const appCode = stripComments(appSrc2)
 const extrasWrites = appSrc2.match(/setExtras\(\s*\{[^}]*\}/g) || []
 ok(extrasWrites.length > 0, 'E6a 前置：App 里确实有 setExtras 调用（下面的负向断言不能空洞通过）')
 ok(
   !extrasWrites.some((c) => /ttsSecret|ttsToken|token|secret/i.test(c)),
   'E6 TTS token 不经 setExtras 落盘（破坏即红：把 setTtsSecret 换成 setExtras）'
 )
+
+// （09-29-tts-request-to-main 收口）旧版这条判的是「明文只许待在 ref 里」，现在 ref
+// 本身也没了：请求搬进主进程后，拼 Authorization 头归 `tts:speak`，渲染层拿明文没有
+// 任何用途，只剩一个泄漏面。
+// ⚠ 判据要先剥注释：App.tsx 里 `ttsSecretRef` 这几个字仍在，但只在解释「为什么删」的注释中。
 ok(
-  /const ttsSecretRef = useRef\(''\)/.test(appSrc2) && /ttsSecretRef\.current = /.test(appSrc2),
-  'E7 token 明文只存 ref（不进 useState —— state 会跟着 devtools / 错误上报一起走）'
+  appCode.length > 0 && /\bsetTtsSecret\(/.test(appCode),
+  'E7a 前置：剥注释后 App 仍在（且写 token 的那条路还在）—— 下面的负向断言不能空洞通过'
+)
+ok(
+  !/ttsSecretRef|getTtsSecret|tts:getSecret|Bearer/.test(appCode),
+  'E7 渲染层不持有 token 明文（无 ttsSecretRef / 无读取通道 / 不拼 Bearer —— 重新持有即红）'
+)
+ok(
+  /ttsSecretRef/.test(appSrc2) && !/ttsSecretRef/.test(appCode),
+  'E7c 但注释里留着「为什么删掉明文通道」—— 删掉理由就等于删掉这条决策'
 )
 ok(
   /setTtsHasSecret\(!!s\)|setTtsHasSecret\(!!v\)/.test(appSrc2),
@@ -417,6 +448,112 @@ ok(appExtrasKeys.length > 0, 'E8a 前置：解析出了 App 写的 extras 键（
 ok(
   nonUi.length === 0,
   `E8 extras 键全部 ui: 前缀（非 ui: 的写入会触发全量重新采集，越界键：${nonUi.join(', ') || '无'}）`
+)
+
+// ─── F. TTS 请求迁移到主进程（09-29-tts-request-to-main）────────────────────
+//
+// 渲染层 CSP `connect-src 'self' data: blob: bd-asset:` 是红线（PRD AC3 / FR5），
+// 它禁止渲染层外连 —— 所以曾经写在 speechOut.ts 里的 `fetch` **一次都没到过网络**，
+// 父任务三轮「实测」全是 curl 打服务端验的（curl 不受 CSP 约束，验不到浏览器行为）。
+// 这一段把迁移钉死：CSP 不许改、渲染层不许再有 fetch、请求必须从主进程 tts:speak 出去。
+//
+// ⚠ 全部先剥注释再判。ipc.ts 的段落注释里就写着 `AbortController`、`connect-src`、
+//   `TTS_UNREACHABLE`，裸 grep 会得到一条永远为绿的假护栏（quality-guidelines §D 的
+//   三个坑：注释里的词、窗口太短、首次命中落在注释上）。
+
+console.log('\nF. TTS 请求迁移到主进程（09-29-tts-request-to-main）')
+
+// F1 · CSP 逐字锁死（AC3）。判据是**生效声明**的完整值，不是「文件里出现过 connect-src」
+const cspHtml = read('src/renderer/index.html')
+ok(cspHtml.includes('Content-Security-Policy'), 'F0 前置：index.html 里还有 CSP（没有就谈不上改没改）')
+const cspHit = /connect-src([^"]*)/.exec(cspHtml)
+ok(
+  cspHit != null && cspHit[1].trim() === "'self' data: blob: bd-asset:",
+  `F1 connect-src 逐字未改（AC3 红线；实际 ${JSON.stringify(cspHit ? cspHit[1].trim() : '未找到')}）`
+)
+
+// F2 · 渲染层不再出网。正向前置必须先立起来 —— 文件被清空时负向断言会空洞通过
+const speechCode = stripComments(read('src/renderer/src/speechOut.ts'))
+ok(speechCode.length > 0, 'F2a 前置：speechOut.ts 剥注释后非空（下面的负向断言不能空洞通过）')
+ok(
+  /window\.api\.ttsSpeak\(/.test(speechCode),
+  'F2b 前置：渲染层真的在调 window.api.ttsSpeak（判据有对象，不是「没 fetch 就算赢」）'
+)
+ok(
+  !/fetch\s*\(/.test(speechCode),
+  'F2 speechOut 不再调 fetch（改回 fetch 即红 —— CSP 会拦住它，请求到不了网络）'
+)
+
+// F3 · 主进程出口的形状。D4/D8/D9b 的主体在本次任务里从渲染层搬到了这里
+const speakBody = handlerBody(ipcSrc, 'tts:speak')
+ok(speakBody != null, 'F3a 前置：取得到 tts:speak 的 handler（IPC 存在性；下面几条不能空洞通过）')
+ok(/method:\s*'POST'/.test(speakBody || ''), 'D4 方法 POST（由主进程定，渲染层不再指定）')
+ok(
+  /new AbortController\(\)/.test(speakBody || '') && /signal:\s*ctrl\.signal/.test(speakBody || ''),
+  'D8 带 AbortSignal（socket 在主进程，渲染层不持有）'
+)
+ok(
+  /setTimeout\(\(\) => ctrl\.abort\(\), TTS_TIMEOUT_MS\)/.test(speakBody || ''),
+  'D9b 主进程超时定时器调 ctrl.abort()（12s，与 request.ts 同一数量级）'
+)
+ok(/markNetResult\(/.test(speakBody || ''), 'F3c 拿到响应就记账（与 adapters 同一离线判定口径）')
+ok(
+  /'TTS_UNREACHABLE'/.test(speakBody || '') && /TTS_HTTP_\$\{res\.status\}/.test(speakBody || ''),
+  'F3d 两种原因码都在（DNS/连接/超时与非 2xx 可区分 —— AC4 的「可辨识原因」）'
+)
+
+// F3e · 渲染层传来的 Authorization 必须被丢弃。这是「token 收口」的**唯一机制** ——
+// 没有它，收口就只是一句注释：任何渲染层代码都能塞一个自己的头进来，免费用户会被
+// 悄悄带上假身份。删掉那个 toLowerCase 判断不会让任何功能失败，所以只能静态钉。
+// 判据要同时看「在过滤」和「过滤的是认证头」—— 只查 `toLowerCase` 会放过别的字段过滤。
+ok(
+  /k\.toLowerCase\(\)\s*!==\s*'authorization'/.test(speakBody || '') ||
+    /toLowerCase\(\)\s*!==\s*'authorization'/.test(ipcSrc),
+  'F3e 主进程丢弃渲染层传来的 Authorization（大小写不敏感；删掉即红 —— 收口没有别的机制兜着）'
+)
+ok(
+  /if\s*\(\s*token\s*\)\s*headers\[['"]Authorization['"]\]\s*=/.test(speakBody || ''),
+  'F3e2 有 token 才由主进程自己拼 Authorization（没有 token 的用户不许被带上认证头）'
+)
+
+// F4 · preload 必须把出口暴露出去；F5 · 原因码两侧字面量一致（没有共享常量，只能静态钉）
+ok(
+  /ttsSpeak:[^=]*=>[\s\S]{0,200}?invoke\('tts:speak'/.test(preloadSrc),
+  'F4 preload 暴露 ttsSpeak（渲染层连类型都是从 preload 推导的，没有它就编译不过）'
+)
+ok(
+  speechCode.includes('TTS_UNREACHABLE') && ipcSrc.includes('TTS_UNREACHABLE'),
+  'F5 TTS_UNREACHABLE 两侧字面量一致（ipc.ts 抛 / speechOut 认）'
+)
+ok(
+  speechCode.includes('TTS_HTTP_') && ipcSrc.includes('TTS_HTTP_'),
+  'F5b TTS_HTTP_ 两侧字面量一致（形状一变，401 不重试就静默失效）'
+)
+
+// F6 · 整个渲染层都不许有 token 明文通道（比 E7 的单文件范围大一档）
+const rendererFiles = readdirSync(resolve(ROOT, 'src/renderer/src'))
+  .filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
+ok(rendererFiles.length > 0, 'F6a 前置：扫到了渲染层源文件（一个都没扫到时负向断言会空洞通过）')
+// ⚠ 判据必须覆盖**通道名**与**头名**两类：
+//   · 通道名（ttsSecretRef / getTtsSecret）—— 别人重新开一条读明文的路
+//   · 头名（Authorization / Bearer）—— 通道改个名（如 secretRef）照样能拿到明文，
+//     此时唯一能认出「渲染层又在自己拼认证头」的信号就是这个头本身。
+// 只查通道名的话，`secretRef.current` + `Authorization` 这种换名写法会静默通过 ——
+// 而 design 的收口契约是「渲染层根本不该知道怎么拼这个头」，不是「换个变量名就不算」。
+const stripped = rendererFiles.map((f) => stripComments(read(`src/renderer/src/${f}`)))
+const tokenHits = rendererFiles.filter((f, i) =>
+  /ttsSecretRef|getTtsSecret|tts:getSecret/.test(stripped[i])
+)
+ok(
+  tokenHits.length === 0,
+  `F6 整个渲染层都没有 token 明文读取通道（FR6；越界文件：${tokenHits.join(', ') || '无'}）`
+)
+// 前置：渲染层剥注释后确实有内容（文件被清空时负向断言会空洞通过）
+ok(stripped.some((c) => c.length > 0), 'F6a2 前置：渲染层剥注释后非空')
+const headerHits = rendererFiles.filter((f, i) => /\bAuthorization\b|\bBearer\b/.test(stripped[i]))
+ok(
+  headerHits.length === 0,
+  `F6b 渲染层不自己拼认证头（收口在主进程 tts:speak；越界文件：${headerHits.join(', ') || '无'}）`
 )
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

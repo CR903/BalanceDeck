@@ -167,7 +167,16 @@ export default function App(): React.JSX.Element {
    *   说的正是这件事。
    */
   const probeInFlightRef = useRef(true)
-  /** 已配置 token（只记有无：明文只在下面那个 ref 里，绝不进 state 也不进 extras） */
+  /**
+   * 已配置 token（只记有无）。
+   *
+   * token 明文的落点在本组件里是**没有**：这里曾经有 `const ttsSecretRef = useRef('')`
+   * 存明文、每条播报现拼一个 `Authorization` 头，09-29-tts-request-to-main 把它删了 ——
+   * 请求改由主进程发出去，读 token 与拼头一并归 `ipc.ts` 的 `tts:speak`（FR6 / AC7）。
+   *
+   * ⚠ 别为了「少一次 IPC 往返」把 getter（`tts:getSecret`）加回来：它已随本次任务删除，
+   *   明文一旦跨进渲染层，「全程留在主进程」就只剩「现在这版没读」。门禁：E5 + F6。
+   */
   const [ttsHasSecret, setTtsHasSecret] = useState(false)
   /** 视觉通知文本（'' = 无） */
   const [ttsVisualText, setTtsVisualText] = useState('')
@@ -176,15 +185,6 @@ export default function App(): React.JSX.Element {
   const [testNote, setTestNote] = useState<{ ok: boolean; text: string } | null>(null)
   const testNoteTimerRef = useRef<number | null>(null)
 
-  /**
-   * 自定义 TTS 服务的认证 token 明文。
-   *
-   * 为什么是 ref 而不是 state：① 放 state 等于每次播报都进 React 状态树，密码字符串
-   * 会被 devtools / 错误上报顺走，放 ref 至少不进任何可枚举的快照；② 放 state 会让
-   * 组件重渲染，而它只在**播报那一刻**读一次，没必要。
-   * 落盘由主进程 items 加密负责（design.md D3），**这里绝不能把它写进 extras**。
-   */
-  const ttsSecretRef = useRef('')
   const voiceTimerRef = useRef<number | null>(null)
   /**
    * 待确认预警（AC7）：已播但用户还没点「知道了」的批次。
@@ -379,10 +379,8 @@ export default function App(): React.JSX.Element {
         setTtsHistory([])
       }
 
-      void window.api.getTtsSecret('default').then((s) => {
-        ttsSecretRef.current = s ?? ''
-        setTtsHasSecret(!!s)
-      })
+      // token 只取「有没有」：明文不出主进程（FR6）
+      void window.api.ttsHasSecret('default').then((v) => setTtsHasSecret(!!v))
     })
 
     // 只写 state 不回写 extras：加载时回写会触发一次无谓的落盘
@@ -584,19 +582,13 @@ export default function App(): React.JSX.Element {
 
   /**
    * 静默探测：只验连通性，不播声、不入队、不占配额（speechOut 的 probeTts 内部直连
-   * 请求函数）。它存在的理由是缺陷 2 的因果链 —— 清标志若只靠「下一次播报成功」，
+   * 主进程 `tts:speak`）。它存在的理由是缺陷 2 的因果链 —— 清标志若只靠「下一次播报成功」，
    * 而后续播报全被闸门拦下，标志就永远粘着。
    */
   const runProbe = async (): Promise<void> => {
     const ctx = alertCtxRef.current
-    const token = ttsSecretRef.current
-    const config: TtsConfig = token
-      ? {
-          ...ctx.ttsConfig,
-          authHeader: { ...ctx.ttsConfig.authHeader, Authorization: `Bearer ${token}` }
-        }
-      : ctx.ttsConfig
-    const r = await probeTts(config)
+    // 探测与播报共用同一条传输（主进程 tts:speak），认证头由主进程拼，这里只给配置
+    const r = await probeTts(ctx.ttsConfig)
     if (!probeInFlightRef.current) return
     if (r.ok) stepProbe('ok', '')
     else stepProbe('probe-fail', r.reason)
@@ -612,17 +604,9 @@ export default function App(): React.JSX.Element {
   const speakOut = (text: string, urgent: boolean, bill: boolean): void => {
     const ctx = alertCtxRef.current
     enqueue({ text, urgent, bill })
-    // 认证头**每条现拼**：token 只从 ref 读，不进 state、不进 ui:ttsConfig（design.md D3）。
-    // 自由约定的自定义服务几乎都用 Bearer，故固定这个前缀；免费服务没有 token，不受影响。
-    const token = ttsSecretRef.current
-    const config: TtsConfig = token
-      ? {
-          ...ctx.ttsConfig,
-          authHeader: { ...ctx.ttsConfig.authHeader, Authorization: `Bearer ${token}` }
-        }
-      : ctx.ttsConfig
+    // 认证头不在这里拼：token 明文不进渲染层，`Authorization` 由主进程 `tts:speak` 自己加
     void flush({
-      config,
+      config: ctx.ttsConfig,
       fallback: ctx.fallback,
       gender: ctx.gender,
       onVisual: ctx.visual ? showVisual : undefined,
@@ -806,11 +790,8 @@ export default function App(): React.JSX.Element {
     const v = value.trim()
     // 空串在 UI 上是 no-op（VoiceReminderSection 的契约如此），这里也不删
     if (!v) return
-    void window.api.setTtsSecret('default', v).then(() => {
-      // 明文只留在这个 ref 里（不进 state、不进 extras，见 ttsSecretRef 的注释）
-      ttsSecretRef.current = v
-      setTtsHasSecret(true)
-    })
+    // 明文只在这一跳里过进程（用户刚敲的那串）：主进程落 items 密文，渲染层不回读、不缓存
+    void window.api.setTtsSecret('default', v).then(() => setTtsHasSecret(true))
   }
 
   /**

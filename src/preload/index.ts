@@ -50,8 +50,22 @@ const api = {
   /** 写入某个 TTS 服务的认证 token（空串 = 删除）；主进程落 items（密文），非 extras */
   setTtsSecret: (id: string, value: string): Promise<void> =>
     ipcRenderer.invoke('tts:setSecret', id, value),
-  /** 读取某个 TTS 服务的认证 token；未配置返回 null（渲染层需要它拼 Authorization 头） */
-  getTtsSecret: (id: string): Promise<string | null> => ipcRenderer.invoke('tts:getSecret', id),
+  /**
+   * 是否配置过认证 token。**只有布尔过进程**（FR6）：明文取回来给渲染层拼 Authorization
+   * 头是本任务下线的旧行为 —— 请求已搬进主进程，拼头也归主进程。
+   */
+  ttsHasSecret: (id: string): Promise<boolean> => ipcRenderer.invoke('tts:hasSecret', id),
+
+  // ─── TTS 出网（渲染层 CSP 禁止外连，播报只能从主进程走）───────────────────
+  /**
+   * 让主进程向用户配置的 TTS 服务发一次请求，回传**音频字节**。
+   *
+   * 失败 reject 一个 `message` 就是原因码的 Error（Electron IPC 只透传 message，
+   * 所以码必须写进 message）：`TTS_UNREACHABLE`（DNS/连接/超时）、
+   * `TTS_HTTP_<n>`（服务返回非 2xx）。渲染层 `speechOut.ts` 据此决定重不重试。
+   */
+  ttsSpeak: (req: { url: string; headers: Record<string, string>; body: string }): Promise<ArrayBuffer> =>
+    ipcRenderer.invoke('tts:speak', req),
 
   // ─── 测试观测点（仅 --uitest 时主进程侧注册）──────────────────────────────
   debugPush: (snapshots: unknown, offline?: boolean): Promise<void> =>

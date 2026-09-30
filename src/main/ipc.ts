@@ -15,6 +15,7 @@ import { setTrayIcon, trayInteractionMode } from './tray'
 import { getAutostart, setAutostart, hasSystemLoginItem } from './autostart'
 import { trayTitle } from '../shared/tray-text'
 import { getKey, setKey, setExtra, getExtra } from './keystore'
+import { assertNetAvailable, markNetResult } from './net'
 import { scanEnv } from './scanner'
 import { listSkins, readSkinCss, openSkinMenu, setSkin, currentSkinId } from './skins'
 import {
@@ -67,6 +68,16 @@ function ttsSecretKey(id: unknown): string | null {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return null
   return `tts:secret:${id}`
 }
+
+/**
+ * 主进程发出一次 TTS 请求的超时（毫秒）。
+ *
+ * 与 `request.ts` 的采集默认值同为 12s —— 出网超时在本仓库只有一个数量级，
+ * 别让播报这条链自己长出一个数。渲染层 `speechOut.ts` 另有一个 15s 的**看门超时**，
+ * 那条守的不是 socket 而是 IPC 本身（invoke 永不结算会把 flush 的 draining 闩卡死），
+ * 因此必须**大于**这里的值：小于它就等于把自己的超时当成了主进程的超时。
+ */
+const TTS_TIMEOUT_MS = 12_000
 
 export function registerIpc(): void {
   ipcMain.handle('debug:drag-state', () => consumeDragFired())
@@ -226,18 +237,84 @@ export function registerIpc(): void {
     await setKey(key, typeof value === 'string' ? value.trim() : '')
   })
 
-  // 读 token；未配置返回 null。
+  // ─── TTS 播报请求（主进程出网 + token 收口）────────────────────────────────
   //
-  // 为什么**回传明文**而不是"只有没有"：token 的用途是给渲染层的 fetch 拼
-  // Authorization 头（design.md D4：TTS 请求在渲染进程发），明文终究要过渲染层，
-  // 藏不住也不该假装藏得住。这里真正兑现的保证是**落盘永不明文**（items 密文，
-  // 绝不进 extras），而不是"渲染层看不见明文"—— 那只能靠不返回来实现，届时
-  // 播报时还要多一次 IPC 往返换同样一份明文，纯属多一道可失败的中断点。
-  // 校验失败返回 null，与"未配置"同义：调用方无法区分，也无需区分。
-  ipcMain.handle('tts:getSecret', async (_e, id: string) => {
+  // 为什么播报也走主进程：渲染层 CSP `connect-src 'self' data: blob: bd-asset:` 拦住一切
+  // 外部 fetch（index.html，红线不许改），所以 speechOut.ts 里的 fetch 从未到过网络 ——
+  // 这也是父任务三轮「实测」全错的根因（curl 不受 CSP 约束）。这里照 request.ts 的
+  // **模式**（AbortController 超时 + markNetResult 记账）重写一个专用 handler，而不是
+  // 复用 request()：后者强制 res.text()，音频是二进制，text() 会损坏。
+  //
+  // 失败分类（原因码跨 IPC 传递的机制：不靠 Error.name —— Electron 只透传 message）：
+  //   · DNS / 连接 / 超时      → Error('TTS_UNREACHABLE')     渲染层置不可达 + 排自愈探测
+  //   · 服务返回非 2xx          → Error(`TTS_HTTP_${status}`)  401/403 不重试，其余重试 1 次
+  // 码的**字面量在渲染层 speechOut.ts 与这里**各有一份，但由 test-structure.mjs F5 静态
+  // 钉住两侧一致 —— 这是「没有共享模块」下防止两份漂移的既有做法（与 E3/E5 同套路）。
+  // 文件所有权（implement.md）不许新增 shared 文件，故不抽共享常量。
+
+  // 读 token 的 `tts:getSecret` **已随本次任务下线**（2026-09-29 `09-29-tts-request-to-main`）。
+  //
+  // 它存在的理由是「给渲染层的 fetch 拼 Authorization 头」，而那正是本任务要修的架构错位：
+  // 渲染层 CSP 根本不让 fetch 出网，拿到明文也拼不出一个到得了网络的请求。请求搬进主进程
+  // 之后，token 的读与拼头都在这里完成（见下面的 `tts:speak`），渲染层只需要知道
+  // **有没有**配置过 —— 那由 `tts:hasSecret` 回一个布尔。
+  //
+  // ⚠ 别以「只是少一次 IPC 往返」为由把它加回来：明文一旦跨进渲染层，FR6
+  //   「token 全程留在主进程」就没有结构上的保证，只剩「现在这版没读」。
+  //   门禁：test-structure.mjs E5（preload 无 getTtsSecret）+ F6（渲染层无明文通道）。
+
+  // 有没有已存的 token（返回布尔，**不返回明文**）：渲染层只需知道「有没有」，
+  // 拿明文回去只会让 PRD FR6「明文不再进渲染层内存」落空。
+  ipcMain.handle('tts:hasSecret', async (_e, id: unknown) => {
     const key = ttsSecretKey(id)
-    if (!key) return null
-    return getKey(key)
+    if (!key) return false
+    return (await getKey(key)) != null
+  })
+
+  // 主进程发出 TTS 请求并回传音频字节。token 由主进程自己拼 Authorization 头，
+  // 渲染层只传 url / headers / body，绝不带 token 过来（token 根本不在渲染层内存里）。
+  //
+  // **认证头以主进程为准**：渲染层传来的 Authorization 一律丢弃（大小写不敏感）。
+  // 否则「token 收口」只是一句没有机制的话 —— 任何一段渲染层代码都能塞一个自己的
+  // 头进来，而没有 token 的用户（免费服务）会被它悄悄带上一个假身份。
+  ipcMain.handle('tts:speak', async (_e, req: unknown): Promise<ArrayBuffer> => {
+    const r = (req ?? {}) as { url?: unknown; headers?: unknown; body?: unknown }
+    const url = typeof r.url === 'string' ? r.url : ''
+    // 只放行 http/https：主进程 fetch 能打任意 scheme，『file:』『javascript:』必须在这里
+    // 挡住（渲染层是不可信输入，type-safety.md §D 逐字段复验）。这是防御纵深 ——
+    // 正常配置的地址恒为 http(s)。
+    if (!/^https?:\/\//i.test(url)) throw new Error('TTS_UNREACHABLE')
+
+    const headers: Record<string, string> = {}
+    if (r.headers && typeof r.headers === 'object') {
+      for (const [k, v] of Object.entries(r.headers as Record<string, unknown>)) {
+        if (typeof v === 'string' && k.toLowerCase() !== 'authorization') headers[k] = v
+      }
+    }
+    // token 收口：这里拼，渲染层永远不用知道明文（FR6 / design.md token 收口）
+    const tokenKey = ttsSecretKey('default')
+    const token = tokenKey ? await getKey(tokenKey) : null
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    const body = typeof r.body === 'string' ? r.body : ''
+
+    assertNetAvailable()
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), TTS_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(url, { method: 'POST', headers, body, signal: ctrl.signal })
+      // 拿到了响应（含 4xx/5xx）就说明网络通 —— 与 request.ts 同一判定口径
+      markNetResult(true)
+    } catch (e) {
+      // DNS / 连接 / 超时全部归为「不可达」；401/403 是拿到了响应，走下面的 HTTP 分支
+      markNetResult(false, e)
+      throw new Error('TTS_UNREACHABLE')
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!res.ok) throw new Error(`TTS_HTTP_${res.status}`)
+    return await res.arrayBuffer()
   })
 
   // ─── 托盘图标（渲染层栅格化的供应商 logo，template PNG）────────────────────

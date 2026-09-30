@@ -176,6 +176,38 @@ real source but still missed everything above the parser.
 
 ---
 
+## Step 9: Verify from the layer that actually makes the request
+
+**Problem.** Three rounds of "实测 confirmed the TTS service returns 200 / 1.4 s / valid MP3"
+— all done with `curl` against the endpoint. The feature had never worked once. The renderer's
+CSP (`connect-src 'self' data: blob: bd-asset:`) blocks every outbound `fetch` from the page, so
+the request was rejected by the browser *before* it left the process and surfaced only as
+`TypeError: Failed to fetch`.
+
+**Why it's bad:** `curl` and the app do not share a security context. `curl` is not subject to
+CSP, does not run in an origin, and does not go through IPC. Verifying with it proves the
+*service* is up — it says nothing about whether *this code path* can reach it. The more
+thoroughly you verify at the wrong layer, the more confident (and wrong) you become: the
+symptom was mis-attributed to rate limiting, stale flags, and copy, and three fixes shipped on
+a foundation that could never have worked.
+
+**Instead:**
+- Identify the process/layer that performs the request. Test *there*.
+  - renderer → check `connect-src` in CSP first; if the host isn't allowed, nothing else matters
+  - main process → CSP doesn't apply, but IPC shape, scheme allow-lists, and timeouts do
+- For cross-layer IPC, prove the payload type survives the hop (an `ArrayBuffer` over Electron's
+  structured clone is a real risk, not a formality) with a minimal harness in `/tmp` that uses the
+  *same* handler shape as production.
+- Keep labels honest: 「服务可用」and「应用能用到它」are different claims. Write down which one
+  you measured.
+
+**Corollary — a layered symptom set can be one root cause.** "提示不可达 + 点了没反应" looked
+like two bugs (sticky flag, swallowed clicks). Both were downstream of a request that could never
+leave the process. When several symptoms resist separate explanations, look for the shared
+prerequisite before fixing any of them.
+
+---
+
 ## Checklist
 
 - [ ] Confirmed the endpoint by observing the real product, not by reading docs
@@ -187,3 +219,5 @@ real source but still missed everything above the parser.
 - [ ] Diagnostic path resolves credentials identically to the product path
 - [ ] Sequential + retry if concurrent requests to one host dropped data
 - [ ] Broke the new tests on purpose and watched them fail
+- [ ] Verified from the layer that actually issues the request (not from `curl`, not from a copy)
+- [ ] If the layer is a renderer, read its CSP before anything else

@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-29-tts-request-to-main/prd.md", "reason": "验收基线：AC1-AC8，重点核对 AC3（CSP 逐字未改）与 AC2/AC5（真的出声、自愈能跑通 —— 这两条此前从未被真实验证过）"}
+{"file": ".trellis/tasks/09-29-tts-request-to-main/design.md", "reason": "设计合规基线：数组回传、原因码分级、token 收口、自建 URL 安全边界不得被「顺手加白名单」破坏"}
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "检查项：失败是否显式抛且可区分、401/403 是否误重试、错误是否被原样当技术术语抛给用户；并核实「实测」声明背后真有机制（curl 不受 CSP 约束）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查项：CSP 是否真未改、外连是否全走主进程、token 是否仍在 items 而非 extras/renderer state"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查项：既有断言是否被悄悄删掉（声称只换传输层却少了一堆断言 = 覆盖下降）、新守卫是否非空洞、是否仍有断言只命中注释"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "检查项：主进程出口是否照既有出网模式（超时/记账/错误契约），有无另起炉灶造成两套不一致"}

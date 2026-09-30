@@ -5,9 +5,14 @@
 // 打断各有各的写法。TTS 与系统语音是**两条**通道，只停一条会出事 —— 只
 // speechSynthesis.cancel() 的话 TTS 音频继续响完，只 audio.pause() 的话系统语音继续念。
 //
-// 三条外部依赖刻意都不 import：fetch / Audio / window.speechSynthesis 都在**调用时**从
-// 全局读，因此 scripts/test-speech-out.mjs 可以在纯 node 里替换它们并加载**真实源码**来测
-// （quality-guidelines：禁止把实现复制一份内联进测试）。
+// 三条外部依赖刻意都不 import：`window.api.ttsSpeak` / Audio / window.speechSynthesis 都在
+// **调用时**从全局读，因此 scripts/test-speech-out.mjs 可以在纯 node 里替换它们并加载
+// **真实源码**来测（quality-guidelines：禁止把实现复制一份内联进测试）。
+//
+// 出网为什么在主进程（09-29-tts-request-to-main）：渲染层 CSP `connect-src 'self' data:
+// blob: bd-asset:` 拦住一切外部 fetch —— 本文件里的 `fetch` 从未到过网络，三轮「实测」
+// 全是在 curl 上验的（curl 不受 CSP 约束）。请求现在走 `window.api.ttsSpeak`，与
+// `src/main/adapters/` 同一条边界；本文件只剩纯逻辑：队列、闸门、重试与错误分类。
 //
 // 打断语义（父任务 design.md D5）：
 //   · 紧急入队时若正在播例行 → 停掉例行 + 清空队列，紧急插到最前
@@ -23,15 +28,19 @@
 
 import { DEFAULT_TTS_STYLE, DEFAULT_TTS_VOICE } from '../../shared/tts-preset'
 
-/** TTS 服务配置。密钥本身走主进程加密 IPC，这里只放已取出的运行时值 */
+/** TTS 服务配置 */
 export interface TtsConfig {
   url: string
   voice: string
   speed: number
   /** 语音风格。清单见 shared/tts-preset.ts 的 TTS_STYLES；此前这里是硬编码的 'general' */
   style: string
-  /** 认证头。密钥本身走主进程加密 IPC，此处只放已取出的运行时值 */
-  authHeader?: Record<string, string>
+  //
+  // ⚠ 这里曾经有 `authHeader?: Record<string, string>`，**已随 09-29-tts-request-to-main 下线**。
+  // 它的唯一用途是把 token 明文拼成 Authorization 头交给渲染层的 fetch，而渲染层
+  // CSP 根本不让 fetch 出网 —— 请求搬进主进程之后，读 token 与拼头都在 `tts:speak` 里做。
+  // 留着这个字段等于留一条「渲染层自己发认证头」的路：主进程虽然会覆盖它，但免费服务
+  // （没有 token）的用户会被它悄悄带上一个假身份。门禁：test-speech-out.mjs D12。
 }
 
 /** 端点已在父任务实测（2026-09-29）：HTTP 200 / 1.71s / 有效 MP3。旧 workers.dev 域名被 DNS 污染，已弃用 */
@@ -48,7 +57,14 @@ export const RATE_LIMIT = { MAX_PER_MINUTE: 1, MAX_PER_HOUR: 10 } as const
 /** 队列里最多攒几条待播。攒满说明播报时长已经追上了触发间隔，再入队只会越堆越多 */
 const MAX_PENDING = 3
 
-/** 单次 TTS 请求超时。免费服务实测延迟 1-8s，15s 足够宽又不至于一直挂着 */
+/**
+ * 单次 TTS 请求在**渲染层**的看门超时。
+ *
+ * 真正掐 socket 的是主进程 `ipc.ts` 的 `TTS_TIMEOUT_MS`（12s，AbortController）；
+ * 这条守的是 **IPC 本身** —— `invoke` 若永不结算，`flush` 的 draining 闩会把整条播报链
+ * 永久卡死（此后所有 flush 都返回同一个 pending promise，且 `stopAll` 解不开它）。
+ * 所以必须**大于**主进程那条，否则这里的超时会抢在 socket 超时之前触发。
+ */
 const TTS_TIMEOUT_MS = 15000
 
 /** 系统语音的估算时长：中文约 5 字/秒，voice.ts 固定 rate = 1.0。估得准不准只影响两条播报之间的间隔 */
@@ -388,6 +404,13 @@ async function playOne(item: SpeechItem, opts: FlushOptions): Promise<void> {
 /** 401/403 是凭据/会话问题，重试没有意义（external-api-integration §7） */
 const AUTH_STATUS = new Set([401, 403])
 
+/**
+ * 主进程「DNS/连接/超时」的原因码。**与 `src/main/ipc.ts` 抛的是同一个字面量**，
+ * 两边各一份、由 test-structure.mjs F5 静态钉死 —— 文件所有权不许新增 shared 文件，
+ * 故不抽共享常量（同 ipc.ts 里 E3/E5 的做法）。
+ */
+const CODE_UNREACHABLE = 'TTS_UNREACHABLE'
+
 class TtsAuthError extends Error {
   constructor(status: number) {
     super(`TTS ${status}：凭据或会话问题，不重试`)
@@ -455,8 +478,7 @@ async function speakViaSystem(item: SpeechItem, gender?: 'female' | 'male' | 'an
 /** 取音频字节：最多试两次，401/403 不重试 */
 async function requestAudioBlob(text: string, config: TtsConfig): Promise<Blob> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(config.authHeader ?? {})
+    'Content-Type': 'application/json'
   }
   const body = JSON.stringify({
     input: text,
@@ -484,15 +506,55 @@ async function requestAudioBlob(text: string, config: TtsConfig): Promise<Blob> 
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
+/**
+ * 主进程原因码 `TTS_HTTP_<n>` → HTTP 状态；不是这个形状就返回 null。
+ *
+ * 为什么用码而不是靠 `Error.name`：Electron 的 IPC **只透传 `message`**，
+ * 跨进程的失败必须把可辨识的原因写进 message（design.md「代价」那一条）。
+ */
+const HTTP_CODE_RE = /^TTS_HTTP_(\d{3})$/
+
+function httpStatusOf(e: unknown): number | null {
+  // 读**原始** message，不能走 describeError —— 后者会把码翻译成人话，翻译完就匹配不上了
+  const raw = e instanceof Error ? e.message : String(e)
+  const m = HTTP_CODE_RE.exec(raw)
+  if (!m) return null
+  const n = Number(m[1])
+  // `new Response(_, { status })` 只收 200..599：码本身畸形时按网络层失败处理
+  // （重试一次 + 置不可达），而不是在这一层再抛一个谁也看不懂的 RangeError
+  return n >= 200 && n <= 599 ? n : null
+}
+
+/**
+ * 传输层：渲染层不出网，请求交给主进程 `tts:speak`（CSP 见 `src/renderer/index.html`）。
+ *
+ * 为什么把主进程的返回与原因码**还原成 `Response` 形状**：上面那个循环连同
+ * 超时/重试/401-403/blob 配平是既有逻辑（design.md「其余全部逻辑留在原位不动」），
+ * 换掉的只有传输。用别的返回类型就得把循环一起改写，那正是「只换传输层、既有断言仍有效」
+ * 这条自我约束失效的地方。
+ *
+ * 渲染层仍留一个看门超时（`TTS_TIMEOUT_MS`）：主进程那条掐的是 socket，这条掐的是 IPC。
+ */
 async function fetchWithTimeout(
   url: string,
   headers: Record<string, string>,
   body: string
 ): Promise<Response> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TTS_TIMEOUT_MS)
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    return await fetch(url, { method: 'POST', headers, body, signal: ctrl.signal })
+    const buffer = await Promise.race([
+      window.api.ttsSpeak({ url, headers, body }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(CODE_UNREACHABLE)), TTS_TIMEOUT_MS)
+      })
+    ])
+    // 服务返回的 Content-Type 不随字节过 IPC，这里按 MP3 标注：预设端点与
+    // OpenAI 兼容的 /v1/audio/speech 都回 MP3（父任务实测 2026-09-29）。
+    return new Response(buffer, { status: 200, headers: { 'Content-Type': 'audio/mpeg' } })
+  } catch (e) {
+    const status = httpStatusOf(e)
+    if (status !== null) return new Response(null, { status })
+    throw e
   } finally {
     clearTimeout(timer)
   }
@@ -504,6 +566,15 @@ function cancelSystemSpeech(): void {
   }
 }
 
+/**
+ * 错误 → 一句话。**原因码在这里翻译**：`TTS_UNREACHABLE` / `TTS_HTTP_*` 是跨进程的内部
+ * 约定，原样端给用户就是把实现术语塞进设置页的试听反馈（quality-guidelines 的 P 系列
+ * 挡的正是这类东西）。日志里留的是同一句话 —— 定位靠上下文，不靠码。
+ */
 function describeError(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
+  const raw = e instanceof Error ? e.message : String(e)
+  if (raw === CODE_UNREACHABLE) return '连不上语音服务'
+  const http = HTTP_CODE_RE.exec(raw)
+  if (http) return `语音服务返回 ${http[1]}`
+  return raw
 }

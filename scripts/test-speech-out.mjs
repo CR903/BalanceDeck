@@ -3,13 +3,20 @@
 //
 // 覆盖：频率闸门（分钟/小时/滑出窗口）、队列与打断（紧急插队、例行排队、跳过不叠加、
 //       在途请求丢弃）、stopAll 双通道、TTS 请求契约（URL/头/体/**style 真被发送**/
-//       重试/401 不重试/revokeObjectURL）、未配置不播且不占配额、系统语音回退（含音色性别
-//       透传）、**计费分流**（N）、**不可达自愈**（O）、纯函数 isDuplicate / pacedMs。
+//       重试/401 不重试/revokeObjectURL）、**主进程原因码的映射**（E8-E13）、
+//       未配置不播且不占配额、系统语音回退（含音色性别透传）、**计费分流**（N）、
+//       **不可达自愈**（O）、纯函数 isDuplicate / pacedMs。
+//
+// 传输层（09-29-tts-request-to-main）：请求不再由渲染层 `fetch` 发出，而是走
+// `window.api.ttsSpeak`（主进程 `tts:speak`，因为 index.html 的 CSP connect-src 拦着一切
+// 外连）。桩与 routes 的契约保持不变，所以除 D 段那几条「主体搬到主进程」的之外，
+// 既有断言一条没删。
 //
 // 加载的是**真实源码**（esbuild 打包 src 下的 .ts），不内联实现副本 ——
 // quality-guidelines 明确禁止后者（test-percent.mjs 因此漂移过）。
-// 外部依赖（fetch / Audio / window.speechSynthesis / Date.now / URL.*）全部在测试里替换，
-// 替身都记账并断言「走到了哪条分支」，避免测试静默走别的分支。
+// 外部依赖（window.api.ttsSpeak / fetch / Audio / window.speechSynthesis / Date.now / URL.*）
+// 全部在测试里替换，替身都记账并断言「走到了哪条分支」，避免测试静默走别的分支；
+// 其中 fetch 的桩是**立刻抛**的 —— 渲染层本就不许出网（CSP），谁把它加回来就红。
 //
 // 看门狗不是装饰：Node 在「顶层 await 永远不结算」时会打印一句 unsettled 警告然后**以退出码
 // 0 结束** —— 也就是「实现改坏了但套件报绿」。这里把挂起变成失败。
@@ -59,11 +66,34 @@ function ok(cond, label) {
 
 // ─── 测试替身 ────────────────────────────────────────────────────────────────
 
-/** 临时替换 globalThis.fetch；返回 restore */
+/**
+ * 临时替换 globalThis.fetch；返回 restore。
+ *
+ * 迁移后渲染层**一次都不该调用 fetch**（`index.html` 的 CSP `connect-src` 拦着，
+ * 调了也到不了网络）。所以 `withBroadcast` 传给它的是「立刻抛」的桩：谁把 fetch
+ * 加回 `requestAudioBlob`，第一次播报就会撞上它，相关断言集体变红。
+ */
 function withFetch(fn) {
   const prev = globalThis.fetch
   globalThis.fetch = fn
   return () => (globalThis.fetch = prev)
+}
+
+/**
+ * 把 `window.api.ttsSpeak` 换成桩（主进程 `tts:speak` 的渲染层入口），返回 restore。
+ *
+ * 必须在 `withSystemSpeech()` 之后调用：它会把整个 `window` 换成一个只带
+ * speechSynthesis 的纯桩，不补 api 的话 `requestAudioBlob` 会撞 TypeError ——
+ * 表现为「套件全红但报的全是无关错误」。所以这里把前提显式化，缺了就直接抛。
+ */
+function withTtsSpeak(fn) {
+  if (!globalThis.window) throw new Error('withTtsSpeak 必须在 withSystemSpeech() 之后调用')
+  const prev = globalThis.window.api
+  globalThis.window.api = { ttsSpeak: fn }
+  return () => {
+    if (prev === undefined) delete globalThis.window.api
+    else globalThis.window.api = prev
+  }
 }
 
 /** 可控的 HTMLAudioElement 替身；autoEnd=false 时音频一直「在播」，供打断测试用 */
@@ -207,23 +237,44 @@ const LEGACY_URL = 'https://tts.chour903.workers.dev/v1/audio/speech'
 const okBlob = () => new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mpeg' })
 const okRes = () => ({ ok: true, status: 200, blob: async () => okBlob() })
 
-/** 一条完整的播报环境：冻结时钟 + 记账 fetch + 假音频 + 假系统语音 + 日志收走 */
+/** 一条完整的播报环境：冻结时钟 + 记账 ttsSpeak + 假音频 + 假系统语音 + 日志收走 */
 let clockSeq = 100_000_000
 async function withBroadcast({ autoEnd = true, clock, routes } = {}) {
   stopAll()
   // 每段场景的时钟至少往前推一小时：闸门的记录必须落在窗口外，各段才互不干扰
   const clk = withClock(clock ?? (clockSeq += 3_600_001))
   const calls = []
-  // 未覆盖的 URL 直接抛 —— 避免测试因为「URL 拼错」而静默走了别的分支
-  const restoreFetch = withFetch(async (url, init) => {
-    calls.push({ url, init, body: JSON.parse(init.body) })
-    const r = routes(url, calls.length)
-    if (!r) throw new TypeError(`fetch failed（本套件未覆盖的 URL: ${url}）`)
-    if (r.throw) throw new TypeError(r.throw)
-    return r.res
-  })
   const restoreAudio = withAudio(autoEnd)
+  // 顺序有讲究：withSystemSpeech() 会**整个换掉 window**，所以补 api 必须在它之后；
+  // 撤的时候反过来，先撤 api 再把 window 换回去（否则 restore 会打在已被还原的 window 上）
   const sys = withSystemSpeech()
+  // ── 传输层桩（window.api.ttsSpeak，主进程 tts:speak 的渲染层入口）────────────
+  // `routes` 的形状沿用旧的 fetch 契约（`{ res: { ok, status, blob } }` / `{ throw }`），
+  // 这样既有断言一条都不用改，换掉的只有传输层：
+  //   · 成功      → 回 ArrayBuffer（主进程 `tts:speak` 返回的就是字节）
+  //   · HTTP 失败 → 抛 `TTS_HTTP_<n>`（主进程对非 2xx 的原因码）
+  //   · 网络失败  → 抛 `TypeError('fetch failed')`（与主进程归类后的失败同一路）
+  // 未覆盖的 URL 照旧直接抛 —— 避免测试因为「URL 拼错」而静默走了别的分支。
+  const restoreSpeak = withTtsSpeak(async (req) => {
+    calls.push({
+      url: req.url,
+      init: { method: 'POST', headers: req.headers },
+      body: JSON.parse(req.body)
+    })
+    const r = routes(req.url, calls.length)
+    if (!r) throw new TypeError(`tts:speak 未覆盖的 URL: ${req.url}`)
+    if (r.throw) throw new TypeError(r.throw)
+    if (r.res.ok) {
+      const blob = await r.res.blob()
+      return await blob.arrayBuffer()
+    }
+    throw new Error(`TTS_HTTP_${r.res.status}`)
+  })
+  // 渲染层不许出网（CSP 本来也拦）：把 fetch 钉成一个会立刻失败的桩，
+  // 谁把 fetch 加回 requestAudioBlob，第一次播报就撞上它
+  const restoreFetch = withFetch(() => {
+    throw new Error('渲染层不许出网：请求必须走 window.api.ttsSpeak（CSP connect-src）')
+  })
   const urls = withObjectUrl()
   const logs = captureLogs()
   return {
@@ -235,6 +286,7 @@ async function withBroadcast({ autoEnd = true, clock, routes } = {}) {
     audio: () => FakeAudio.instances,    async done() {
       logs.restore()
       urls.restore()
+      restoreSpeak()
       sys.restore()
       restoreAudio()
       restoreFetch()
@@ -325,30 +377,35 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
     eq(b.calls.length, 1, 'D1 播一条 = 一次请求')
     eq(b.calls[0].url, TTS_URL, 'D2 打的是实测端点（父任务 D1）')
     eq(b.calls[0].url !== LEGACY_URL, true, 'D3 不是已被 DNS 污染的旧域名')
-    eq(b.calls[0].init.method, 'POST', 'D4 方法 POST')
+    // D4（方法 POST）与 D8（带 AbortSignal）的主体随请求搬进了主进程：渲染层既不指定
+    // 方法也不持有 socket，断言留在这里就成了「断言自己的桩」。改判在 test-structure.mjs
+    // 的 F 段（读 ipc.ts 的 tts:speak handler），标签仍是 D4 / D8。
     eq(b.calls[0].init.headers['Content-Type'], 'application/json', 'D5 默认带 Content-Type')
-    eq(b.calls[0].init.headers.Authorization, undefined, 'D6 未配 authHeader → 不带认证头')
+    eq(b.calls[0].init.headers.Authorization, undefined, 'D6 渲染层不带认证头（拼头归主进程）')
     eq(
       b.calls[0].body,
       { input: '余额不足', voice: 'zh-CN-YunxiNeural', speed: 1, pitch: '0', style: 'general' },
       'D7 请求体字段与父任务 D1 一致'
     )
-    eq(b.calls[0].init.signal instanceof AbortSignal, true, 'D8 带 AbortSignal（超时靠它）')
   } finally {
     await b.done()
   }
 }
 
 {
-  // D7 只证明「信号传下去了」，没证明「真的会在超时后中断」——15s 太长，单元套件里等不起。
-  // 这一条是**静态**护栏：它证明超时那条线还接着 abort，不是行为断言（quality-guidelines
-  // 里 grep 门与行为断言是两回事，这里明说是前者）。
-  const src = readFileSync(new URL('../src/renderer/src/speechOut.ts', import.meta.url), 'utf8')
+  // ── 静态护栏：渲染层的看门超时 ────────────────────────────────────────────
+  // 主进程那条 12s 超时守的是 socket（在 ipc.ts，由 test-structure F3 守）；这里守的是
+  // **IPC 自己** —— invoke 永不结算时 flush 的 draining 闩会把整条播报链永久卡死。
+  // 注释先剥掉：D9/D10 的字面量在注释里也出现过，裸 grep 会得到永远为绿的假护栏。
+  const speechSrc = readFileSync(new URL('../src/renderer/src/speechOut.ts', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  ok(speechSrc.length > 0, 'D0 前置：speechOut.ts 剥掉注释后非空（下面的静态断言不能空洞通过）')
   ok(
-    /const timer = setTimeout\(\(\) => ctrl\.abort\(\), TTS_TIMEOUT_MS\)/.test(src),
-    'D9 超时定时器仍然调 ctrl.abort()（静态检查，非行为断言）'
+    /setTimeout\(\(\) => reject\(new Error\(CODE_UNREACHABLE\)\), TTS_TIMEOUT_MS\)/.test(speechSrc),
+    'D9 渲染层的看门超时仍然排着（IPC 卡死时兜底；改回 fetch 即红）'
   )
-  ok(/const TTS_TIMEOUT_MS = \d+/.test(src), 'D10 超时时长有具名常量（静态检查）')
+  ok(/const TTS_TIMEOUT_MS = \d+/.test(speechSrc), 'D10 超时时长有具名常量（静态检查）')
 }
 
 {
@@ -366,11 +423,18 @@ out('\nD. TTS 请求契约：URL / 头 / 体 / 未配置不播')
       fallback: false
     })
     eq(b.calls[0].url, 'https://x.test/tts', 'D11 自定义 url 被使用')
-    eq(b.calls[0].init.headers.Authorization, 'Bearer k', 'D12 authHeader 合并进请求头')
+    // D12 曾经断言「authHeader 合并进请求头 = Bearer k」，**方向反过来了**：
+    // token 收口之后渲染层不许自己拼认证头，配置里塞进来的 authHeader 必须发不出去
+    // （主进程 tts:speak 会覆盖它，但免费服务没有 token，放行就是带一个假身份出去）。
+    eq(
+      b.calls[0].init.headers.Authorization,
+      undefined,
+      'D12 渲染层不拼认证头：配置里塞 authHeader 也不发出去（token 收口，AC7/FR6）'
+    )
     eq(
       b.calls[0].init.headers['Content-Type'],
       'application/json',
-      'D13 authHeader 不覆盖 Content-Type'
+      'D13 Content-Type 照常发出（认证头收口后请求头只剩它）'
     )
     eq(b.calls[0].body.voice, 'v', 'D14 自定义音色生效')
     eq(b.calls[0].body.speed, 2, 'D15 自定义语速生效')
@@ -465,6 +529,60 @@ out('\nE. 重试与回退的触发条件（external-api-integration §7）')
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
     eq(b.calls.length, 2, 'E6 网络层失败重试 1 次后放弃（共 2 次请求）')
     ok(b.logs.has('TTS 播报失败'), 'E7 失败显式抛给上层（回退路径依赖它）')
+  } finally {
+    await b.done()
+  }
+}
+
+// ── 原因码契约（09-29-tts-request-to-main）─────────────────────────────────────
+//
+// 请求搬进主进程后，失败只以**原因码**跨进程（Electron IPC 只透传 `Error.message`，
+// 靠 Error.name 带信息是行不通的）：`TTS_UNREACHABLE`（DNS/连接/超时）、
+// `TTS_HTTP_<n>`（服务返回非 2xx）。这一组直接让桩抛主进程会抛的那种 Error，
+// 断言的是契约本身，而不是桩的转换逻辑。
+
+{
+  const b = await withBroadcast({ routes: () => ({ throw: 'TTS_UNREACHABLE' }) })
+  const seen = []
+  try {
+    enqueue({ text: '甲', urgent: true, bill: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsFailed: (r) => seen.push(r)
+    })
+    eq(b.calls.length, 2, 'E8 TTS_UNREACHABLE 按网络层失败重试 1 次后放弃')
+    eq(
+      seen,
+      ['连不上语音服务'],
+      'E9 原因码翻译成人话再给用户（设置页不该看到 TTS_UNREACHABLE 这种内部码）'
+    )
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 「置不可达」的那条链：probeTts 的 reason 就是设置页提示与退避排程的输入。
+  const b = await withBroadcast({ routes: () => ({ throw: 'TTS_UNREACHABLE' }) })
+  try {
+    const r = await probeTts(DEFAULT_TTS_CONFIG)
+    eq(r.ok, false, 'E10 原因码失败 → 探测判为未恢复')
+    eq(r.reason, '连不上语音服务', 'E11 探测原因同样是人话（它是那句提示的唯一来源）')
+    eq(b.calls.length, 2, 'E12 探测与播报共用同一条重试策略')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 401/403 不重试：E3/E5 走的是桩里 `{ res: { status } }` → `TTS_HTTP_401` 的转换，
+  // 这一条直接抛主进程会抛的字面量，钉住「码的形状」本身（ipc.ts 的 `TTS_HTTP_${status}`）。
+  const b = await withBroadcast({ routes: () => ({ throw: 'TTS_HTTP_401' }) })
+  try {
+    enqueue({ text: '甲', urgent: true, bill: true })
+    await flush({ config: DEFAULT_TTS_CONFIG, fallback: false })
+    eq(b.calls.length, 1, 'E13 TTS_HTTP_401 是凭据问题 → 不重试（只 1 次请求）')
   } finally {
     await b.done()
   }
