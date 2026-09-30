@@ -1,0 +1,4 @@
+{"file": "README.md", "reason": "项目功能与特性总览，竞品对比的基准"}
+{"file": "DESIGN.md", "reason": "架构与设计取舍，分析竞品时对照本项目设计边界"}
+{"file": ".trellis/tasks/09-30-similar-projects-research/prd.md", "reason": "本调研任务的验收标准"}
+{"file": ".trellis/tasks/09-30-similar-projects-research/research/report.md", "reason": "竞品调研完整报告，后续实现任务需参考"}
