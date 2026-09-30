@@ -405,8 +405,54 @@ Channel names are **string literals with no constant table** — they exist in `
 
 ---
 
-## Known inconsistencies (state, don't silently "fix")
+## Two data-honesty traps that a `tsc`-clean implementation still walks into
 
+Both hit on 2026-09-30 while building the usage prediction. Neither throws, and neither
+turned the test suite red — they are recorded here because a reviewer reading the diff would
+not see them either.
+
+### A reset point in a time series is not a data point — segment before regressing
+
+A windowed quota's `pct` drops 100 → 0 when the window resets. A least-squares fit over the
+raw series lets those negative jumps dominate: a 7-day window resets ~33 times, and the fitted
+slope collapses toward 0. The user-visible symptom is "however hard I use it, it never runs
+out" — the opposite of a false alarm, which is why it survives review.
+
+```ts
+// src/renderer/src/usagePredict.ts:85 — segment on any downward step, keep the last run
+const known = points.filter((p) => typeof p.pct === 'number' && Number.isFinite(p.pct))
+let start = 0
+for (let i = 1; i < known.length; i++) {
+  if ((known[i].pct as number) < (known[i - 1].pct as number)) start = i
+}
+return known.slice(start)
+```
+
+Usage never falls on its own, so a downward step is a sufficient reset test. `pct: null` is
+filtered out **before** the comparison (not coerced to 0) — `null < 30` is `false`, which
+would silently shift where the break lands. Pinned by `test-usage-predict.mjs` B1–B7, with a
+break-once check: delete the loop and four assertions go red.
+
+### Async state keyed by subject: reconcile the id before you use the payload
+
+A detail view loads per-provider history. Holding `points` in state and recomputing on
+`[points, now]` means the render that fires while the *next* provider's request is in flight
+still holds the **previous** provider's points — so supplier A gets supplier B's prediction.
+
+```ts
+// ✗ src/renderer/src/DetailView.tsx:90 — no subject check
+const points = loaded.points
+
+// ✓ store the id with the payload, and distrust the payload when they disagree
+setLoaded({ id: providerId, points: r })
+const points = loaded.id === providerId ? loaded.points : EMPTY_POINTS
+```
+
+Same shape as the read-side re-validation rule below: **the store is not the source of truth
+about identity, the id carried alongside it is.** Guarded by `test-usage-predict.mjs` / the
+DetailView section of `test-usage-store.mjs` H-series.
+
+## Known inconsistencies (state, don't silently "fix")
 1. `DataQuality` vs `string` — `quality.ts:59,64` widen `dataQuality` to `string` while the
    same file imports the strict union and uses it strictly at `:35`.
 2. `ProviderStatus` vs `string` — `format.ts:58` `levelOfPercent(pct, status: string)`; every
@@ -416,6 +462,11 @@ Channel names are **string literals with no constant table** — they exist in `
 4. `DataQuality` semantics: `PetBall.tsx:399` renders `'本机估算'` for `cached`, which reads
    as local. Trust the label in the snapshot, not this string.
 5. `tsconfig.web.json` includes a non-existent file; `@shared/*` is declared but unused.
+6. `DetailView.tsx` used to shadow the imported `isPlan` with a local
+   `const isPlan = s.kind !== 'balance'`; the P0-2 hook import then tripped TDZ errors. It is
+   now a single `isPlan` from `shared/quality` (entry 3's exact class of bug — the same test in
+   two homes). If a local shadows an import, `tsc` reports *use before declaration*, which is
+   the tell.
 
 ## Related
 

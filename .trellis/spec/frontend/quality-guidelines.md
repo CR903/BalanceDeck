@@ -4,7 +4,7 @@
 > `glob '{.eslintrc*,eslint.config.*,.prettierrc*,prettier.config.*,biome.json,.editorconfig,oxlint*}'`
 > → no files. No husky, no lint-staged, no `.github/`.
 >
-> The quality gate is **`tsc` + 13 hand-rolled assertion scripts + a real-Electron QA harness.**
+> The quality gate is **`tsc` + 16 hand-rolled assertion scripts + a real-Electron QA harness.**
 > Formatting is therefore *de facto*, not enforced: 2-space indent, **no semicolons**, single
 > quotes, ~110–120 col soft width, `// ─── section ───` banner comments with box-drawing
 > rules, Chinese comments and Chinese commit messages.
@@ -202,7 +202,10 @@ percent → ssr → quality → tray → pet → gesture → adapters → struct
 | `test-voice.mjs` | `loadTs` | system-voice gender matching (was an inline copy; it hid a real `Siri 声音 1` mismatch — and later, see below, a *wrong* fact) |
 | `test-speech-out.mjs` | `loadTs` | queue / interrupt / rate gate / TTS-vs-fallback / the "service unreachable" signal |
 | `test-trigger-engine.mjs` | `loadTs` ×2 | 5 trigger scenarios, grading, merge/dedupe |
-| `test-alert-orchestration.mjs` | `loadTs` ×3 | **calling order** into the trigger engine + the repeat-until-confirmed state machine |
+| `test-alert-orchestration.mjs` | `loadTs` ×4 | **calling order** into the trigger engine + the repeat-until-confirmed state machine + the notification channel (P0-1, sections M/M2) |
+| `test-system-notify.mjs` | `loadTs` | notification thresholds / reset-soon / data-provenance labels / dirty-config fallback / rising-edge latch |
+| `test-usage-predict.mjs` | `loadTs` ×2 | rate regression, **reset-point segmentation**, sample-sufficiency gating, confidence tiers, prediction text |
+| `test-usage-store.mjs` | `loadTs` ×2 | day-bucketed snapshot store, retention pruning, corruption rebuild + the *"must not go through `extras`"* mechanism guard |
 
 **The script convention** (uniform across all): a `//` header stating
 `用法：node scripts/<name>.mjs` plus what it covers; then `let pass = 0; let fail = 0`; then
@@ -508,7 +511,7 @@ not the signal** (`qa/modes.ts:14-15`: "UI 断言以 JSON 打到 stdout，**不�
 | Command | Handler | Env vars |
 |---|---|---|
 | `npm run smoke` | `qa/modes.ts:49` `runSmoke` | `SMOKE_WAIT_MS` (6000), `BD_TRACE` |
-| `npm run uitest` | `qa/uitest.ts` — 119 ok / 135 keys (2026-09-29, +23 for the voice-reminder settings section) | `BD_TRACE`, `BALANCEDECK_AUTOSTART_DIR` (forced to a temp dir) |
+| `npm run uitest` | `qa/uitest.ts` — one key per assertion, returned as a `Record<string,string>` from `runUiTest`; **key count grows with every settings section** (was 135 on 2026-09-29; the system-notification section added more on 2026-09-30) | `BD_TRACE`, `BALANCEDECK_AUTOSTART_DIR` (forced to a temp dir) |
 | `npm run shots` | `qa/shots.ts` → `/tmp/balancedeck-shots/` | none |
 | `npm run details:test` | `qa/modes.ts:119` | `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_COOKIE` |
 | `--ballshot` (direct) | `qa/ballshot.ts` | `BD_PET`, `BD_PET_ID`, `BD_PETS`, `BD_FAKE_DATA`, `BD_SKIP_COLLAPSE`, `BD_ONLY`, `BD_TOGGLE`, `BD_ISOLATE`, `BD_SETTINGS`, `BD_SKINS`, `BD_DEBUG_RING` |

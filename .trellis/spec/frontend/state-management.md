@@ -168,8 +168,11 @@ Full key inventory:
 | `ui:ttsVisual` / `ui:ttsFallback` / `ui:ttsRoutine` | `'1'` / `'0'` | |
 | `ui:ttsRoutineEvery` / `ui:ttsHistoryCap` | `'60'` / `'100'` | |
 | `ui:cardWindow:<id>` | window name, e.g. `本周` | per-provider, read in `CardView` |
+| `ui:notifyOn` / `ui:notifyConfig` | `'1'`/`'0'` / `JSON.stringify` | 系统通知（P0-1）。**与 TTS 开关完全独立** —— 放在一起会让「关掉语音」顺手关掉通知 |
+| `ui:predictOn` / `ui:predictConfig` | `'1'`/`'0'` / `JSON.stringify` | 用量预测（P0-2）。`ui:predictConfig` **只存 `windowDays`**；`retentionDays` 归主进程的 `sample:usageHistoryDays` 所有（见下） |
 | `skin` / `refreshInterval` | plain id / `'10'…'300'` | |
 | `interval:plan` | — | legacy read-only, migration at `SettingsView.tsx:331` |
+| `sample:usageHistoryDays` | `String(n)` | **故意非 `ui:` 前缀** —— 保留期是采集侧配置，需要能触发重排。走主进程专用通道 `usage:setRetention`（不经过 `setExtras`） |
 
 > `ui:voiceEvery` (旧「播报间隔」) 已随播报迁移**彻底下线**：不再读也不再写。设置页里那个
 > 下拉与 `ui:ttsRoutineEvery` 不是同一个东西 —— 别把旧键加回来「保持兼容」，它没有任何
@@ -321,9 +324,85 @@ the other.
 
 ### Don't: add a non-`ui:` extras key without knowing it triggers a recollect
 
-See `ipc.ts:191-193`. A "harmless" preference write becomes a network request.
+See `ipc.ts:222-231`. A "harmless" preference write becomes a network request.
 
-### Don't: put a rate gate on a shared path to protect one caller
+**Two independent reasons a key can be unfit for `extras`; check both.**
+
+| Rule | Symptom if broken | Enforced by |
+|---|---|---|
+| A non-`ui:` key triggers a full recollect | Setting a sampling parameter silently does nothing (the recollect re-reads the old value) | key inventory above; `ipc.ts:382-383` (the P0-2 comment stating the rule) |
+| **`setExtra` rewrites the whole file every call** | At write frequency, the write volume becomes absurd — see below | `test-usage-store.mjs` H1/H2 |
+
+**`setExtra` is O(entire file), not O(what changed).** `store.ts:60-64`:
+`setExtra` mutates the in-memory map and then `persist()` → `writeFileSync(filePath(), JSON.stringify(cache))`
+— the **entire** `secrets.bin`, credentials included, on **every single key write**.
+
+So the ceiling is set by *write frequency × file size*, not by how much of the key you touch.
+Measured 2026-09-30 while building the usage-prediction snapshot store:
+
+| Data | Size | At its natural write rate |
+|---|---|---|
+| 30-day per-window usage snapshot @ 60s | ≈ 8–12 MB | **≈ 200 GB written per day** |
+| Same @ 15-min sampling | ≈ 600 KB | ≈ 1.4 GB per day |
+
+Both are unacceptable, so the snapshot went to its own file (`userData/usage-history.json`,
+`src/main/usageStore.ts`) with its own `createStore`-shaped factory. **Size the data against
+the write rate before reaching for `extras`** — a few KB of preferences is fine, a time series
+is not, and the difference is invisible until it is on disk.
+
+### Don't: gate a shared evaluator behind only one of its channels' switches
+
+`evaluateAlerts()` drives two output channels: TTS (`ui:ttsOn`) and system notification
+(`ui:notifyOn`). They are **independent by design** — a user who silences the voice usually
+wants the notification, and the notification's settings live *outside* `{ttsOn && …}` in
+`VoiceReminderSection.tsx` for exactly that reason.
+
+The effect that drives it read `if (!ttsOn) return`. `ui:ttsOn` ships **disabled by default**
+while `ui:notifyOn` ships **enabled**, so on a fresh install the notification channel was
+unreachable — the toggle in settings looked live, and `npm test` plus `tsc` were both green.
+
+```tsx
+// ✗ one channel's switch gates both
+useEffect(() => { if (!ttsOn) return; evaluateAlerts() }, [ttsOn, state.snapshots])
+
+// ✓ any channel being on wakes the evaluator
+useEffect(() => { if (!ttsOn && !notifyOn) return; evaluateAlerts() }, [ttsOn, notifyOn, state.snapshots])
+```
+
+Then the per-channel decision moves **inside** `evaluateAlerts`, with each channel's own
+early return *before* its side effects — not one shared early return after them:
+
+```tsx
+notifyLatchRef.current = ctx.notifyLatched = d.nextNotifyLatched
+if (d.notify) void window.api.notifyShow(d.notify)
+if (!ctx.ttsOn) return false          // ← after notify, before any TTS state mutation
+```
+
+**The rule:** when a function drives N independent outputs, the early return is
+`!a && !b && …` (any output wanted), and each output's own guard sits at the head of
+*its* block. Guarding with one channel's flag is the single most likely way to ship a
+channel that is dead on default settings. Pinned by `test-alert-orchestration.mjs`
+M10/M11 (switch off ⇒ no latch) and M20/M22 (latch written back into the mirror).
+
+### Don't: latch "what was consumed this round" when the candidates outnumber the consumers
+
+`checkNotify` may return several candidates (one per provider). Only **one** notification can
+be shown per round, and the latch must survive the ones that did not get shown:
+
+```ts
+// ✗ latches only the winner → providers 2..N are permanently swallowed
+const nextNotifyLatched = new Set(notifyLatchKeys([notify]))
+// ✗ keeps the previous set → a condition that clears never re-arms (violates "fall → re-trigger")
+const nextNotifyLatched = new Set(ctx.notifyLatched)
+
+// ✓ what is *still true* this round, i.e. every surviving candidate
+const nextNotifyLatched = new Set(notifyLatchKeys(candidates))
+```
+
+Compare the TTS side: `nextLatched = new Set(latchKeys(speakable))` — it latches the **filtered
+hits**, never the one that was spoken. Same rule, same reason: the latch records *"still
+holding"*, so a cleared condition releases it and the next crossing re-fires.
+
 
 **Problem.** A quota guard (1/min, 10/hour) placed on a public broadcast entry point also
 throttles things that have nothing to do with quota. The 「测试播报」 button inherited it: the
