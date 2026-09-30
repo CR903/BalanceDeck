@@ -50,3 +50,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: TTS 播报无声修复（CSP media-src + playElement 契约）
+<!-- trellis-session: v=2 fp=8d0ef7a1961d0779 -->
+
+**Date**: 2026-09-30
+**Task**: TTS 播报无声修复（CSP media-src + playElement 契约）
+**Branch**: `main`
+
+### Summary
+
+用户反馈测试播报提示成功但无声。定位为两层 bug：CSP 缺 media-src 拦死 blob 音频 + playElement 吞播放失败使 onTtsOk 永远触发。修复：CSP 新增 media-src 'self' blob:（connect-src 逐字未动），playElement 失败路径改 reject 并带 TTS_PLAYBACK 前缀，onended/打断仍 resolve，失败路径 blob URL 仍释放；test-structure 新增 F1b/F1c 守卫，test-speech-out 扩 FakeAudio 加 20 条播放失败断言；spec 补记请求层成功不等于播放成功。反向验证 8 条全红，13 套 1112 项 0 失败。含此前预警确认气泡提交 288ddf0。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0d76151` | fix(tts): 修复测试播报提示成功但无声（CSP 补 media-src + 播放失败不再被吞） |
+| `288ddf0` | fix(pet): 预警确认提醒改为角色头顶气泡，修掉「OpenCode Go …」的截断 |
+
+### Status
+
+[OK] **Completed**
