@@ -96,10 +96,18 @@ function withTtsSpeak(fn) {
   }
 }
 
-/** 可控的 HTMLAudioElement 替身；autoEnd=false 时音频一直「在播」，供打断测试用 */
+/**
+ * 可控的 HTMLAudioElement 替身。
+ * - autoEnd=true（默认）：构造后异步触发 onended（正常播完）
+ * - autoError=true：构造后异步触发 onerror（播放失败 —— CSP 拦 blob、解码失败等）
+ * - playRejects=true：play() 返回 rejected promise（CSP 下 play() 被拒的那条路径）
+ * autoError 与 autoEnd 互斥（error 优先）；playRejects 独立，可与任一组合。
+ */
 class FakeAudio {
   static instances = []
   static autoEnd = true
+  static autoError = false
+  static playRejects = false
   constructor(src) {
     this.src = src
     this.playCalls = 0
@@ -107,12 +115,14 @@ class FakeAudio {
     this.onended = null
     this.onerror = null
     FakeAudio.instances.push(this)
-    // 自动播完挂在构造上、**不挂在 play() 上**：实现若忘了调 play()，套件仍能跑完并由
+    // 自动播完/失败挂在构造上、**不挂在 play() 上**：实现若忘了调 play()，套件仍能跑完并由
     // F3 断言变红；挂在 play() 上只会让它一路挂到看门狗，读不出是哪一条坏了
-    if (FakeAudio.autoEnd) setTimeout(() => this.onended?.(), 0)
+    if (FakeAudio.autoError) setTimeout(() => this.onerror?.(), 0)
+    else if (FakeAudio.autoEnd) setTimeout(() => this.onended?.(), 0)
   }
   play() {
     this.playCalls++
+    if (FakeAudio.playRejects) return Promise.reject(new Error('NotAllowedError: play() denied'))
     return Promise.resolve()
   }
   pause() {
@@ -121,6 +131,8 @@ class FakeAudio {
   static reset(autoEnd = true) {
     FakeAudio.instances = []
     FakeAudio.autoEnd = autoEnd
+    FakeAudio.autoError = false
+    FakeAudio.playRejects = false
   }
 }
 
@@ -239,12 +251,16 @@ const okRes = () => ({ ok: true, status: 200, blob: async () => okBlob() })
 
 /** 一条完整的播报环境：冻结时钟 + 记账 ttsSpeak + 假音频 + 假系统语音 + 日志收走 */
 let clockSeq = 100_000_000
-async function withBroadcast({ autoEnd = true, clock, routes } = {}) {
+async function withBroadcast({ autoEnd = true, autoError = false, playRejects = false, clock, routes } = {}) {
   stopAll()
   // 每段场景的时钟至少往前推一小时：闸门的记录必须落在窗口外，各段才互不干扰
   const clk = withClock(clock ?? (clockSeq += 3_600_001))
   const calls = []
   const restoreAudio = withAudio(autoEnd)
+  // withAudio 的 reset 把 autoError/playRejects 清成 false；按调用方意图再设回去。
+  // 必须在 flush 创建音频之前设好 —— reset 之后、return 之前这一刻是安全的。
+  if (autoError) FakeAudio.autoError = true
+  if (playRejects) FakeAudio.playRejects = true
   // 顺序有讲究：withSystemSpeech() 会**整个换掉 window**，所以补 api 必须在它之后；
   // 撤的时候反过来，先撤 api 再把 window 换回去（否则 restore 会打在已被还原的 window 上）
   const sys = withSystemSpeech()
@@ -1105,6 +1121,150 @@ out('\nM. 「服务不可达」信号：onTtsFailed / onTtsOk')
     await flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
     eq(b.calls.length, 1, 'M11 前提：第二条被分钟闸门拦下（没发请求）')
     eq(seen.length, 0, 'M12 被闸门拦下 → 不报不可达（没联系过服务）')
+  } finally {
+    await b.done()
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+out("\nM+. 播放层失败：onerror / play() 被拒不再被吞（09-30-tts-playback-fix）")
+
+// 为什么这一整节都要有：playElement 旧契约「结束/失败/被打断都会 resolve」使 onTtsOk
+// 永远触发 —— 请求拿到了字节、CSP 却把 blob 音频拦死时，用户看到的是「试听正常」。
+// 现在失败必须 reject 抛上去，让 onTtsFailed 生效；reason 带 TTS_PLAYBACK 前缀，
+// 与请求层原因码（TTS_UNREACHABLE / TTS_HTTP_*）可区分 —— 都进 onTtsFailed，但
+// 设置页的「为什么没响」能告诉用户是「服务挂了」还是「音频放不出来」。
+
+{
+  // onerror 路径：请求成功拿到 blob，但 <audio> 加载 blob: 被 CSP 拦（或解码失败）
+  const b = await withBroadcast({ autoError: true, autoEnd: false, routes: () => ({ res: okRes() }) })
+  const seen = []
+  const oks = []
+  try {
+    enqueue({ text: '甲', urgent: true, bill: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsFailed: (r) => seen.push(r),
+      onTtsOk: () => oks.push(1)
+    })
+    eq(seen.length, 1, 'MP1 onerror → onTtsFailed 回调一次（不再被吞成 onTtsOk）')
+    eq(oks.length, 0, 'MP2 onerror → 不许顺带报成功（旧契约的 bug 就是这条）')
+    ok(seen.length > 0 && seen[0].startsWith('TTS_PLAYBACK'), `MP3 onerror 原因带 TTS_PLAYBACK 前缀（实际 ${JSON.stringify(seen[0])}）`)
+    eq(b.urls.made.length, 1, 'MP4 onerror 仍申请了 1 个 blob URL（请求是成功的）')
+    eq(b.urls.revoked, b.urls.made, 'MP5 onerror 失败路径也释放 blob URL（finally 不因 throw 而跳过）')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // play() 被拒路径：CSP 下 <audio>.play() 返回 rejected promise（NotSupportedError）
+  const b = await withBroadcast({ playRejects: true, autoEnd: false, routes: () => ({ res: okRes() }) })
+  const seen = []
+  const oks = []
+  try {
+    enqueue({ text: '甲', urgent: true, bill: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsFailed: (r) => seen.push(r),
+      onTtsOk: () => oks.push(1)
+    })
+    eq(seen.length, 1, 'MP6 play() 被拒 → onTtsFailed 回调一次')
+    eq(oks.length, 0, 'MP7 play() 被拒 → 不报成功')
+    ok(seen.length > 0 && seen[0].startsWith('TTS_PLAYBACK'), `MP8 play() 被拒原因带 TTS_PLAYBACK 前缀（实际 ${JSON.stringify(seen[0])}）`)
+    eq(b.urls.revoked, b.urls.made, 'MP9 play() 被拒失败路径也释放 blob URL')
+    eq(b.audio()[0].playCalls, 1, 'MP10 play() 真被调用过（不是没调就报失败）')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 正常路径回归：onended 仍 resolve → onTtsOk（改契约不能把成功也误伤成失败）
+  const b = await withBroadcast({ routes: () => ({ res: okRes() }) })
+  const seen = []
+  const oks = []
+  try {
+    enqueue({ text: '甲', urgent: true, bill: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsFailed: (r) => seen.push(r),
+      onTtsOk: () => oks.push(1)
+    })
+    eq(oks.length, 1, 'MP11 onended 正常播完 → onTtsOk（成功路径未被误伤）')
+    eq(seen.length, 0, 'MP12 正常播完不报失败')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 打断路径回归：被新播报抢断不是失败（旧 active.settle 调用现走 done=resolve）
+  // 若改契约时把打断也误改成 reject，这里会红 —— 打断会把旧条报成 onTtsFailed。
+  // 注：被打断的那条走 done=resolve，仍会触发 onTtsOk（既有行为，本任务不动这条路径）；
+  // 这里只验「打断不产生失败」，不验 onTtsOk 的次数。
+  const b = await withBroadcast({ autoEnd: false, routes: () => ({ res: okRes() }) })
+  const seen = []
+  try {
+    enqueue({ text: '例行一', urgent: false, bill: true })
+    const p1 = flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
+    await waitForCount(b.audio, 1)
+    // 推进时钟让频率闸门放行第二条（bill=true 都受限，紧急也不例外）
+    b.clk.advance(61_000)
+    enqueue({ text: '紧急预警', urgent: true, bill: true })
+    const p2 = flush({ config: DEFAULT_TTS_CONFIG, fallback: false, onTtsFailed: (r) => seen.push(r) })
+    await waitForCount(b.audio, 2)
+    eq(b.audio()[0].pauseCalls, 1, 'MP13a 前提：例行一真被打断（pause 被调），不是被当成失败')
+    // 让紧急播完
+    b.audio()[1].onended?.()
+    await Promise.all([p1, p2])
+    eq(seen.length, 0, 'MP13b 打断不报失败（打断是设计内行为，若误改成 reject 这里会红）')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 回退路径：播放失败若开了 fallback，应接着念系统语音（与请求失败同一条回退语义）
+  const b = await withBroadcast({ autoError: true, autoEnd: false, routes: () => ({ res: okRes() }) })
+  const seen = []
+  try {
+    enqueue({ text: '甲', urgent: true, bill: true })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: true,
+      onTtsFailed: (r) => seen.push(r)
+    })
+    eq(seen.length, 1, 'MP15 播放失败 + 开回退 → 仍报 onTtsFailed（服务字节回来了但没出声）')
+    eq(b.sys.spoken.length, 1, 'MP16 播放失败 + 开回退 → 接着念系统语音（用户至少听到一句）')
+    ok(seen.length > 0 && seen[0].startsWith('TTS_PLAYBACK'), 'MP17 回退路径的失败原因仍带 TTS_PLAYBACK 前缀')
+  } finally {
+    await b.done()
+  }
+}
+
+{
+  // 测试播报（bill=false）播放失败 → 走 onTtsFailed，绝不走 onTtsOk（AC6）
+  // 「试听正常」只允许在真的播完时出现 —— 旧契约正是把播放失败也报成了成功。
+  // 这条不设 fallback 回调：测试播报的反馈（showTestNote）由 App.tsx 在 onTtsFailed 里拼，
+  // 这里验的是 flush 层的回调契约（P6/P6e 已钉 App.tsx 侧的文案与通路）。
+  const b = await withBroadcast({ autoError: true, autoEnd: false, routes: () => ({ res: okRes() }) })
+  const seen = []
+  const oks = []
+  try {
+    enqueue({ text: '示例句', urgent: false, bill: false })
+    await flush({
+      config: DEFAULT_TTS_CONFIG,
+      fallback: false,
+      onTtsFailed: (r) => seen.push(r),
+      onTtsOk: () => oks.push(1)
+    })
+    eq(seen.length, 1, 'MP18 测试播报（bill=false）播放失败 → onTtsFailed 回调（AC6 的行为侧）')
+    eq(oks.length, 0, 'MP19 测试播报（bill=false）播放失败 → 不触发 onTtsOk（不会弹「试听正常」）')
+    ok(seen.length > 0 && seen[0].startsWith('TTS_PLAYBACK'), 'MP20 测试播报失败原因也带 TTS_PLAYBACK 前缀')
   } finally {
     await b.done()
   }

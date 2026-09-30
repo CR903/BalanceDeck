@@ -471,6 +471,21 @@ ok(
   cspHit != null && cspHit[1].trim() === "'self' data: blob: bd-asset:",
   `F1 connect-src 逐字未改（AC3 红线；实际 ${JSON.stringify(cspHit ? cspHit[1].trim() : '未找到')}）`
 )
+// F1b · media-src 必须含 blob: 且不外连（09-30-tts-playback-fix）。
+// TTS 字节经主进程 IPC 回渲染层后用 <audio> 播放 blob: URL，缺这条会被 CSP 拦死、无声。
+// 判据从 CSP content 属性值里取（不是全文 grep）—— 注释里也会出现 media-src 字样，
+// 裸 grep 会先命中注释（spec quality-guidelines §D 的「注释里的词」坑，这里造成假红）。
+const cspContentAttr = /http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]*)"/.exec(cspHtml)
+const cspValue = cspContentAttr ? cspContentAttr[1] : ''
+const mediaHit = /media-src([^;]*)/.exec(cspValue)
+ok(
+  mediaHit != null && mediaHit[1].includes('blob:') && !/\bhttps?\b|\*/.test(mediaHit[1]),
+  `F1b media-src 含 blob: 且不外连（实际 ${JSON.stringify(mediaHit ? mediaHit[1].trim() : '未找到')}）`
+)
+ok(
+  mediaHit != null && mediaHit[1].trim() === "'self' blob:",
+  `F1c media-src 字面为 'self' blob:（防止写成 data: 或塞别的源；实际 ${JSON.stringify(mediaHit ? mediaHit[1].trim() : '未找到')}）`
+)
 
 // F2 · 渲染层不再出网。正向前置必须先立起来 —— 文件被清空时负向断言会空洞通过
 const speechCode = stripComments(read('src/renderer/src/speechOut.ts'))

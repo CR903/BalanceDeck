@@ -206,6 +206,14 @@ like two bugs (sticky flag, swallowed clicks). Both were downstream of a request
 leave the process. When several symptoms resist separate explanations, look for the shared
 prerequisite before fixing any of them.
 
+**Corollary — the request layer succeeding doesn't mean playback succeeded.** After the request
+moved to the main process (09-29-tts-request-to-main), the renderer's CSP still had no `media-src`
+directive, so `media-src` fell back to `default-src 'self'` and blocked the `blob:` URL that
+`<audio>` needs — bytes arrived, but no sound. The test button showed "试听正常" because the
+playback layer swallowed its own failure (`playElement` resolved on error). Verify the *last*
+layer in the chain (audio actually plays), not just the first (HTTP bytes return), and make sure
+each layer reports its own failures instead of resolving them into success.
+
 ---
 
 ## Checklist
@@ -221,3 +229,4 @@ prerequisite before fixing any of them.
 - [ ] Broke the new tests on purpose and watched them fail
 - [ ] Verified from the layer that actually issues the request (not from `curl`, not from a copy)
 - [ ] If the layer is a renderer, read its CSP before anything else
+- [ ] For renderer media playback: checked `media-src` allows `blob:`/the audio's scheme, and verified the playback layer reports its own failures (a request success ≠ sound heard)

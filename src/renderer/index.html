@@ -5,10 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- 本地应用：脚本/样式只允许自身；图片与 fetch 额外允许 data:/blob: ——
          3D 宠物素材（GLB）以 base64 data URL 内联，贴图由 loader 解成 blob URL。
-         真人系宠物走 bd-asset:// 协议（主进程 human-assets.ts 限定目录服务）。 -->
+         真人系宠物走 bd-asset:// 协议（主进程 human-assets.ts 限定目录服务）。
+         media-src 'self' blob: 放行本地 blob 音频：TTS 字节经主进程 IPC 回到渲染层后
+         URL.createObjectURL 喂给 <audio>，与 img-src 允许 blob: 同理。不外连 ——
+         只放主进程已收到的本地字节，不含 http/https/*。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: bd-asset:; connect-src 'self' data: blob: bd-asset:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: bd-asset:; media-src 'self' blob:; connect-src 'self' data: blob: bd-asset:"
     />
     <title>BalanceDeck</title>
   </head>

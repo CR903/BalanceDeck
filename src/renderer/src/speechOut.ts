@@ -435,27 +435,48 @@ async function speakViaTts(item: SpeechItem, config: TtsConfig): Promise<void> {
   }
 }
 
-/** 播放一个音频元素，结束/失败/被打断都会 resolve（失败不重试，只记日志） */
+/**
+ * 播放一个音频元素。
+ * - onended / 被打断 → resolve（打断不是失败：新播报抢断旧的是设计内行为）
+ * - onerror / play() 被拒 → reject(Error('TTS_PLAYBACK: …'))
+ *
+ * 失败曾经被吞成 resolve（旧注释「失败不重试，只记日志」），使 onTtsOk 永远触发 ——
+ * 把「请求拿到了字节」和「真的出声了」混为一谈，CSP 拦掉 blob 音频时用户却看到「试听正常」。
+ * 现在失败抛上去，让 playOne 走 onTtsFailed（如开了回退再念系统语音），回调与事实一致。
+ * reason 带 TTS_PLAYBACK 前缀，与请求层原因码（TTS_UNREACHABLE / TTS_HTTP_* / TTS_AUTH）可区分。
+ */
 function playElement(el: HTMLAudioElement, urgent: boolean): Promise<void> {
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
     let settled = false
-    const settle = (): void => {
-      if (settled) return
-      settled = true
+    const cleanup = (): void => {
       el.onended = null
       el.onerror = null
-      if (active !== null && active.settle === settle) active = null
+    }
+    /** onended 与打断共用：都是「这条正常结束」 */
+    const done = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (active !== null && active.settle === done) active = null
       resolve()
     }
-    el.onended = settle
-    el.onerror = (): void => {
-      console.warn('[speechOut] 音频播放失败（不重试）')
-      settle()
+    /** onerror / play() 被拒：抛上去，让 onTtsFailed 生效 */
+    const fail = (e: unknown): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (active !== null && active.settle === done) active = null
+      reject(e)
     }
-    active = { urgent, pause: () => el.pause(), settle }
+    el.onended = done
+    el.onerror = (): void => {
+      console.warn('[speechOut] 音频播放失败（不重试，抛给 onTtsFailed）')
+      fail(new Error('TTS_PLAYBACK: onerror'))
+    }
+    active = { urgent, pause: () => el.pause(), settle: done }
     void Promise.resolve(el.play()).then(undefined, (e: unknown) => {
       console.warn('[speechOut] audio.play() 被拒：', describeError(e))
-      settle()
+      fail(new Error('TTS_PLAYBACK: ' + describeError(e)))
     })
   })
 }
