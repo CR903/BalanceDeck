@@ -75,6 +75,13 @@ function pushState(s: AppState): void {
 }
 
 app.whenReady().then(async () => {
+  // Windows Toast 的归属 id（P0-1 系统通知）。没有它，Electron 在 Windows 上弹出的
+  // 通知会被算到宿主可执行文件（electron.exe）名下，**在部分系统上直接不出现** ——
+  // 不抛不红，只是「通知永远不来」，而 macOS 上完全看不出问题（那边忽略这个 id）。
+  // 必须与 electron-builder.yml 的 appId 一致，否则打包后归属又变了。
+  //   ⚠ electron-builder.yml 读不到 TS 常量，所以两边各写一份，由
+  //     scripts/test-system-notify.mjs 的 H6 静态比对（与 H0b 的 NOTIFY_LEVELS 同套路）。
+  app.setAppUserModelId('dev.zhouri.balancedeck')
   // 数字人素材协议（bd-asset://human-pets…，缺失时渲染层回落，不阻塞启动）
   setupHumanAssetProtocol()
   // 先读偏好：收起态形态（球/个性人物）与是否置顶，窗口按最终形态一次成型

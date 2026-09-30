@@ -632,6 +632,54 @@ export async function runUiTest(
       ? 'ok'
       : 'fail:not-saved'
 
+  // P0-1 系统通知：总开关 + 三个阈值输入。
+  //
+  // ⚠ 这段刻意放在 `vrs-power` **关掉之后**（上面刚关）：设置页把系统通知分组放在
+  //   `{ttsOn && …}` 之外，正是因为「关掉语音」的理由往往正是「我只想收通知，不想它出声」
+  //   —— 放进去的话连开关都找不到。第一条就是这个设计的**实测**版本
+  //   （test-alert-orchestration.mjs 的 M29 只静态比了位置）。
+  r.vrsNotifyVisible = (await exec("!!document.querySelector('.vrs-notify-on')"))
+    ? 'ok'
+    : 'fail:hidden-while-tts-off'
+  // 判据读**输入框的值**而不是文案：三个默认值是 prd.md 需求 2 的约定（80 / 95 / 1 小时）
+  const notifyDefaults = String(
+    await exec(`(()=>{const w=document.querySelector('.vrs-notify-warn')
+      const h=document.querySelector('.vrs-notify-high'); const rs=document.querySelector('.vrs-notify-reset')
+      return w&&h&&rs ? [w.value,h.value,rs.value].join('/') : 'missing'})()`)
+  )
+  r.vrsNotifyDefaults = notifyDefaults === '80/95/1' ? 'ok' : `fail:${notifyDefaults}`
+  // 开关往返：判据是**落盘值**（extras 往返），不是控件上有没有 class（K15 同款纪律）
+  await exec("document.querySelector('.vrs-notify-on')?.click()")
+  await sleep(600)
+  r.vrsNotifyOff =
+    (await exec("window.api.getExtras(['ui:notifyOn']).then(e=>e['ui:notifyOn']==='0')")) === true
+      ? 'ok'
+      : 'fail:not-saved'
+  // 关掉之后阈值输入收起来（同 vrsRoutineHidden：配置项跟着开关走）
+  r.vrsNotifyHidden =
+    (await exec("!!document.querySelector('.vrs-notify-warn')")) ? 'fail:shown-while-off' : 'ok'
+  await exec("document.querySelector('.vrs-notify-on')?.click()")
+  await sleep(600)
+  // 阈值改一个：必须经 JSON 往返落到 ui:notifyConfig，而不是只停在组件的 useState
+  const setNotifyWarn = (v: string): Promise<unknown> =>
+    exec(`(()=>{const i=document.querySelector('.vrs-notify-warn')
+      if(!i) return
+      const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set
+      setter.call(i,'${v}'); i.dispatchEvent(new Event('input',{bubbles:true}))
+      i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))
+    })()`)
+  await setNotifyWarn('85')
+  await sleep(600)
+  r.vrsNotifyCfg =
+    (await exec(
+      "window.api.getExtras(['ui:notifyConfig']).then(e=>{try{return JSON.parse(e['ui:notifyConfig']).pctWarn===85}catch{return false}})"
+    )) === true
+      ? 'ok'
+      : 'fail:not-saved'
+  // 还原成 80：这一轮改过的配置不许带进后面的断言
+  await setNotifyWarn('80')
+  await sleep(500)
+
   await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
   await sleep(600)
   r.settingsBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'

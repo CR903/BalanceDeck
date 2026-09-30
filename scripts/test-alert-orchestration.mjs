@@ -24,6 +24,9 @@ const { evaluate, confirm, confirmLine, latestPending, pendingCountdown, REPEAT_
   await loadTs('src/renderer/src/alertOrchestrate.ts')
 const { DEFAULT_TRIGGER_CONFIG, THRESHOLD_FIELD, checkTriggers } =
   await loadTs('src/renderer/src/smartBroadcast.ts')
+// P0-1：通知阈值表从引擎侧取。本段验的是「通知判定被编进了同一条时间线」，
+// 阈值本身归 test-system-notify.mjs 管。
+const { DEFAULT_NOTIFY_CONFIG } = await loadTs('src/renderer/src/systemNotify.ts')
 // 频率闸门住在另一个模块里。AC7 的「重复间隔 5 分钟」与闸门的「10 次/小时」是**两个
 // 模块各自的数字**，谁都不知道对方 —— 它们的相容性没有任何一层代码或测试看得见，
 // 所以这里把两个模块的数字放在一起验一次（唯一的跨模块不变量断言）。
@@ -119,6 +122,11 @@ const ctx = (o = {}) => ({
   pending: [],
   historyCap: 100,
   now: T0,
+  // P0-1 通知通道：默认开 + 默认阈值。既有 A-L 段一律不带 notifyLatched，
+  // 走的是「没弹过」这条路，所以它们的 notify 恒为 null，M 段才断得干净。
+  notifyOn: true,
+  notifyConfig: DEFAULT_NOTIFY_CONFIG,
+  notifyLatched: [],
   ...o
 })
 const round = (o = {}) => evaluate(ctx(o))
@@ -144,6 +152,10 @@ const speech = (d) => d?.text ?? ''
 const pendingOf = (d) => d?.nextPending ?? []
 const reasonOf = (d) => d?.reason ?? null
 const pendText = (list) => list.map((b) => b.text)
+
+/** 系统通知的两个取数器（P0-1 / design.md 第 8-9 条）。同样 null 安全 */
+const notifyOf = (d) => d?.notify ?? null
+const nlatchOf = (d) => [...(d?.nextNotifyLatched ?? [])].sort()
 
 // ─── 夹具 ──────────────────────────────────────────────────────────────────
 // 25 小时里 4 条一动不动的采样：判得出「长时间未使用」（例行级），判不出波动
@@ -452,9 +464,15 @@ ok(
   evalBody != null && !/checkTriggers|appendPoint|freshHits|latchKeys|mergeHits|balanceOf/.test(evalBody),
   'K5 evaluateAlerts 里没有残留任何引擎细节 —— 6 步编排全在纯函数里'
 )
+// ⚠ 依赖数组里现在**有** notifyOn（P0-1：系统通知是独立通道，那一路也要被它叫醒，
+//   判据见 M30b/M30c），所以这条不能再钉死成字面量 `[ttsOn, state.snapshots]` ——
+//   它要守的是「触发源是**数据**（state.snapshots）而不是时间」，与 notifyOn 在不在场无关。
+//   钉字面量的后果是：为了加 notifyOn 而把这条改成永久红，等于把守卫废掉。
 ok(
-  evalBody != null && /\}, \[ttsOn, state\.snapshots\]\)/.test(appSrc) && /evaluateAlerts\(\)/.test(appSrc),
-  'K6 数据推送 effect 仍认得 [ttsOn, state.snapshots]，且触发源是数据（不是时间）'
+  evalBody != null &&
+    /\}, \[ttsOn, (?:notifyOn, )?state\.snapshots\]\)/.test(appSrc) &&
+    /evaluateAlerts\(\)/.test(appSrc),
+  'K6 数据推送 effect 仍认得 state.snapshots，且触发源是数据（不是时间）'
 )
 ok(
   evalBody != null && /alertLatchRef\.current\s*=/.test(evalBody),
@@ -839,6 +857,195 @@ ok(
 ok(
   /alertText=\{alertText\}/.test(appSrc) && /onConfirmAlert=\{onConfirmAlert\}/.test(appSrc),
   'L50 确认条与回调从 App 接到 PetBall（props 链没断）'
+)
+
+// ═══ M. 系统通知编排（P0-1 / design.md 第 8-9 条）═══════════════════════════
+// 通知判定本身归 test-system-notify.mjs；这里只答**编排层**的那三件事：
+//   · 通知跑在**同一条时间线**上（复用 snapshots / now，不另起轮询）
+//   · 通知只在「新命中」时弹，到期重复不弹（通知栏不是聊天框）
+//   · nextNotifyLatched 只记**真弹出去的那条**（没弹的不锁存）
+
+console.log('\nM. 系统通知编排（P0-1：第二个输出通道，同一条时间线）')
+
+/**
+ * 套餐型且用量率够高的快照：唯一会让通知命中的数据。
+ *
+ * ⚠ `percent` 必须**显式给**：本文件既有的 `win()` 夹具带着 `percent: 0`，
+ *   而 `windowPercent` 对 percent 有值时**优先用它**（types.ts:29 说明了理由：
+ *   官方直报比 used/limit 推算更精确）。只传 used/limit 的话算出来是 0%，
+ *   通知永不命中 —— 写这条注释是因为它已经让 M2/M13/M14 报红过一次。
+ */
+const nofifySnap = (pct, o = {}) =>
+  snap({ id: 'go', name: 'Go', kind: 'coding', windows: [win({ used: pct, limit: 100, percent: pct })], ...o })
+
+// 阈值与播报不同：播报 exhaustionPct=90，通知 pctWarn=80。所以 pct=85 时
+// **播报不响、通知要响** —— 这一条正是两个通道互不干扰的判据。
+eq(
+  DEFAULT_TRIGGER_CONFIG.exhaustionPct,
+  90,
+  'M0a 前置：播报耗尽阈值 = 90%（与通知的 80% 不同档，两个通道各配各的）'
+)
+eq(DEFAULT_NOTIFY_CONFIG.pctWarn, 80, 'M0b 通知提醒阈值 = 80%')
+
+const nfy1 = round({ snapshots: [nofifySnap(85)], triggerOn: { ...ALL_ON, exhaustion: false }, now: T0 })
+eq(textOf(nfy1), null, 'M1 85% 且播报侧关掉耗尽场景 → 不播报')
+eq(notifyOf(nfy1)?.level, 'warn', 'M2 同一份数据 → 通知照弹（播报关了不影响通知）')
+eq(notifyOf(nfy1)?.id, 'go', 'M3 通知带上供应商 id（锁存键的组成部分）')
+eq(nlatchOf(nfy1), ['notify:go:warn'], 'M4 nextNotifyLatched 记下本轮弹出的那一条')
+// 反向对照：把 pct 抬到播报阈值之上（96 > 90），播报通道就响了 ——
+// 证明 M1 的「不播」来自 triggerOn 与两个通道的阈值差，不是这份数据在播报侧永远静默。
+//
+// ⚠ 用 detailed 而非 simple：96% 配 limit=100 会让「余额不足，剩余 4 元」也命中，
+//   而余额的 TRIGGER_RANK 是 0（最高优先级），simple 模式只念它那一条 ——
+//   拿 simple 断言「播报内容是耗尽那句」会红，而那条红与本段要验的无关。
+eq(textOf(round({ snapshots: [nofifySnap(96)], format: 'detailed', now: T0 })),
+  'Go 余额不足，剩余 4 元，用量已用 96%',
+  'M5 对照：96%（越过播报阈值 90%）时播报照响')
+eq(notifyOf(round({ snapshots: [nofifySnap(96)], now: T0 }))?.level, 'high',
+  'M5b 96% 时通知升到 high 档（越过 pctHigh=95）—— 两个通道各按各的阈值判')
+
+// 去重：条件持续成立期间只弹一次
+const nfy2 = round({
+  snapshots: [nofifySnap(85)],
+  triggerOn: { ...ALL_ON, exhaustion: false },
+  notifyLatched: nfy1?.nextNotifyLatched ?? [],
+  now: T0 + HOUR
+})
+eq(notifyOf(nfy2), null, 'M6 条件仍成立 → 不再弹（数据每 60s 推一次，不锁存就是每分钟弹一次）')
+eq(nlatchOf(nfy2), ['notify:go:warn'], 'M7 锁存保持')
+
+// 条件解除 → 键消失 → 再次越过要能重新弹（AC5）
+const nfy3 = round({
+  snapshots: [nofifySnap(10)],
+  triggerOn: { ...ALL_ON, exhaustion: false },
+  notifyLatched: nfy2?.nextNotifyLatched ?? [],
+  now: T0 + 2 * HOUR
+})
+eq(nlatchOf(nfy3), [], 'M8 条件解除 → 通知锁存随之清掉（锁存的是「弹过」不是「发生过」）')
+const nfy4 = round({
+  snapshots: [nofifySnap(85)],
+  triggerOn: { ...ALL_ON, exhaustion: false },
+  notifyLatched: nfy3?.nextNotifyLatched ?? [],
+  now: T0 + 3 * HOUR
+})
+eq(notifyOf(nfy4)?.level, 'warn', 'M9 再次越过 → 重新弹（充了额度又花光仍要看得见）')
+
+// 总开关：关掉时整段判定跳过，且不产生新锁存
+const mOff = round({ snapshots: [nofifySnap(85)], notifyOn: false, now: T0 })
+eq(notifyOf(mOff), null, 'M10 notifyOn=false → 不弹（与 TTS 开关各管各的）')
+eq(nlatchOf(mOff), [], 'M11 开关关着时不新增锁存（否则开回来会以为用户已经看过）')
+
+// 无快照的整轮不产生任何通知字段
+eq(round({ snapshots: [], now: T0 }), null, 'M12 整轮无快照 → 仍返回 null（不弹不锁存，与 TTS 同规则）')
+
+// 静音只挡播报、不挡通知：mute 的语义是「别**念**给我听」，不是「别提醒我」。
+// 取 96% 这份数据，让播报侧本来就会响 —— 否则「静音后不播」是空洞的
+// （85% 在播报侧本就静默，这条断言证明不了静音起了作用）。
+const mMute = round({ snapshots: [nofifySnap(96)], format: 'detailed', now: T0 })
+eq(textOf(mMute), 'Go 余额不足，剩余 4 元，用量已用 96%', 'M13a 前置：不静音时这份数据会播报（否则下面两条是空洞的）')
+const mMute2 = round({ snapshots: [nofifySnap(96)], muted: ['go'], format: 'detailed', now: T0 })
+eq(textOf(mMute2), null, 'M13b 静音 → 播报被挡下')
+eq(notifyOf(mMute2)?.level, 'high', 'M14 同一份数据仍弹通知（静音是语音语义，不是通知语义）')
+
+// 多供应商同时越线：通知一轮只出一条（先弹最严重的那家），**其余的必须排队**，
+// 不能被记成「弹过了」—— 那是谎称用户已经看过，第二家会被永久吞掉。
+// 这组是返工补上的：首版把「本轮仍然成立的候选」整份记进 nextNotifyLatched。
+const two = (a, b, o = {}) =>
+  round({ snapshots: [nofifySnap(a), nofifySnap(b, { id: 'nd', name: 'ND' })], now: T0, ...o })
+const q1 = two(96, 85, { triggerOn: { ...ALL_ON, exhaustion: false } })
+eq(notifyOf(q1)?.id, 'go', 'M40 第一轮弹更严重的那家（96% 的 high）')
+eq(nlatchOf(q1), ['notify:go:high'], 'M41 锁存里**只有真弹过的那一条**（nd 还没轮到）')
+const q2 = two(96, 85, { triggerOn: { ...ALL_ON, exhaustion: false }, notifyLatched: q1?.nextNotifyLatched })
+eq(notifyOf(q2)?.id, 'nd', 'M42 第二轮轮到 nd（85% 的 warn）—— 没弹过的那条没有被吞掉')
+eq(nlatchOf(q2), ['notify:go:high', 'notify:nd:warn'], 'M43 两条都在锁存里')
+const q3 = two(96, 85, { triggerOn: { ...ALL_ON, exhaustion: false }, notifyLatched: q2?.nextNotifyLatched })
+eq(notifyOf(q3), null, 'M44 第三轮两家都弹过了 → 静默（不是 A/B 交替刷屏）')
+// 反向：条件解除后锁存要清空，否则回落复位失效（AC5）
+const q4 = round({
+  snapshots: [nofifySnap(5), nofifySnap(5, { id: 'nd', name: 'ND' })],
+  notifyLatched: q2?.nextNotifyLatched ?? [],
+  now: T0 + HOUR
+})
+eq(nlatchOf(q4), [], 'M45 两家都回落到阈值以下 → 锁存清空（AC5 复位）')
+
+console.log('\nM2. App 侧接线：锁存写回 + IPC 调用（静态守卫）')
+
+ok(evalBody != null && /notifyLatchRef\.current\s*=/.test(evalBody),
+  'M20 通知锁存必须被写回（漏了这一句就退回「每 30s 弹一次同一条」）')
+ok(evalBody != null && /window\.api\.notifyShow\(\s*d\.notify\s*\)/.test(evalBody),
+  'M21 Decision.notify 直接喂给 notify:show（中间不重新判一次阈值）')
+// 30s 轮询那一路常常一次渲染都不产生：镜像不回填就等于没锁存
+ok(evalBody != null && /ctx\.notifyLatched\s*=/.test(evalBody),
+  'M22 通知锁存回填 alertCtxRef 镜像（轮询那一路不产生渲染，不回填就拿旧锁存去判）')
+// 通知与播报共用同一份快照：不能在 App 侧另起一个轮询单独跑一遍
+ok(evalBody != null && /checkNotify|checkTriggers/.test(evalBody) === false,
+  'M23 evaluateAlerts 内没有残留通知判定细节（编排全在纯函数里）')
+// extras 键表里必须有这两个键，且都用 ui: 前缀（避免触发全量重采集）
+const appKeys = appSrc.slice(appSrc.indexOf('const KEYS = ['), appSrc.indexOf('].', appSrc.indexOf('const KEYS = [')))
+ok(/'ui:notifyOn'/.test(appKeys), 'M24 extras 键表含 ui:notifyOn')
+ok(/'ui:notifyConfig'/.test(appKeys), 'M25 extras 键表含 ui:notifyConfig')
+// 判据必须盯住**带前缀的那一份**：剥掉 ui: 再找同名键是「找得到就算过」，
+// 而剥前缀之后 `notifyOn':` 必然还在（键名后半段没变）—— 上一版就是这么写的，
+// 它在正例下也报红。正确判据是「App 里不存在不带 ui: 前缀的 notify 键」。
+const bareNotifyKeys = (appSrc.match(/'(?:ui:)?notify(?:On|Config)'/g) || []).filter(
+  (k) => !k.startsWith("'ui:")
+)
+eq(bareNotifyKeys, [], 'M26 两个键都带 ui: 前缀（不带会触发全量重采集，ipc.ts:218-223）')
+// 判「键缺失」只能判 !v：extras:get 对不存在的键返回 ''（K15 的同款纪律）
+ok(
+  /raw\('ui:notifyOn'\)\s*!==\s*'0'/.test(appSrc),
+  'M27 通知开关按「不是 0 就是开」判（判 == null 恒为假，新用户会拿到 undefined 而非 true）'
+)
+// 设置页的开关入口必须在 {ttsOn && …} 之外：放进去的话关语音会顺手藏掉通知设置
+const vrsNotifyAt = vrsSrc.indexOf('vrs-notify-on')
+ok(vrsNotifyAt > 0, 'M28 设置页有系统通知分组（vrs-notify-on 定位钩子）')
+const ttsGate = vrsSrc.indexOf('{ttsOn && (')
+ok(
+  vrsNotifyAt > ttsGate,
+  'M29 通知分组在 {ttsOn && …} 之外（放进去的话「关掉语音」会顺手藏掉通知设置入口）'
+)
+
+// ═══ M3. 两个开关必须真的独立：评估那一路不能只被 ttsOn 叫醒 ═══════════════
+//
+// 这组是**返工补上的**：首版把「① 数据一变化就评估一次」那个 useEffect 的早退写成
+// `if (!ttsOn) return`，而 ttsOn 出厂默认**关**（App.tsx 的 useState(false)）、
+// notifyOn 出厂默认**开** —— 于是安装这份代码的每一个用户（也就是全部用户）一条
+// 通知都收不到，设置页那个开关还亮着、怎么点都没反应。**没有任何一条断言报红**：
+// 纯函数侧全绿（M 段验的是 evaluate，而 evaluate 本身是对的），typered 绿，
+// 唯一能看见它的是「关掉语音之后还收不收得到通知」。
+//
+// 两条方向相反的漏洞都要堵住，所以下面四条成对：
+//   · 评估那一路的早退要认 notifyOn（否则 = 上面那个 bug）
+//   · evaluateAlerts 里的早退要认 ctx.ttsOn（否则反过来：语音关了照样出声）
+//   · 且通知的副作用必须排在 TTS 早退**之前**（顺序反了 = 第一个漏洞换个写法复活）
+// ⚠ 切片要**越过** `state.snapshots])` 这个串本身（它是依赖数组的末尾），否则依赖数组
+//   被切在窗口外，M30c 就成了一条永远红的断言。
+const pushSnapAt = appSrc.indexOf('state.snapshots])')
+const pushEnd = pushSnapAt > 0 ? pushSnapAt + 'state.snapshots])'.length : -1
+const pushStart = pushEnd > 0 ? appSrc.lastIndexOf('useEffect(', pushEnd) : -1
+const pushEffect = pushStart > 0 && pushEnd > pushStart ? appSrc.slice(pushStart, pushEnd) : ''
+ok(pushEffect.length > 0, 'M30a 前置：取得到「数据一变化就评估一次」那个 useEffect')
+ok(
+  /if \(!ttsOn && !notifyOn\) return/.test(pushEffect),
+  'M30b 数据推送那一路同时认两个开关（只认 ttsOn 的话：ttsOn 默认关 → 通知永不弹）'
+)
+ok(
+  /\[ttsOn, notifyOn, state\.snapshots\]/.test(pushEffect),
+  'M30c 依赖里有 notifyOn（开关本身的变化要能叫醒这一轮，否则打开开关后要等下一次采集）'
+)
+// 反向：语音关着时不得播、也不得产生待确认批次（确认条不认 ttsOn，会出现「从没听过」的确认条）
+const ttsEarlyReturn = /if \(!ctx\.ttsOn\) return false/.test(evalBody)
+ok(ttsEarlyReturn, 'M31a evaluateAlerts 里 TTS 侧有总开关早退（否则关语音后 evaluateAlerts 仍会播）')
+const notifyCallAt = evalBody.indexOf('window.api.notifyShow')
+const ttsGateAt = evalBody.indexOf('!ctx.ttsOn')
+ok(
+  notifyCallAt > 0 && ttsGateAt > 0 && notifyCallAt < ttsGateAt,
+  'M31b 通知副作用排在 TTS 早退之前（顺序反了 = 「关语音后通知静默失效」换个写法复活）'
+)
+const latchAt = evalBody.indexOf('notifyLatchRef.current')
+ok(
+  latchAt > 0 && latchAt < ttsGateAt,
+  'M31c 通知锁存写回也在早退之前（只弹不锁存 = 每 30s 弹一次同一条）'
 )
 
 // ── UI：确认条是泡泡的**兄弟节点**，不是泡泡的子节点 ────────────────────────

@@ -47,6 +47,7 @@ import {
   pendingCountdown,
   type PendingAlert
 } from './alertOrchestrate'
+import { DEFAULT_NOTIFY_CONFIG, resolveNotifyConfig, type NotifyConfig } from './systemNotify'
 
 /**
  * 待确认预警的轮询周期。
@@ -145,6 +146,20 @@ export default function App(): React.JSX.Element {
   const [ttsHistory, setTtsHistory] = useState<HistoryPoint[]>([])
   /** TTS 服务是否仍连不上（内存态，不持久化：重启后重新探测） */
   const [ttsUnreachable, setTtsUnreachable] = useState(false)
+  // ─── 系统通知（P0-1：与 TTS 并存的第二个输出通道）─────────────────────────
+  // 两者的开关与阈值**完全独立**：用户可能只想开其中一个，而把开关绑在一起会让
+  // 「关掉语音」顺手关掉通知（design.md D1）。
+  /** 系统通知总开关（ui:notifyOn，默认开） */
+  const [notifyOn, setNotifyOn] = useState(true)
+  /** 通知阈值（ui:notifyConfig；默认 >80% 提醒 / >95% 告警 / 重置前 1 小时） */
+  const [notifyConfig, setNotifyConfig] = useState<NotifyConfig>(DEFAULT_NOTIFY_CONFIG)
+  /**
+   * 通知去重锁存：已弹过的「供应商 × 档位」。
+   *
+   * 与 alertLatchRef 同一理由：内存态、不持久化 —— 隔了一夜，「上次弹过」不该跨重启成立。
+   * 声明在 alertCtxRef **之前**，因为下面的 ref 初始化要读它（TDZ）。
+   */
+  const notifyLatchRef = useRef<Set<string>>(new Set())
   /**
    * 退避探测的进度（不可达 → 5s/15s/1min/5min 各试一次 → 恢复即停）。
    *
@@ -301,7 +316,8 @@ export default function App(): React.JSX.Element {
     const KEYS = [
       'ui:ttsOn', 'ui:ttsConfig', 'ui:ttsPreset', 'ui:ttsTriggers', 'ui:ttsTriggerOn',
       'ui:ttsTextFormat', 'ui:ttsVisual', 'ui:ttsFallback', 'ui:ttsRoutine',
-      'ui:ttsRoutineEvery', 'ui:ttsHistoryCap', 'ui:ttsHistory', 'ui:voiceOn'
+      'ui:ttsRoutineEvery', 'ui:ttsHistoryCap', 'ui:ttsHistory', 'ui:voiceOn',
+      'ui:notifyOn', 'ui:notifyConfig'
     ]
     void window.api.getExtras(KEYS).then((e) => {
       // ⚠ `extras:get` 对**不存在的键**返回 `''`（`out[k] = getExtra(k) ?? ''`，ipc.ts:198），
@@ -382,6 +398,18 @@ export default function App(): React.JSX.Element {
 
       // token 只取「有没有」：明文不出主进程（FR6）
       void window.api.ttsHasSecret('default').then((v) => setTtsHasSecret(!!v))
+
+      // ─── 系统通知（P0-1）───────────────────────────────────────────────
+      // 判「键缺失」只能判 !v（extras:get 对缺失键给 ''，见上面那条），判 v == null 恒为假。
+      // 默认**开**：这是「用户第一次越过 80% 就该被看见」的默认姿态，要关在设置页一键关掉。
+      setNotifyOn(raw('ui:notifyOn') !== '0')
+      try {
+        const nc = JSON.parse(raw('ui:notifyConfig') || '{}') as Partial<NotifyConfig>
+        // 读取处重新校验（脏值逐字段回退默认，且收口 pctHigh > pctWarn）
+        setNotifyConfig(resolveNotifyConfig(nc))
+      } catch {
+        setNotifyConfig(DEFAULT_NOTIFY_CONFIG)
+      }
     })
 
     // 只写 state 不回写 extras：加载时回写会触发一次无谓的落盘
@@ -503,7 +531,16 @@ export default function App(): React.JSX.Element {
     routine: false,
     // 性别**每轮从助理现算**，不落盘、不进 state（FR3/FR4）：换助理立刻生效，
     // 不必重启、也不必去设置页改第二处。代价是这里每轮多一次查表，可以忽略。
-    gender: petGender(petRef.current.id)
+    gender: petGender(petRef.current.id),
+    // TTS 总开关**必须进镜像**：下面 ① 的数据推送那一路现在也为「只开通知、不开语音」的
+    // 用户跑，而那一路要判「该跑哪一半」—— 判据得是本轮的快照值，不能是某个闭包里的旧值。
+    ttsOn: false,
+    // 系统通知：开关 / 阈值 / 锁存。锁存也走镜像（与 history 同一条纪律）——
+    // 30s 轮询那一路常常一次渲染都不产生，镜像不跟着更新的话下一轮会拿旧的锁存集合
+    // 去判，等于没锁存（同一条通知每 30 秒弹一次）。
+    notifyOn: true,
+    notifyConfig: DEFAULT_NOTIFY_CONFIG as NotifyConfig,
+    notifyLatched: notifyLatchRef.current
   })
   alertCtxRef.current = {
     collapsed,
@@ -520,7 +557,11 @@ export default function App(): React.JSX.Element {
     fallback: ttsFallback,
     visual: ttsVisual,
     routine: ttsRoutine,
-    gender: petGender(pet.id)
+    gender: petGender(pet.id),
+    ttsOn,
+    notifyOn,
+    notifyConfig,
+    notifyLatched: notifyLatchRef.current
   }
 
   /**
@@ -601,6 +642,11 @@ export default function App(): React.JSX.Element {
    * `bill` 决定这条播报**要不要占免费服务配额**：定时/预警传 true（无人值守，必须限流），
    * 设置页「测试播报」传 false（用户自己点的，一分钟点十次也是他自己的选择）。
    * 过去闸门挂在公共路径上无条件生效，于是第二次点击被**静默丢弃** —— 无日志、无提示、无声音。
+   *
+   * ⚠ 三条调用方（evaluateAlerts / speakRoutine / 试听按钮）都在 ttsOn 的闸门后面，
+   *   所以这里不重复判一次 —— 但**新增调用方时必须自己判**：ttsOn 出厂默认关，
+   *   而 evaluateAlerts 现在也为「只开通知」的用户跑，那一路的早退在调用本函数之前
+   *   （见该函数里 `if (!ctx.ttsOn) return false` 一行）。
    */
   const speakOut = (text: string, urgent: boolean, bill: boolean): void => {
     const ctx = alertCtxRef.current
@@ -639,6 +685,18 @@ export default function App(): React.JSX.Element {
    *
    * 这里仍然走 ref 镜像读实时值：定时器/推送 effect 的依赖数组里不得再加第四个依赖
    * （state-management.md 的定时器契约），所以 ctx 是**这一轮**的显式快照而不是闭包。
+   *
+   * ── 两条早退的顺序（承重，不是排版偏好）─────────────────────────────
+   * 函数体里那两道 `if (!d) return false` / `if (!ctx.ttsOn) return false` 之间夹着
+   * **系统通知**的副作用（P0-1），它在 TTS 早退**之前**：
+   *   · ① 那一路现在也为「只开通知、不开语音」的用户跑（`if (!ttsOn && !notifyOn) return`），
+   *     而 ttsOn 出厂默认**关**。把通知放到 TTS 早退之后，等于「关掉语音 → 通知永远不弹」：
+   *     开关在界面上还亮着、怎么点都没反应，正是「静默失效」里最难查的一种。
+   *   · 反过来 TTS 那一侧仍要整段跳过（不只是 speakOut）：待确认批次也在这段里，而确认条
+   *     （PetBall 的 .petball-confirm）不认 ttsOn —— 只挡声音不挡它的话，用户会看到一条
+   *     「知道了 / 剩余 N 分」而从没听过任何播报。历史与 TTS 锁存照旧不写，与 ttsOn 关着
+   *     时的原行为一致。
+   * 两条各有一个方向的断言钉住（test-alert-orchestration.mjs 的 M30/M31）。
    */
   const evaluateAlerts = (): boolean => {
     const ctx = alertCtxRef.current
@@ -647,6 +705,9 @@ export default function App(): React.JSX.Element {
     const d = evaluate({ ...ctx, latched: alertLatchRef.current, now: Date.now() })
     // 整轮无变更（没有快照）：不播、不动历史与锁存
     if (!d) return false
+    notifyLatchRef.current = ctx.notifyLatched = d.nextNotifyLatched
+    if (d.notify) void window.api.notifyShow(d.notify)
+    if (!ctx.ttsOn) return false
     // 纯函数返回同一引用 = 本轮没有新采样，不必落盘
     if (d.nextHistory !== ctx.history) persistHistory(d.nextHistory)
     ctx.history = d.nextHistory
@@ -695,14 +756,24 @@ export default function App(): React.JSX.Element {
   }
 
   // ① 数据一变化就评估一次：智能播报的触发源是**数据**，不是时间
+  //    ⚠ 早退判据是 `!ttsOn && !notifyOn` 而不是 `!ttsOn`：系统通知是独立于语音的
+  //    第二条输出通道（design.md D1/D2），而 ttsOn 出厂默认**关** —— 只让 ttsOn 说话的话，
+  //    装着这份代码的每一个用户（通知默认开、语音默认关）一条通知都收不到，而设置页那个
+  //    开关还在那儿亮着。「关掉语音」的理由往往正是「我只想收通知」（VoiceReminderSection
+  //    把它放在 {ttsOn && …} 之外也是同一个理由），所以评估这一轮必须两种开关都能叫醒它。
+  //    反向的漏洞在 evaluateAlerts 里堵：那一路开着时 notifyOn 仍由 ctx.notifyOn 判。
   useEffect(() => {
-    if (!ttsOn) return
+    if (!ttsOn && !notifyOn) return
     evaluateAlerts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsOn, state.snapshots])
+  }, [ttsOn, notifyOn, state.snapshots])
 
   // ② 待确认预警的轮询钟：AC7 的重复提醒与倒计时自动确认**共用这一条**自重排 setTimeout 链，
   //    不为它们各加一个定时器（NFR2）。
+  //    ⚠ 这一路**只由 ttsOn 叫醒**，不加 notifyOn：它推的是「未确认批次要重复播」，
+  //      而待确认批次只在 ttsOn 开着时才会被写进（evaluateAlerts 里那道早退）。
+  //      通知的触发源是**数据**：① 那一路每次采集推新快照都会评估，阈值越过即可弹，
+  //      不需要一条常驻的 30s 钟（否则为一个已经关掉的播报功能白挂一个定时器）。
   useEffect(() => {
     if (!ttsOn) return
     const armAlertTimer = (): void => {
@@ -1013,6 +1084,20 @@ export default function App(): React.JSX.Element {
             unreachable={ttsUnreachable}
             mutedProviders={voiceMuted}
             providerNames={state.snapshots.map((s) => ({ id: s.id, name: s.name || s.id }))}
+            notifyOn={notifyOn}
+            onToggleNotify={(on) => {
+              setNotifyOn(on)
+              void window.api.setExtras({ 'ui:notifyOn': on ? '1' : '0' })
+            }}
+            notifyConfig={notifyConfig}
+            onChangeNotifyConfig={(patch) => {
+              // 存的是**用户填的原值**而不是 resolveNotifyConfig 钳制后的值：
+              // 界面要如实显示他填了什么（倒挂时那条 warn 提示也依赖这一点）。
+              // 钳制发生在读取处（引擎那一侧），两边职责不同，不该在这里提前改写。
+              const next = { ...notifyConfig, ...patch }
+              setNotifyConfig(next)
+              void window.api.setExtras({ 'ui:notifyConfig': JSON.stringify(next) })
+            }}
           />
         ) : view === 'detail' ? (
           <DetailView

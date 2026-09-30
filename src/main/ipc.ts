@@ -79,6 +79,13 @@ function ttsSecretKey(id: unknown): string | null {
  */
 const TTS_TIMEOUT_MS = 12_000
 
+/**
+ * 系统通知的档位全集。渲染层那份在 `renderer/src/systemNotify.ts`（`NOTIFY_LEVELS`）——
+ * 两边没有共享模块（文件所有权不许新增 shared 文件），所以由
+ * `scripts/test-system-notify.mjs` 静态比对两侧字面量，与 F5 对原因码的处理同套路。
+ */
+const NOTIFY_LEVELS = ['warn', 'high', 'reset']
+
 export function registerIpc(): void {
   ipcMain.handle('debug:drag-state', () => consumeDragFired())
   ipcMain.handle('state:get', () => currentState())
@@ -315,6 +322,44 @@ export function registerIpc(): void {
     }
     if (!res.ok) throw new Error(`TTS_HTTP_${res.status}`)
     return await res.arrayBuffer()
+  })
+
+  // ─── 系统通知（macOS 通知中心 / Windows Toast）───────────────────────────
+  //
+  // 判定与文案都在渲染层（systemNotify.ts 纯函数），主进程只负责**弹出**：
+  // Notification 是主进程 API，渲染层拿不到，而渲染层也压根不该自己拼通知（可测性）。
+  //
+  // ⚠ payload **逐字段复验**（type-safety §D）：渲染层是信任边界之外的一条通道，
+  //   手改 preload 或被注入的代码都能往这里塞任意字符串，而通知标题会直接出现在
+  //   操作系统的通知中心里 —— 等于一个任它写的内容投放通道。所以只放行非空字符串，
+  //   且档位必须在 NOTIFY_LEVELS 内；不合法就**返回 false 且只记一条日志**，绝不抛异常
+  //   （抛出去会变成渲染层一个未处理的 rejection，而用户只看到「没通知」）。
+  ipcMain.handle('notify:show', async (_e, payload: unknown): Promise<boolean> => {
+    const p = (payload ?? {}) as {
+      title?: unknown
+      body?: unknown
+      level?: unknown
+    }
+    const title = typeof p.title === 'string' ? p.title.trim() : ''
+    const body = typeof p.body === 'string' ? p.body.trim() : ''
+    if (!title || !body || typeof p.level !== 'string' || !NOTIFY_LEVELS.includes(p.level)) {
+      console.warn('[notify] payload 不合法（title/body 为空或档位未知），已忽略')
+      return false
+    }
+    try {
+      const { Notification } = await import('electron')
+      // Linux 无通知守护进程 / 未授权时 isSupported() 为 false：直接构造会抛，
+      // 而那正是「提醒静默失效」最难查的一种形态
+      if (!Notification.isSupported()) {
+        console.warn('[notify] 当前系统不支持应用通知（已跳过）')
+        return false
+      }
+      new Notification({ title, body, silent: false }).show()
+      return true
+    } catch (e) {
+      console.warn('[notify] 通知弹出失败：', e)
+      return false
+    }
   })
 
   // ─── 托盘图标（渲染层栅格化的供应商 logo，template PNG）────────────────────

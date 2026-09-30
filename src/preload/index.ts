@@ -67,6 +67,26 @@ const api = {
   ttsSpeak: (req: { url: string; headers: Record<string, string>; body: string }): Promise<ArrayBuffer> =>
     ipcRenderer.invoke('tts:speak', req),
 
+  // ─── 系统通知（主进程弹；渲染层只送判定结果与文案）───────────────────────
+  /**
+   * 弹一条系统通知（macOS 通知中心 / Windows Toast）。
+   *
+   * 判定在渲染层的 systemNotify.ts（纯函数），弹出必须在主进程：`Notification` 是
+   * 主进程 API。返回是否真的弹出去了 —— 载荷不合法（标题/正文为空、档位未知）或系统
+   * 不支持时为 false，主进程只记一条日志不抛。
+   *
+   * ⚠ 载荷形状在这里**只写一份**：渲染层的 `window.api` 类型是从本文件推导的
+   *   （api.d.ts 注释：preload 没实现的方法，渲染层连类型都没有），所以这一处与
+   *   `NotifyPayload` 结构不兼容时 tsc 会当场报错，而不是等运行时静默失效。
+   */
+  notifyShow: (payload: {
+    id: string
+    name: string
+    title: string
+    body: string
+    level: 'warn' | 'high' | 'reset'
+  }): Promise<boolean> => ipcRenderer.invoke('notify:show', payload),
+
   // ─── 测试观测点（仅 --uitest 时主进程侧注册）──────────────────────────────
   debugPush: (snapshots: unknown, offline?: boolean): Promise<void> =>
     ipcRenderer.invoke('debug:push', snapshots, offline === true),

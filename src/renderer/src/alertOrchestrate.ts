@@ -10,6 +10,15 @@ import {
   type TriggerKind
 } from './smartBroadcast'
 import { appendPoint, type HistoryPoint } from './history'
+import {
+  checkNotify,
+  freshNotifies,
+  notifyLatchKeys,
+  notifyKey,
+  worstNotify,
+  type NotifyConfig,
+  type NotifyPayload
+} from './systemNotify'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 播报编排：一轮评估该**说什么、什么时候说、说完把记忆记成什么样**
@@ -26,6 +35,11 @@ import { appendPoint, type HistoryPoint } from './history'
 // 第二段职责是**确认状态机**（AC7「重复提醒直到确认」）：播一次只是开头，用户没确认之前
 // 要按间隔重播，确认（或超窗 / 条件解除）才停。它住在同一模块里，因为它要答的正是
 // 「这一轮该播什么」—— 与上面的锁存是同一条时间线上的两个阶段：播 → 未确认则重复 → 确认停止。
+//
+// 第三段职责是**系统通知**（P0-1 / design.md D2）：它是第二个输出通道，判定在
+// systemNotify.ts（纯函数），但**编排留在这一条时间线上** —— 与 TTS 共用同一份快照与
+// 同一轮时刻，各自的阈值 / 锁存 / 开关互不干扰。在 App.tsx 里另起一个轮询单独跑一遍
+// 等于把「判定时序 / 锁存 / 条件解除」三套逻辑各写一次（下面记的那些 bug 就是这么来的）。
 //
 // ⚠ 与 design.md 的一处**刻意偏差**（行为要求，不是笔误）：
 //   design 写的是「evaluate 返回 null 表示本轮不播」。但「不播」的那几轮（被 AC9 锁存
@@ -59,6 +73,17 @@ export interface AlertContext {
   historyCap: number
   /** 本轮时刻（epoch ms）—— 纯函数不读自己的钟 */
   now: number
+
+  // ─── 系统通知（第二个输出通道，ui:notify*）────────────────────────────────
+  // 与 TTS 共用同一份快照与同一轮时刻，但**阈值 / 锁存 / 开关全各自独立**（design.md D2）：
+  // 用户可能只想开其中一条，而把两套阈值塞进一张表则迟早互相覆盖。
+
+  /** 系统通知总开关（ui:notifyOn，默认开）。关掉时整段通知判定都跳过 */
+  notifyOn: boolean
+  /** 通知阈值（ui:notifyConfig） */
+  notifyConfig: NotifyConfig
+  /** 已弹过的通知键集合（上升沿锁存，与 latched 互不干扰：键前缀 notify:） */
+  notifyLatched: Iterable<string>
 }
 
 /** 一条待确认的播报批次（一轮里的所有命中合成一批，AC12） */
@@ -103,6 +128,20 @@ export interface Decision {
   nextPending: PendingAlert[]
   /** 本次播报是「新命中」还是「到期重复」——UI 据此决定要不要亮确认条 */
   reason: 'new' | 'repeat' | null
+  /**
+   * 本轮要弹的那条系统通知；null = 本轮不弹（没命中 / 已弹过 / 总开关关着）。
+   *
+   * ⚠ 一轮**最多一条**（多家同时越线时先弹最严重的那条）。为什么不合并成一条：
+   *   通知中心与播报不是同一个通道 —— 播报要念给人听，所以合并成一句；通知是「看一眼
+   *   标题栏」，合并之后用户还得从一长句里找是哪家出了问题。
+   */
+  notify: NotifyPayload | null
+  /**
+   * 下一轮的通知锁存集合。**只含本轮真正弹出去的那一条**的键 —— 记下没弹的等于
+   * 谎称「用户已经看过了」（与播报侧「被覆盖挡下的一轮不锁存」同一条纪律）：
+   * 剩下的候选下一轮继续排队，不会被静默吞掉。
+   */
+  nextNotifyLatched: Set<string>
 }
 
 /**
@@ -187,8 +226,37 @@ export function evaluate(ctx: AlertContext): Decision | null {
     nextPending = kept.map((b) => (b === due ? { ...b, lastSpokenAt: ctx.now } : b))
   }
 
-  // ⑥ 合并去重成一条；有紧急就整条按紧急插队（speechOut 会打断例行）
-  return { text, urgent, nextHistory: next, nextLatched, nextPending, reason }
+  // ⑥ 系统通知（第二个输出通道）。**判定与锁存都与 TTS 独立**（design.md D2）：
+  //    通知只在「新命中」时弹 —— AC7 的到期重复不弹通知，通知栏不是聊天框，重复轰炸
+  //    会招来系统级静音，而语音那边已经重复过三轮了。
+  const candidates = ctx.notifyOn ? checkNotify(ctx.snapshots, ctx.notifyConfig, ctx.now) : []
+  const freshNotifiesOut = freshNotifies(candidates, ctx.notifyLatched)
+  const notify = worstNotify(freshNotifiesOut)
+  // ⚠ 下一轮的锁存集合 = 「上一轮弹过、且条件仍然成立」∪「本轮弹出的那一条」。
+  //   两头都不能少：
+  //   · 只记 candidates（首版的写法）会把**本轮没弹出来的那几条**也记成弹过 ——
+  //     通知一轮只出一条（多供应商时先弹最严重的那家），于是第二、第三家被永久吞掉：
+  //     条件一直成立就一直轮不到，回落后再越过才重新排队。记下没弹的等于谎称
+  //     「用户已经看过」（Decision.nextNotifyLatched 那条纪律说的就是它）。
+  //   · 只记本轮弹出的那一条则更糟：没弹出的下一轮又变「新鲜」，而弹出过的键掉出集合 ——
+  //     两家就 A、B、A、B 交替弹，每 30s 一条，直接把通知中心刷到静音。
+  //   · 条件解除（candidates 里没有这个键）自然从集合里消失 → AC5「回落复位 → 再触发」。
+  const holding = new Set(notifyLatchKeys(candidates))
+  const nextNotifyLatched = new Set<string>()
+  for (const k of ctx.notifyLatched) if (holding.has(k)) nextNotifyLatched.add(k)
+  if (notify) nextNotifyLatched.add(notifyKey(notify))
+
+  // ⑦ 合并去重成一条播报并落给调用方；有紧急就整条按紧急插队（speechOut 会打断例行）
+  return {
+    text,
+    urgent,
+    nextHistory: next,
+    nextLatched,
+    nextPending,
+    reason,
+    notify,
+    nextNotifyLatched
+  }
 }
 
 /**

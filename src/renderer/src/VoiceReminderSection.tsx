@@ -8,6 +8,7 @@ import {
   type TriggerConfig
 } from './smartBroadcast'
 import { DEFAULT_TTS_STYLE, DEFAULT_TTS_VOICE, TTS_STYLES, TTS_VOICES } from '../../shared/tts-preset'
+import { type NotifyConfig } from './systemNotify'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 设置页「语音提醒」分区
@@ -209,6 +210,19 @@ const ROUTINE_STEPS: [number, string][] = [
 const SPEED_RANGE = { min: 0.5, max: 2, step: 0.1 }
 const HISTORY_CAP_RANGE = { min: 10, max: 1000, step: 10 }
 
+// ─── 系统通知阈值（P0-1）─────────────────────────────────────────────────────
+//
+// ⚠ 这里**不复述**默认值：它取自 systemNotify 的 DEFAULT_NOTIFY_CONFIG，
+//   而不是各写一份字面量 —— 界面写 80、引擎写 80，两处各写一次就一定会有一次漂移
+//   （TRIGGER_META 那条注释记的就是同一种事故：界面写 3、引擎写 2）。
+//   百分比上界 100 有实质理由：用量率天然落在 0–100，超过 100 的阈值永远不触发，
+//   让用户输进去只会得到一个「配了但没用」的静默失效。
+const NOTIFY_RANGE: Record<keyof NotifyConfig, { min: number; max: number; step: number }> = {
+  pctWarn: { min: 1, max: 100, step: 1 },
+  pctHigh: { min: 1, max: 100, step: 1 },
+  resetSoonHours: { min: 1, max: 720, step: 1 }
+}
+
 // ─── 数字输入 ─────────────────────────────────────────────────────────────────
 
 /**
@@ -339,6 +353,14 @@ export interface VoiceReminderSectionProps {
   mutedProviders: string[]
   /** 供应商 id / 显示名，用于按供应商覆盖 */
   providerNames: { id: string; name: string }[]
+
+  // ─── 系统通知（P0-1：与语音播报完全独立的第二条通道）────────────────────
+  /** 系统通知总开关（ui:notifyOn，默认开） */
+  notifyOn: boolean
+  onToggleNotify: (on: boolean) => void
+  /** 通知阈值（ui:notifyConfig）；默认 80 / 95 / 1 小时 */
+  notifyConfig: NotifyConfig
+  onChangeNotifyConfig: (patch: Partial<NotifyConfig>) => void
 }
 
 export function VoiceReminderSection({
@@ -376,7 +398,11 @@ export function VoiceReminderSection({
   onChangeHistoryCap,
   unreachable,
   mutedProviders,
-  providerNames
+  providerNames,
+  notifyOn,
+  onToggleNotify,
+  notifyConfig,
+  onChangeNotifyConfig
 }: VoiceReminderSectionProps): React.JSX.Element {
   /** 按供应商覆盖折叠态：默认收起（5 场景 × N 供应商，不该默认铺满设置页） */
   const [overrideOpen, setOverrideOpen] = useState(false)
@@ -777,6 +803,88 @@ export function VoiceReminderSection({
                 onCommit={onChangeHistoryCap}
               />
             </label>
+          </>
+        )}
+
+        {/* ── E. 系统通知（P0-1）──────────────────────────────────────────
+            刻意放在 `{ttsOn && …}` **之外**：系统通知是与语音播报独立的第二条输出通道，
+            放进去的话「关掉智能播报」会顺手把通知设置的入口一起藏掉 —— 而用户关语音的
+            理由往往正是「我只想收通知，不想它出声」，那时他就找不到这个开关了（design.md D1/D7）。 */}
+        <div className="field-label vrs-sub">系统通知</div>
+
+        <div className="enable-row">
+          <span>
+            通知提醒
+            <em className="tag env">系统通知</em>
+          </span>
+          <button
+            type="button"
+            className={'switch vrs-notify-on' + (notifyOn ? ' on' : '')}
+            title={notifyOn ? '关闭后不再弹系统通知' : '开启后用量超阈值时弹系统通知'}
+            onClick={() => onToggleNotify(!notifyOn)}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+
+        {notifyOn && (
+          <>
+            <div className="vrs-actions">
+              <span className="vrs-sample">用量超阈值时弹系统通知，与语音播报互相独立、分别开关。</span>
+            </div>
+
+            <label className="field">
+              <span className="field-label">
+                提醒阈值
+                <em className="tag env">%</em>
+              </span>
+              <NumInput
+                className="vrs-notify-warn"
+                value={notifyConfig.pctWarn}
+                min={NOTIFY_RANGE.pctWarn.min}
+                max={NOTIFY_RANGE.pctWarn.max}
+                step={NOTIFY_RANGE.pctWarn.step}
+                onCommit={(n) => onChangeNotifyConfig({ pctWarn: n })}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">
+                强提醒阈值
+                <em className="tag env">%</em>
+              </span>
+              <NumInput
+                className="vrs-notify-high"
+                value={notifyConfig.pctHigh}
+                min={NOTIFY_RANGE.pctHigh.min}
+                max={NOTIFY_RANGE.pctHigh.max}
+                step={NOTIFY_RANGE.pctHigh.step}
+                onCommit={(n) => onChangeNotifyConfig({ pctHigh: n })}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">
+                重置前提醒
+                <em className="tag env">小时</em>
+              </span>
+              <NumInput
+                className="vrs-notify-reset"
+                value={notifyConfig.resetSoonHours}
+                min={NOTIFY_RANGE.resetSoonHours.min}
+                max={NOTIFY_RANGE.resetSoonHours.max}
+                step={NOTIFY_RANGE.resetSoonHours.step}
+                onCommit={(n) => onChangeNotifyConfig({ resetSoonHours: n })}
+              />
+            </label>
+
+            {/* 倒挂（强提醒 ≤ 提醒）会让「提醒」那一档永远不可能触发，而界面上看不出
+                任何异常 —— 与 resolveNotifyConfig 那边的钳制是同一个问题的两面：
+                引擎侧兜底，这里负责告诉用户他配的两档对不上。 */}
+            {notifyConfig.pctHigh <= notifyConfig.pctWarn && (
+              <div className="settings-note warn vrs-notify-invalid">
+                强提醒阈值（{notifyConfig.pctHigh}）需高于提醒阈值（{notifyConfig.pctWarn}），
+                否则提醒这一档不会触发。
+              </div>
+            )}
           </>
         )}
 
