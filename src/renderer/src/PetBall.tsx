@@ -44,6 +44,14 @@ const WHEEL_COOLDOWN = 250
 const WHEEL_GESTURE_GAP = 150
 /** 数字递增时长（PRD R5：看得见在动、又不嫌慢的下限） */
 const COUNTUP_MS = 600
+/**
+ * 确认气泡的最坏高度：padding 4 + 文案行 11×1.2 = 13.2 + 间距 2 + 操作行 24 + padding 5 = 48.2，
+ * 取整 49。它是 .petball-confirm 的实测高度在**首次测量前**的兜底值 —— 锚点要按它反推才不会
+ * 顶出窗口被 overflow 裁掉。取不到实测值又用 0 兜底的话，第一帧整个气泡会挂在窗口外。
+ * ⚠ 这个数是 .petball-confirm 的 padding / line-height / min-height 之和，改那边就得改这里
+ * （test-alert-orchestration.mjs 的 L77 会按同一份加法验一遍）。
+ */
+const CONFIRM_BUBBLE_H = 49
 
 /**
  * 中心读数的两态（R5 的核心分离：**显示值 ≠ 目标值**）：
@@ -75,12 +83,15 @@ export interface PetBallProps {
   notice?: string
   /**
    * 待确认预警的原文（'' = 无待确认的预警，AC7）。由 App 从 alertOrchestrate 的待确认批次
-   * 里派生，本组件不持有任何计时 —— 重复间隔与倒计时都归那条 30s 轮询链管。
+   * 确认气泡要显示的那句（'' = 无待确认的预警，AC7）。App 从 alertOrchestrate 的待确认批次
+   * 里派生，并已过 confirmLine 收敛成不截断的短句 —— 播报原文可能拼好几条明细，全塞进
+   * 190px 的气泡必然 ellipsis 截断，而"余额不足"这类最该看见的往往被砍掉。
+   * 本组件不持有任何计时 —— 重复间隔与倒计时都归那条 30s 轮询链管。
    */
   alertText?: string
   /** 距自动确认还剩几分钟（由 App 侧按分钟粒度给，见 App 里那段注释） */
   alertMinutes?: number
-  /** 点「知道了」：确认最近播的那一批，停止重复 */
+  /** 点「好的」：确认最近播的那一批，停止重复 */
   onConfirmAlert?: () => void
 }
 
@@ -102,6 +113,8 @@ export function PetBall({
   const hitRef = useRef<HTMLDivElement | null>(null)
   /** 2D 小圆环本体：命中区按它的实测方块上报（球形态它就是整块窗口） */
   const fallbackRef = useRef<HTMLDivElement | null>(null)
+  /** 确认气泡本体：它落在角色**头顶**（主体投影之外），命中区必须并进它才算点得动 */
+  const confirmRef = useRef<HTMLDivElement | null>(null)
   const sceneRef = useRef<Pet3dHandle | null>(null)
   const [state, setState] = useState<AppState>({ snapshots: [], lastSync: null, scanning: false })
   const [idx, setIdx] = useState(0)
@@ -125,6 +138,12 @@ export function PetBall({
    * 覆盖层一律贴窗口边（不是贴主体）才不会溢出被 overflow 切掉。
    */
   const [viewSize, setViewSize] = useState({ w: FIGURE_VIEW.width, h: FIGURE_VIEW.height })
+  /**
+   * 确认气泡实测高度：它比 .petball-bubble 高一截（多一行操作行），窗口只有 293px、
+   * 角色头又在靠上位置，锚点必须按实测高度反推才不会顶出窗口被 overflow 裁掉（R8 同族）。
+   * 初值取最坏高度，第一帧就不夹错；实测回来后逐帧校正。
+   */
+  const [confirmH, setConfirmH] = useState(CONFIRM_BUBBLE_H)
   /** 光标是否悬停在球上（主进程轮询回传）：悬停时停步，避免「抓不到」 */
   const [hover, setHover] = useState(false)
   const petRef = useRef(pet)
@@ -263,6 +282,10 @@ export function PetBall({
 
   // 点击穿透：把主体的屏幕矩形报给主进程（窗口里只有那一块接收鼠标）
   const reportHit = useCallback(() => {
+    const host = hostRef.current
+    const hw = host?.clientWidth || BALL_VIEW.width
+    const hh = host?.clientHeight || BALL_VIEW.height
+    let box: { x: number; y: number; width: number; height: number }
     const handle = sceneRef.current
     if (!handle) {
       // 无 3D 场景时按 **2D 小圆环的实测方块** 上报，不写死尺寸：
@@ -271,21 +294,35 @@ export function PetBall({
       //     所以必须按它在窗口里的**居中位置**算，不能拿整块窗口去撑成一个 213×293 的热点。
       // 旧实现一律回退到「居中 60×60 + FIGURE_VIEW 兜底值」，两个尺寸都写错了。
       const el = fallbackRef.current
-      const hw = hostRef.current?.clientWidth || BALL_VIEW.width
-      const hh = hostRef.current?.clientHeight || BALL_VIEW.height
       const w = el?.clientWidth || BALL_VIEW.width
       const h = el?.clientHeight || BALL_VIEW.height
-      window.api.setPetHitbox({ x: (hw - w) / 2, y: (hh - h) / 2, width: w, height: h })
-      return
+      box = { x: (hw - w) / 2, y: (hh - h) / 2, width: w, height: h }
+    } else {
+      const r = handle.hitRect()
+      const pad = 6
+      box = { x: r.x - pad, y: r.y - pad, width: r.width + pad * 2, height: r.height + pad * 2 }
     }
-    const r = handle.hitRect()
-    const pad = 6
-    window.api.setPetHitbox({
-      x: r.x - pad,
-      y: r.y - pad,
-      width: r.width + pad * 2,
-      height: r.height + pad * 2
-    })
+
+    // 确认气泡在角色**头顶**，超出主体投影矩形 —— 主进程只按这个矩形决定窗口哪块收鼠标
+    // （overlay.ts 的 cursorInsideHit），不把它并进来的话气泡就是「画得出、点不动」。
+    // 只在气泡可见时才并：平时不给角色头顶多一块挡到桌面的死区。
+    const c = confirmRef.current
+    if (c && c.offsetHeight > 0 && host) {
+      const cb = c.getBoundingClientRect()
+      const hb = host.getBoundingClientRect()
+      if (cb.width > 0 && hb.width > 0) {
+        const o = { x: cb.left - hb.left, y: cb.top - hb.top, width: cb.width, height: cb.height }
+        const x = Math.min(box.x, o.x)
+        const y = Math.min(box.y, o.y)
+        box = {
+          x,
+          y,
+          width: Math.max(box.x + box.width, o.x + o.width) - x,
+          height: Math.max(box.y + box.height, o.y + o.height) - y
+        }
+      }
+    }
+    window.api.setPetHitbox(box)
   }, [])
 
   useEffect(() => {
@@ -294,6 +331,14 @@ export function PetBall({
     // 同一个矩形同时喂给覆盖层锚点：中心 + 半宽/半高，一处口径。
     const t = window.setInterval(() => {
       reportHit()
+      // 确认气泡的高度也在这里量（同一条链，不新增定时器）：它的锚点是底边，
+      // 高度一变锚点就得跟着动，否则顶出窗口被 overflow 裁掉。气泡不在时归零，
+      // 下次出现用最坏高度兜底（CONFIRM_BUBBLE_H）而不是拿上一个值顶上去。
+      const cf = confirmRef.current
+      setConfirmH((prev) => {
+        const next = cf ? cf.offsetHeight : 0
+        return Math.abs(prev - next) < 0.5 ? prev : next
+      })
       const h = sceneRef.current
       if (!h) return
       const r = h.hitRect()
@@ -536,17 +581,23 @@ export function PetBall({
   }
 
   /**
-   * 确认条的锚点与宽度上限 —— 按「**鼠标命中区在哪**」反推，不是按「窗口有多大」猜。
+   * 确认气泡的锚点与宽度上限。
    *
-   * 为什么必须这样算：主进程只按渲染层上报的那**一个**矩形决定窗口哪一块接收鼠标
+   * **为什么在头顶、不在脚边**：原先它是一条白色不透明胶囊横跨在角色腿上（`center.y + half.h - 30`），
+   * 在一整个人物形象前读起来像系统通知贴在身体上 —— 2026-09-30 的反馈正是这一点。
+   * 现在它和 .petball-bubble 同族同位（角色头顶、尖角朝下），读作「角色在说」，
+   * 也顺势把角色腿部让出来。
+   *
+   * **代价：必须扩大命中区。** 主进程只按渲染层上报的那**一个**矩形决定窗口哪一块接收鼠标
    * （main/overlay.ts 的 cursorInsideHit，未命中即 setIgnoreMouseEvents 穿透到桌面）。
-   * 三种形态的命中区各不相同：
-   *   · 球形态（56×56 窗口）→ 报告的就是整块窗口，贴哪都在里面；
-   *   · 人物形态 WebGL 失败（213×293 窗口里的 56×56 小环）→ 命中区只有居中那 56 宽，
-   *     贴窗口底部会落在环外，按钮画得出、点不动；
-   *   · 人物形态 → 命中区是角色的投影矩形（center / half 由场景按投影持续给）。
-   * 所以 2D 环这一支按环盒的上沿定位（球形态正好落在窗口顶，人物形态兜底落在环的上沿），
-   * 人物形态那一支用与 .petball-caption 同一套 clampX + 投影矩形。
+   * 气泡在主体投影**之外**，不并进那个矩形就是「画得出、点不动」—— 并进的动作在 reportHit 里。
+   * 2D 环那一支不需要（球形态整块窗口就是命中区），位置也照旧贴环心。
+   *
+   * **垂直空间的实测账（2026-09-30 ballshot 实测）**：人物窗口 213×293，角色投影 rect.y = 39.5，
+   * 也就是头顶以上只有 39.5px 可用，而气泡高 48.2px —— **注定要压住发冠约 11px**，没有
+   * 「完全在头顶上方」的解。要么压脸，要么把文案挤进一行（那样 eta 与按钮放不下）。
+   * 所以这里把间隙收到 2px（普通语音泡泡给 4px），把重叠压到最小：压的是头顶那撮头发，
+   * 不是五官；加上尖角朝下指向角色，读起来仍是「角色在说话」。
    */
   const confirmAnchor = dot2d
     ? {
@@ -555,7 +606,16 @@ export function PetBall({
         // 命中区 = 环盒（56 宽）+ 主进程的 pad 3，两侧各留 3px 余量
         maxWidth: Math.min(62, viewSize.w - 8)
       }
-    : { left: clampX(center.x, 95), top: Math.max(24, center.y + half.h - 30), maxWidth: 190 }
+    : {
+        left: clampX(center.x, 95),
+        // 锚点是气泡**底边**（transform: translate(-50%,-100%)），贴角色头顶上方 2px；
+        // 再按实测高度夹一个下限（离窗口顶留 2px 呼吸位）—— 窗口只有 293px 而角色头在靠上
+        // 位置，不夹会顶出窗口被 .petball 的 overflow:hidden 裁掉
+        //（与 .petball-bubble 的 R8 同一类问题）。
+        // 量不到实测高度（首帧）用最坏高度兜底，不用 0。
+        top: Math.max((confirmH > 0 ? confirmH : CONFIRM_BUBBLE_H) + 2, center.y - half.h - 2),
+        maxWidth: 190
+      }
 
   useEffect(() => {
     sceneRef.current?.setPaused(renaming)
@@ -881,9 +941,13 @@ export function PetBall({
           aria-hidden="true"
         />
       )}
-      {(notice || bubble) && (
+      {!alertText && (notice || bubble) && (
         // 锚点是泡泡底边（translate(-50%,-100%)）：主体上方留白有限，两行文案高 46px，
         // 所以上移量最多 4 再按高度兜底，否则第一行被窗口顶切掉（R8）
+        //
+        // ⚠ 有确认气泡时**不渲染**这个泡泡：两者共用头顶同一个位置，而 notice 的内容
+        //   就是刚播完的那句 TTS（notice = ttsVisualText），确认气泡里已经是它的收敛版。
+        //   一起画会叠在一起；让位给能点的那条是对的 —— 那条需要用户动手，这条只是回声。
         <div
           className="petball-bubble"
           style={{ left: clampX(center.x, 95), top: Math.max(46, center.y - half.h - 4) }}
@@ -893,25 +957,28 @@ export function PetBall({
         </div>
       )}
       {alertText && (
-        // ⚠ 确认条是泡泡的**兄弟节点**，不是它的子节点 —— .petball-bubble 是
+        // ⚠ 确认气泡是泡泡的**兄弟节点**，不是它的子节点 —— .petball-bubble 是
         //   aria-hidden="true" 的纯装饰（见上面），交互元素藏进去对辅助技术不可见，
         //   而且 aria-hidden 容器里的可聚焦元素会破坏「隐藏内容不可聚焦」。
-        //   不新增浮层（NFR3）：它只是泡泡下面多出来的一条小控件。
+        //   不新增浮层（NFR3）：它只是同位置多出来的一条小控件。
         // role="status" 挂在容器上，让播报内容作为状态变化被读出；真正的按钮在它**内部**，
         // 可聚焦、可点击（这不是 aria-hidden 装饰件）。
-        <div className="petball-confirm" style={confirmAnchor} role="status">
+        <div ref={confirmRef} className="petball-confirm" style={confirmAnchor} role="status">
           <span className="petball-confirm-text">{alertText}</span>
-          <span className="petball-confirm-eta" aria-hidden="true">
-            {alertMinutes} 分
+          <span className="petball-confirm-foot">
+            <span className="petball-confirm-eta" aria-hidden="true">
+              {alertMinutes > 0 ? `${alertMinutes} 分钟后不再提示` : '即将不再提示'}
+            </span>
+            <button
+              type="button"
+              className="petball-confirm-btn"
+              title="确认这条提醒，不再重复播报"
+              aria-label="确认这条提醒，不再重复播报"
+              onClick={() => onConfirmAlert?.()}
+            >
+              好的
+            </button>
           </span>
-          <button
-            type="button"
-            className="petball-confirm-btn"
-            title="知道了"
-            onClick={() => onConfirmAlert?.()}
-          >
-            知道了
-          </button>
         </div>
       )}
       {isStale(s ?? {}) && !failed && (

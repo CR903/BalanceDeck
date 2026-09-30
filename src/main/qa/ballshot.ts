@@ -145,7 +145,8 @@ export async function runBallshot(): Promise<void> {
                canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
                // 覆盖层实际占位（R8）：任一元素越出窗口就是被 .petball 的 overflow:hidden 切了
                // 球形态的 2D 小圆环是 56×56 窗口里的唯一内容，也列进来核对它没被切
-               overlay: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-badge,.petball-toast')]
+               // .petball-confirm 是最容易越界的一个 —— 它锚在角色头顶上方，气泡加高就会顶出窗口顶
+               overlay: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-confirm,.petball-badge,.petball-toast')]
                  .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
                ball: window.__bd_ball?.() ?? null
              })`,

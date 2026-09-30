@@ -41,6 +41,7 @@ import {
 import { DEFAULT_HISTORY_CAP, type HistoryPoint } from './history'
 import {
   confirm,
+  confirmLine,
   evaluate,
   latestPending,
   pendingCountdown,
@@ -892,15 +893,19 @@ export default function App(): React.JSX.Element {
   }, [])
 
   /**
-   * 确认条要显示什么。**只有最近播的那一批**（latestPending）：用户点的「知道了」
+   * 确认气泡要显示什么。**只有最近播的那一批**（latestPending）：用户点的「好的」
    * 回应的是他刚听到的那一句，同时这一条也保证了「一次确认只关一批」（AC6）。
+   *
+   * 展示用的那句走 confirmLine 收敛成不截断的短句 —— 播报原文可能拼了好几条明细，
+   * 全塞进 190px 的条子里必然 ellipsis 截断，而"余额不足"这类最该看见的往往被砍掉。
+   * 完整内容已经由 TTS 念给耳朵了，气泡只承担「这条提醒是关于什么」的标题。
    *
    * 倒计时取**分钟**而不是秒：它由 30s 轮询推进（NFR2 不为倒计时另加一个定时器），
    * 秒级显示会是一个永远慢半拍的数字。alertNow 为 0（还没起表）时用真实时钟兜底，
    * 首帧的显示与起表后完全一致。
    */
   const alert = latestPending(alertPending)
-  const alertText = alert?.text ?? ''
+  const alertText = alert ? confirmLine(alert.text) : ''
   const alertMinutes = alert ? Math.ceil(pendingCountdown(alert, alertNow || Date.now()) / 60) : 0
 
   return (

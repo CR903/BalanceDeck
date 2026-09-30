@@ -20,7 +20,7 @@ import { resolve } from 'node:path'
 import { loadTs } from './lib/load-ts.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const { evaluate, confirm, latestPending, pendingCountdown, REPEAT_MS, AUTO_CONFIRM_MS } =
+const { evaluate, confirm, confirmLine, latestPending, pendingCountdown, REPEAT_MS, AUTO_CONFIRM_MS } =
   await loadTs('src/renderer/src/alertOrchestrate.ts')
 const { DEFAULT_TRIGGER_CONFIG, THRESHOLD_FIELD, checkTriggers } =
   await loadTs('src/renderer/src/smartBroadcast.ts')
@@ -729,6 +729,64 @@ eq(cdOf(l3b, T0 + REPEAT_MS), (AUTO_CONFIRM_MS - REPEAT_MS) / 1000, 'L42 重复�
 eq(cdOf(l3b, T0 + AUTO_CONFIRM_MS), 0, 'L43 到点为 0')
 eq(cdOf(l3b, T0 + AUTO_CONFIRM_MS + 60_000), 0, 'L44 超时之后钳在 0，不出现负数')
 
+// ── 确认气泡的那一句（confirmLine：把截断问题从根上解决）───────────────────────
+//
+// 原实现把播报原文原样塞进 190px 的条子配 text-overflow:ellipsis，长句必然被截成
+// "OpenCode Go …" —— 而「余额不足」「已用 92%」这类最该看见的都在省略号里。
+// 完整内容已经由 TTS 念给耳朵了，气泡只承担「这条提醒是关于什么」的标题。
+// 判据全部对着上面 L32 那句真实文案验：它就是当时被截断的那条。
+eq(confirmLine('Go 用量已用 95%'), 'Go 用量已用 95%', 'L51 短句原样返回（没有它就不该动）')
+eq(
+  confirmLine('DeepSeek 余额不足，剩余 8 元'),
+  'DeepSeek 余额不足，剩余 8 元',
+  'L52 两段的明细也原样返回（「余额不足」与「剩余 8 元」缺一不可，砍掉金额等于删了结论）'
+)
+eq(
+  confirmLine('DeepSeek 余额不足，剩余 8 元，已 6 小时无变化'),
+  'DeepSeek 余额不足，剩余 8 元',
+  'L53 超宽时在逗号处收口（不在逗号中间硬砍，砍出来仍是完整短语）'
+)
+// 边界逗号：整句「DeepSeek 余额不足，剩余 8 元」按这里的估算正好 168px、顶格装下。
+// 加个尾巴之后必须从**第二个逗号**前面砍，而不是第一个 —— 砍成「DeepSeek 余额不足」
+// 就把金额这个最该看见的结论丢了。反验时循环把逗号记在超宽判断之后，就是踩这个坑。
+eq(
+  confirmLine('DeepSeek 余额不足，剩余 8 元，剩余额度'),
+  'DeepSeek 余额不足，剩余 8 元',
+  'L53b 顶到边界的逗号也算切割点（不能因为「装不下逗号」就退回到上一个逗号）'
+)
+eq(
+  confirmLine('DeepSeek 余额不足，剩余 8 元，已 6 小时无变化', 1000),
+  'DeepSeek 余额不足，剩余 8 元，已 6 小时无变化',
+  'L54 宽度够宽时不截（宽度是显示口径，不是语义边界）'
+)
+// 收口按**像素宽度**而不是字符数 —— 供应商名是拉丁、明细是中文，同字符数宽度差一半。
+// 这条钉死那个错误做法：按 24 字符一刀切会把下面这句砍成「OpenCode Go 余额不足」，
+// 丢掉金额这个最该看见的结论。
+eq(
+  confirmLine('OpenCode Go 用量已用 92%'),
+  'OpenCode Go 用量已用 92%',
+  'L59 20 个字符但只占约 148px：混排按像素算才装得下（按字符预算会误砍）'
+)
+eq(
+  confirmLine('OpenCode Go 余额不足，剩余 12 元，已 6 小时无变化，用量高于历史均值'),
+  'OpenCode Go 余额不足',
+  'L60 供应商名长到吃满预算时在逗号处收口（宁可少说一句金额，也不留半句）'
+)
+// 供应商名本身可能带空格（「OpenCode Go」），所以不能按空格切分供应商与明细 —— 这条钉死它。
+eq(
+  confirmLine('OpenCode Go 已 6 小时无变化，用量高于历史均值'),
+  'OpenCode Go 已 6 小时无变化',
+  'L61 供应商名内含空格也不受影响（不能按空格切，会切在「OpenCode」后面）'
+)
+eq(confirmLine(''), '', 'L55 空串返回空串（App 用它判「有没有待确认」）')
+eq(confirmLine('  '), '', 'L56 纯空白返回空串')
+// 预算内没有逗号就不硬砍：砍出一个半句比一句完整的话更糟。交给 CSS 的 nowrap 兜底。
+eq(
+  confirmLine('这是一个超过预算但没有逗号分隔的一整句话内容很多', 40),
+  '这是一个超过预算但没有逗号分隔的一整句话内容很多',
+  'L58 宽度内无逗号时原样返回（不硬砍出半句）'
+)
+
 // ── 接缝：重复节奏 vs 频率闸门（跨模块，两边的数字谁都不知道对方）───────────
 //
 // 编排层答「该不该播」，speechOut 的闸门答「允不允许播」。两边的数字在**不同模块**里，
@@ -840,7 +898,12 @@ ok(
 // 关键：确认条**容器自己**不能是 aria-hidden —— 那样整条（含按钮）对辅助技术就不可见了。
 // 内部那一格倒计时带 aria-hidden 反而是有意的：它每 30s 变一次，live region 会把
 // 「还剩 14 分 / 13 分 / 12 分」一句句念出来。所以这里只钉容器，不钉整块片段。
-const confirmOpenTag = confirmAt < 0 ? null : petSrc.slice(confirmAt, petSrc.indexOf('>', confirmAt) + 1)
+// ⚠ 开标签要从 `<div` 取起，不能从 `className=` 起：属性顺序变了就会漏检。
+// 反向验证实测过 —— 把 `aria-hidden="true"` 写在 `className` **之前**，从 className 切片的那版
+// 恒绿，L58 变成一个守不住「容器是装饰」的空断言。从 `<div` 起才是完整的开标签。
+const confirmTagStart = confirmAt < 0 ? -1 : petSrc.lastIndexOf('<div', confirmAt)
+const confirmOpenTag =
+  confirmAt < 0 || confirmTagStart < 0 ? null : petSrc.slice(confirmTagStart, petSrc.indexOf('>', confirmTagStart) + 1)
 ok(confirmOpenTag != null, 'L57 取得到确认条容器的开标签')
 ok(confirmOpenTag != null && !/aria-hidden/.test(confirmOpenTag), 'L58 确认条容器不是 aria-hidden（否则按钮对辅助技术不可见）')
 // 落在泡泡元素**之外**才是兄弟节点。与 L53 互补：L53 盯「泡泡里没有它」，
@@ -848,6 +911,51 @@ ok(confirmOpenTag != null && !/aria-hidden/.test(confirmOpenTag), 'L58 确认条
 ok(
   bubbleBlock != null && confirmAt > bubbleAt && confirmAt >= bubbleBlock.end,
   'L59 确认条落在 .petball-bubble 元素之外（兄弟节点，不是它的子节点）'
+)
+// ── 2026-09-30 重设计：气泡形态、有语义的倒计时、可点的按钮 ──────────────────
+ok(
+  confirmOpenTag != null && /ref=\{confirmRef\}/.test(confirmOpenTag),
+  'L60 确认条容器带 confirmRef（命中区要靠实测它的矩形，没 ref 就量不到）'
+)
+ok(
+  confirmBlock != null && /<button[\s\S]*?aria-label=/.test(confirmBlock),
+  'L61 按钮带 aria-label（可见文案只有「好的」两个字，屏幕阅读器念不出来）'
+)
+ok(
+  confirmBlock != null && />\s*好的\s*</.test(confirmBlock),
+  'L62 按钮文案是「好的」（「知道了」是系统弹窗口吻，放在真人形象旁边格格不入）'
+)
+ok(
+  confirmBlock != null && /不再提示/.test(confirmBlock),
+  'L63 倒计时有语义（原先只写「15 分」，没人知道那是什么意思；现在说清「X 分钟后不再提示」）'
+)
+// 命中区并入：确认气泡在角色**头顶**、落在主体投影矩形之外。主进程只按上报的那一个
+// 矩形决定窗口哪块收鼠标（overlay.ts 的 cursorInsideHit），不并进就是「画得出、点不动」
+// —— 与 2D 环那支当年踩过的是同一个坑（原注释里那一条）。
+const reportAt = petSrc.indexOf('const reportHit = useCallback')
+const reportEnd = reportAt < 0 ? -1 : petSrc.indexOf('}, [])', reportAt)
+const reportBlock = reportAt < 0 || reportEnd < 0 ? null : petSrc.slice(reportAt, reportEnd)
+ok(reportBlock != null, 'L64 前置：取得到 reportHit 的源码')
+ok(
+  reportBlock != null && /confirmRef\.current/.test(reportBlock) && /getBoundingClientRect\(\)/.test(reportBlock),
+  'L65 命中区会读确认条的实测矩形（它超出角色投影，不并进就点不动）'
+)
+ok(
+  reportBlock != null &&
+    /Math\.min\(box\.x, o\.x\)/.test(reportBlock) &&
+    /Math\.max\(box\.y \+ box\.height/.test(reportBlock) &&
+    /setPetHitbox\(box\)/.test(reportBlock),
+  'L66 报给主进程的是**并入**后的矩形（union，不是只报气泡、也不是只报角色）'
+)
+// 有确认气泡时不渲染普通语音泡泡：两者共用头顶同一位置，而 notice 的内容就是刚播完那句
+// TTS 的视觉回声，确认气泡里已经是它的收敛版。一起画会叠在一起。
+ok(
+  /\{\s*!alertText && \(notice \|\| bubble\)\s*&&/.test(petSrc),
+  'L67 有确认气泡时普通语音泡泡让位（同一位置，可点的那条优先）'
+)
+ok(
+  /confirmLine\(alert\.text\)/.test(appSrc),
+  'L68 App 侧把播报原文过 confirmLine 再给气泡（原文可能拼好几条明细，直接给必然 ellipsis 截断）'
 )
 
 // ── 样式：复用 token、够得着的点击区、不许 outer box-shadow ────────────────
@@ -860,26 +968,125 @@ function cssBody(src, sel) {
 }
 const confirmCss = cssBody(cssSrc, '.petball-confirm')
 const btnCss = cssBody(cssSrc, '.petball-confirm-btn')
-ok(confirmCss != null && btnCss != null, 'L59 取得到确认条的两条 CSS 规则')
-ok(confirmCss != null && /pointer-events:\s*auto/.test(confirmCss), 'L60 确认条自己开回 pointer-events（.petball 整体是 none）')
+const textCss = cssBody(cssSrc, '.petball-confirm-text')
+const etaCss = cssBody(cssSrc, '.petball-confirm-eta')
+ok(
+  confirmCss != null && btnCss != null && textCss != null && etaCss != null,
+  'L69 取得到确认气泡的四条 CSS 规则'
+)
+ok(confirmCss != null && /pointer-events:\s*auto/.test(confirmCss), 'L70 确认气泡自己开回 pointer-events（.petball 整体是 none）')
 ok(
   btnCss != null && parseFloat((btnCss.match(/min-height:\s*([\d.]+)px/) || [])[1]) >= 24,
-  'L61 按钮点击区 ≥ 24×24（WCAG 2.2 最小目标尺寸）'
+  'L71 按钮点击区 ≥ 24×24（WCAG 2.2 最小目标尺寸）'
 )
-// 禁硬编码颜色：皮肤是令牌驱动的，写死一个 hex 就等于新皮肤里它不跟着变
+// 气泡形态：锚点必须是**底边**（尖角朝下指向角色），和 .petball-bubble 同族同位。
+// 贴回脚边、锚回中线就是改回了那个「白色胶囊横跨角色腿部」的老样子。
+ok(
+  confirmCss != null &&
+    /transform:\s*translate\(-50%\s*,\s*-100%\)/.test(confirmCss) &&
+    /border-bottom-left-radius:\s*([\d.]+)px/.test(confirmCss) &&
+    parseFloat((confirmCss.match(/border-bottom-left-radius:\s*([\d.]+)px/) || [])[1]) <
+      parseFloat((confirmCss.match(/border-radius:\s*([\d.]+)px/) || [])[1]),
+  'L72 确认气泡锚在底边、左下角收成尖角（形态上是气泡，不是胶囊条）'
+)
+// 与 .petball-bubble 同深：两条气泡挨着出现时深浅必须一致，否则读起来像两个来源的浮层。
+// 两者都得指向同一个令牌 —— 一个写死 rgba、一个写 var，就等于把这次的一致性判死。
+const bubbleCss = cssBody(cssSrc, '.petball-bubble')
+ok(
+  bubbleCss != null &&
+    /background:\s*var\(--bubble-bg\)/.test(bubbleCss) &&
+    /background:\s*var\(--bubble-bg\)/.test(confirmCss || ''),
+  'L73 语音气泡与确认气泡共用 --bubble-bg（同一族的底色不能各写各的）'
+)
+// 文案不许截断：nowrap + overflow:hidden 可以（confirmLine 已按像素宽度收敛，正常走不到），
+// text-overflow:ellipsis 是这次要修掉的旧行为本身。
+ok(
+  textCss != null &&
+    !/text-overflow:\s*ellipsis/.test(textCss) &&
+    /white-space:\s*nowrap/.test(textCss),
+  'L74 气泡文案按宽收敛后用 nowrap、不再有 text-overflow:ellipsis（「OpenCode Go …」就是这么来的）'
+)
+// eta 也不许折行：气泡宽度由**最宽的子元素**决定（flex column + align-items:stretch），
+// 文案短的时候操作行就是那个最宽的 —— eta 一旦折成两行，整个气泡跟着变高一截，
+// 锚点又得重算。实测过：短文案下「15 分钟后不再提示」真折成了「15 分钟后不 / 再提示」。
+ok(
+  etaCss != null && /white-space:\s*nowrap/.test(etaCss),
+  'L78 eta 单行（它一旦折行就把气泡顶高，锚点白夹一次）'
+)
+// 高度上限：这是这次改设计时最容易被破坏的一条。
+//
+// 2026-09-30 ballshot 实测：人物窗口 213×293，角色投影 rect.y = 39.5 —— 头顶以上只有 39.5px。
+// 气泡高 H 且离窗口顶留 2px 时，它压进头部的量 = H - 37.5。第一版气泡 78px（两行文案），
+// 会把头部从上到下压 40px，直接盖住脸。所以这里把 CSS 的 padding / 文案行高 / 间距 /
+// 操作行高度加起来验一遍，超了就是要把尖角从「压发冠」推到「压五官」。
+//
+// ⚠ 两处坑，反验都真踩过：① 本文件的 cssBody 会吃进整条注释，`.petball-confirm` 的块里有一整段
+//   注释在写「4+13.2+2+24+5 = 48.2」，用第一个命中去匹配会拿到注释里的 4 和 13.2；② 字号与行高
+//   的取值链是「文案自己写的 → 父级继承的 → 兜底 1」，少一环就少算一份（实测把 line-height 那环
+//   漏掉会得到 39.2，看着更矮、守卫照样绿）。
+{
+  const stripComment = (body) => body.replace(/\/\*[\s\S]*?\*\//g, '')
+  // ⚠ 单位必须写成 (?:px)?，不能写 px? —— `px?` 在正则里是「字母 p 加一个可选的 x」，
+  // 对无单位的 `line-height: 1.2` 一个字符都匹配不到。实测踩过：它静默返回 NaN，回退到
+  // 兜底值 1，总高从 48.2 被算成 46，恰好还落在 40~49 的区间里，守卫照样绿着。
+  // 所以这里不用 || 兜底，每个构成项都要求真匹配到，取不到就让断言失败。
+  const NUM = (body, prop) => stripComment(body).match(new RegExp(prop + ':\\s*([\\d.]+)(?:px)?'))?.[1]
+  const padShort = stripComment(confirmCss).match(/padding:\s*([\d.]+)px\s+([\d.]+)px\s+([\d.]+)px/)
+  const parts = {
+    padT: NUM(confirmCss, 'padding-top') ?? padShort?.[1],
+    padB: NUM(confirmCss, 'padding-bottom') ?? padShort?.[3],
+    gap: NUM(confirmCss, 'gap'),
+    fs: NUM(textCss, 'font-size') ?? NUM(confirmCss, 'font-size'),
+    lh: NUM(textCss, 'line-height') ?? NUM(confirmCss, 'line-height'),
+    btnH: NUM(btnCss, 'min-height')
+  }
+  ok(
+    Object.values(parts).every((v) => typeof v === 'string' && v !== ''),
+    `L77a 确认气泡的高度构成项都真取到了（实际：${JSON.stringify(parts)}）`
+  )
+  const total =
+    parseFloat(parts.padT) + parseFloat(parts.padB) + parseFloat(parts.gap) +
+    parseFloat(parts.fs) * parseFloat(parts.lh) + parseFloat(parts.btnH)
+  ok(
+    total > 40 && total <= 49,
+    `L77b 确认气泡高 ${total}px 落在 40~49（人物形态头顶以上只有 39.5px：超 49 就从压发冠变成压脸，` +
+      `小于 40 多半是又少算了一项 —— 对照浏览器实测应是 48.2）`
+  )
+}
+// 禁硬编码颜色：皮肤是令牌驱动的，写死一个 hex 就等于新皮肤里它不跟着变。
+// ⚠ none / transparent 不算硬编码 —— 那是「没有这个属性」，写死一个颜色才是。
+// 旧版判据只看 `var(`，把 `.no3d` 那条 `background: none` 也一起判红，只好把 no3d 变体
+// 从名单里悄悄拿掉 —— 等于守门范围自己缩了，比改代码更糟。
 const COLOR_PROPS = /(?:^|;)\s*(color|background|background-color|border|border-color|box-shadow)\s*:\s*([^;]+)/g
-const hardCoded = [confirmCss, btnCss]
-  .flatMap((b) => (b == null ? [] : [...b.matchAll(COLOR_PROPS)].filter((m) => !/var\(/.test(m[2])).map((m) => m[1])))
-ok(hardCoded.length === 0, `L60 确认条样式全部走 token，无硬编码颜色（实际硬编码：${hardCoded.join(' / ') || '无'}）`)
-// 与球盘同一条纪律：元素与窗口同量级时 outer box-shadow 会被窗口裁成方框
+const COLOR_OK = /^(none|transparent)$/
+const confirmSelectors = [
+  '.petball-confirm',
+  '.petball-confirm-text',
+  '.petball-confirm-eta',
+  '.petball-confirm-btn',
+  '.petball-confirm-btn:hover',
+  '.petball.no3d .petball-confirm',
+  '.petball.no3d .petball-confirm-btn'
+]
+const hardCoded = confirmSelectors.flatMap((sel) => {
+  const b = cssBody(cssSrc, sel)
+  if (b == null) return []
+  return [...b.matchAll(COLOR_PROPS)].filter((m) => !/var\(/.test(m[2]) && !COLOR_OK.test(m[2].trim())).map((m) => m[1])
+})
+ok(
+  hardCoded.length === 0,
+  `L75 确认气泡样式全部走 token，无硬编码颜色（实际硬编码：${hardCoded.join(' / ') || '无'}）`
+)
+// 与球盘同一条纪律：元素与窗口同量级时 outer box-shadow 会被窗口裁成方框。
+// 气泡最宽 190px、人物窗口只有 213px，锚点夹在窗内时它两端正好贴窗口边。
 const outerShadows = ['.petball-confirm', '.petball-confirm-btn', '.petball.no3d .petball-confirm', '.petball.no3d .petball-confirm-btn']
   .flatMap((sel) => {
     const body = cssBody(cssSrc, sel)
     if (body == null) return []
     const v = (body.match(/box-shadow:\s*([^;]+)/) || [])[1] || ''
-    return v && !/^inset\b/.test(v.trim()) ? [`${sel}: ${v.trim()}`] : []
+    return v && !/^\s*inset\b/.test(v.trim()) ? [`${sel}: ${v.trim()}`] : []
   })
-ok(outerShadows.length === 0, `L61 确认条没有 outer box-shadow（实际：${outerShadows.join(' / ') || '无'}）`)
+ok(outerShadows.length === 0, `L76 确认气泡没有 outer box-shadow（实际：${outerShadows.join(' / ') || '无'}）`)
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

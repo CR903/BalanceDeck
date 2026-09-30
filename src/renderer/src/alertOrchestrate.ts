@@ -222,3 +222,61 @@ export function confirm(pending: PendingAlert[], now: number): PendingAlert[] {
 export function pendingCountdown(b: PendingAlert, now: number): number {
   return Math.max(0, Math.ceil((b.firstSpokenAt + AUTO_CONFIRM_MS - now) / 1000))
 }
+
+/**
+ * 确认气泡内可用的文字宽度（px）：气泡 max-width 190px 减左右 padding 各 11px。
+ */
+export const CONFIRM_LINE_WIDTH = 168
+
+/**
+ * 确认气泡字号 11px 下单个字符的近似宽度：全角/CJK 约占满字号宽，拉丁与数字约占半宽。
+ *
+ * ⚠ 为什么按像素而不是按字符数收口：气泡里的文案是「拉丁供应商名 + 中文明细」的混排，
+ * 「OpenCode Go 余额不足，剩余 12 元」是 24 个字符、但约 185px；而「DeepSeek 余额不足，剩余 8 元」
+ * 是 20 个字符、约 160px。按字符数取一个统一预算时，要么前者砍成「OpenCode Go 余额不足」
+ * （丢掉金额这个最该看见的结论），要么后者溢出气泡被 CSS 静默裁掉。
+ *
+ * 这两个数是按 Chrome 实测（-apple-system / PingFang SC，11px/600）反着取的：
+ * 「DeepSeek 余额不足，剩余 8 元」实测 159.7px、按这里算是 168px —— 估算偏高约 5%，
+ * 是刻意的保守方向：宁可早砍一刀，也不要放行一句实际溢出的文案。
+ */
+const CHAR_W_FULL = 12
+const CHAR_W_HALF = 6
+
+const lineWidth = (s: string): number =>
+  [...s].reduce((w, ch) => w + (ch.charCodeAt(0) > 0xff ? CHAR_W_FULL : CHAR_W_HALF), 0)
+
+/**
+ * 确认气泡上显示的那一句：把播报原文收敛成**不会截断**的短句。
+ *
+ * 为什么收敛（2026-09-30 线上截图）：原实现直接把播报原文塞进 190px 的条子里配
+ * `text-overflow: ellipsis`，长句必然被截成 "OpenCode Go …" —— 而"余额不足""已用 92%"
+ * 这类最该看见的都在省略号里。完整内容已经通过 TTS 念给耳朵了，气泡只需要给一句
+ * 「这条提醒是关于什么」的标题。
+ *
+ * 收口规则：累计宽度超出可用宽度时，在**预算内最后一个「，」**处断开。不在逗号中间硬砍，
+ * 砍出来仍是完整短语；也不追加省略号 —— 加了就又变回那个吓人的截断感，而"后面还有内容"
+ * 这件事耳朵已经知道。明细之间是「，」，明细自身也可能含「，」（如「余额不足，剩余 12.4 元」），
+ * 所以这个粒度是近似的而非语义边界；好在它只会砍掉尾部次要内容。
+ * 预算内没有逗号时原样返回，交给 CSS 的 nowrap + overflow:hidden 静默裁掉 —— 砍出一个半句
+ * 比一句完整的话更糟。
+ */
+export function confirmLine(text: string, width = CONFIRM_LINE_WIDTH): string {
+  const s = text.trim()
+  if (!s) return ''
+  if (lineWidth(s) <= width) return s
+  let acc = 0
+  let lastComma = -1
+  for (let i = 0; i < s.length; i++) {
+    // ⚠ 逗号是**切割边界**，必须记在超宽判断之前：切掉的那一刀就落在逗号前面，
+    // 所以「恰好顶到边界的逗号」也要算进来。反验踩过这个坑 —— 把这句
+    // 「DeepSeek 余额不足，剩余 8 元」加一个尾巴后，整句正好 168px 装得下，但循环在
+    // 判断 acc + 12 > 168 时先 break 了，逗号没被记录，结果砍成「DeepSeek 余额不足」，
+    // 把金额这个最该看见的结论丢了。
+    if (s[i] === '，') lastComma = i
+    const cw = s.charCodeAt(i) > 0xff ? CHAR_W_FULL : CHAR_W_HALF
+    if (acc + cw > width) break
+    acc += cw
+  }
+  return lastComma <= 0 ? s : s.slice(0, lastComma)
+}
