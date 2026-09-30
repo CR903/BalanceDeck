@@ -1,0 +1,30 @@
+{
+  "id": "p0-optimization",
+  "name": "p0-optimization",
+  "title": "P0 优化实现：提醒通知、用量预测与素材瘦身",
+  "description": "把竞品调研报告中的 P0 优化项拆成可并行实现的子任务：P0-1 额度阈值提醒与系统通知、P0-2 用量预测与预计耗尽时间；并调研用免费像素宠物/玩偶素材替代 3D 真人数字人给应用瘦身",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "zhou",
+  "assignee": "zhou",
+  "createdAt": "2026-09-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-30-p0-quota-alert",
+    "09-30-p0-usage-prediction",
+    "09-30-pixel-pet-assets-research"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
