@@ -48,6 +48,13 @@ import {
   type PendingAlert
 } from './alertOrchestrate'
 import { DEFAULT_NOTIFY_CONFIG, resolveNotifyConfig, type NotifyConfig } from './systemNotify'
+import {
+  DEFAULT_PREDICT_CONFIG,
+  MAX_RETENTION_DAYS,
+  PREDICT_KEYS,
+  resolvePredictConfig,
+  type PredictConfig
+} from '../../shared/usage-predict'
 
 /**
  * 待确认预警的轮询周期。
@@ -153,6 +160,11 @@ export default function App(): React.JSX.Element {
   const [notifyOn, setNotifyOn] = useState(true)
   /** 通知阈值（ui:notifyConfig；默认 >80% 提醒 / >95% 告警 / 重置前 1 小时） */
   const [notifyConfig, setNotifyConfig] = useState<NotifyConfig>(DEFAULT_NOTIFY_CONFIG)
+  // ─── 用量预测（P0-2）───────────────────────────────────────────────────
+  /** 预测总开关（ui:predictOn，默认开）。关掉后详情页连历史都不取 */
+  const [predictOn, setPredictOn] = useState(true)
+  /** 预测配置（ui:predictConfig）：速率回看天数 / 本地快照保留天数 */
+  const [predictConfig, setPredictConfig] = useState<PredictConfig>(DEFAULT_PREDICT_CONFIG)
   /**
    * 通知去重锁存：已弹过的「供应商 × 档位」。
    *
@@ -317,7 +329,11 @@ export default function App(): React.JSX.Element {
       'ui:ttsOn', 'ui:ttsConfig', 'ui:ttsPreset', 'ui:ttsTriggers', 'ui:ttsTriggerOn',
       'ui:ttsTextFormat', 'ui:ttsVisual', 'ui:ttsFallback', 'ui:ttsRoutine',
       'ui:ttsRoutineEvery', 'ui:ttsHistoryCap', 'ui:ttsHistory', 'ui:voiceOn',
-      'ui:notifyOn', 'ui:notifyConfig'
+      'ui:notifyOn', 'ui:notifyConfig',
+      PREDICT_KEYS.on, PREDICT_KEYS.config,
+      // 保留期的**权威键**在这里一并读（只读不写：extras:get 对非 ui: 键没有副作用，
+      // 有副作用的是 extras:set —— 那条会 refreshNow() 触发全量重采集，见 D7）
+      PREDICT_KEYS.retention
     ]
     void window.api.getExtras(KEYS).then((e) => {
       // ⚠ `extras:get` 对**不存在的键**返回 `''`（`out[k] = getExtra(k) ?? ''`，ipc.ts:198），
@@ -409,6 +425,28 @@ export default function App(): React.JSX.Element {
         setNotifyConfig(resolveNotifyConfig(nc))
       } catch {
         setNotifyConfig(DEFAULT_NOTIFY_CONFIG)
+      }
+
+      // ─── 用量预测（P0-2）───────────────────────────────────────────────
+      // 判「键缺失」只能判 !v（extras:get 对缺失键给 ''，见上面那条）。
+      // 默认**开**：预测是纯本机估算、不出网、不消耗任何配额，没有理由默认关。
+      setPredictOn(raw(PREDICT_KEYS.on) !== '0')
+      try {
+        const pc = JSON.parse(raw(PREDICT_KEYS.config) || '{}') as Partial<PredictConfig>
+        // 读取处重新校验：脏值逐字段回退默认（NaN / 负数 / 超上限，shared/usage-predict 独家）
+        const c = resolvePredictConfig(pc)
+        // ⚠ 保留期**不在** ui:predictConfig 里存，只从权威键读。
+        //   两处各存一份而只读其中一处，界面就会长期显示一个用户没设过的天数：
+        //   用户把保留期改成 60 → 权威键 60、ui:predictConfig 仍 30 → 重启后设置页
+        //   回到 30，而真实保留期是 60。**不抛不红，只是静默地撒谎。**
+        const stored = Number.parseInt(raw(PREDICT_KEYS.retention), 10)
+        setPredictConfig(
+          Number.isFinite(stored) && stored > 0
+            ? { ...c, retentionDays: Math.min(MAX_RETENTION_DAYS, Math.floor(stored)) }
+            : c
+        )
+      } catch {
+        setPredictConfig(DEFAULT_PREDICT_CONFIG)
       }
     })
 
@@ -1098,12 +1136,35 @@ export default function App(): React.JSX.Element {
               setNotifyConfig(next)
               void window.api.setExtras({ 'ui:notifyConfig': JSON.stringify(next) })
             }}
+            predictOn={predictOn}
+            onTogglePredict={(on) => {
+              setPredictOn(on)
+              void window.api.setExtras({ [PREDICT_KEYS.on]: on ? '1' : '0' })
+            }}
+            predictConfig={predictConfig}
+            onChangePredictConfig={(patch) => {
+              // 合并后再过一遍 resolvePredictConfig：NumInput 给什么就存什么的话，
+              // 脏值会先落到 state（设置页显示一个非法天数）再在读取处被悄悄改掉。
+              const next = resolvePredictConfig({ ...predictConfig, ...patch })
+              setPredictConfig(next)
+              // 两个键分开写：windowDays 是界面偏好（ui: 前缀，不触发重采集）；
+              // retentionDays 归**权威键**所有，走主进程专用通道，改完由它立即裁剪 ——
+              // 走 setExtras 会因为非 ui: 键触发一次全量重采集（ipc.ts 的那段）。
+              // ⚠ ui:predictConfig 里**不写** retentionDays：权威键已经是它的唯一读源，
+              //   多存一份必然漂移（见上面读取处那条注释）。
+              void window.api.setExtras({ [PREDICT_KEYS.config]: JSON.stringify({ windowDays: next.windowDays }) })
+              if (patch.retentionDays !== undefined) {
+                void window.api.usageSetRetention(next.retentionDays)
+              }
+            }}
           />
         ) : view === 'detail' ? (
           <DetailView
             s={current}
             onBack={() => setView('card')}
             onRefresh={() => void window.api.refreshNow()}
+            predictOn={predictOn}
+            predictConfig={predictConfig}
           />
         ) : (
           <CardView

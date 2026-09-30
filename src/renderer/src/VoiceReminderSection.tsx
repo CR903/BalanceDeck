@@ -9,6 +9,7 @@ import {
 } from './smartBroadcast'
 import { DEFAULT_TTS_STYLE, DEFAULT_TTS_VOICE, TTS_STYLES, TTS_VOICES } from '../../shared/tts-preset'
 import { type NotifyConfig } from './systemNotify'
+import { MAX_RETENTION_DAYS, type PredictConfig } from '../../shared/usage-predict'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 设置页「语音提醒」分区
@@ -361,6 +362,15 @@ export interface VoiceReminderSectionProps {
   /** 通知阈值（ui:notifyConfig）；默认 80 / 95 / 1 小时 */
   notifyConfig: NotifyConfig
   onChangeNotifyConfig: (patch: Partial<NotifyConfig>) => void
+
+  // ─── 用量预测（P0-2）──────────────────────────────────────────────────
+  /** 预测总开关（ui:predictOn，默认开） */
+  predictOn: boolean
+  onTogglePredict: (on: boolean) => void
+  /** 预测配置（ui:predictConfig） */
+  predictConfig: PredictConfig
+  /** 改配置；保留天数由 App 侧转交主进程专用通道（改完立即裁剪） */
+  onChangePredictConfig: (patch: Partial<PredictConfig>) => void
 }
 
 export function VoiceReminderSection({
@@ -402,7 +412,11 @@ export function VoiceReminderSection({
   notifyOn,
   onToggleNotify,
   notifyConfig,
-  onChangeNotifyConfig
+  onChangeNotifyConfig,
+  predictOn,
+  onTogglePredict,
+  predictConfig,
+  onChangePredictConfig
 }: VoiceReminderSectionProps): React.JSX.Element {
   /** 按供应商覆盖折叠态：默认收起（5 场景 × N 供应商，不该默认铺满设置页） */
   const [overrideOpen, setOverrideOpen] = useState(false)
@@ -885,6 +899,63 @@ export function VoiceReminderSection({
                 否则提醒这一档不会触发。
               </div>
             )}
+          </>
+        )}
+
+        {/* ── F. 用量预测（P0-2）────────────────────────────────────────── */}
+        <div className="field-label vrs-sub">用量预测</div>
+
+        <div className="enable-row">
+          <span>
+            预计耗尽时间
+            <em className="tag env">本机估算</em>
+          </span>
+          <button
+            type="button"
+            className={'switch vrs-predict-on' + (predictOn ? ' on' : '')}
+            title={predictOn ? '关闭后详情页不再显示预计耗尽时间' : '开启后详情页按本机历史估算预计耗尽时间'}
+            onClick={() => onTogglePredict(!predictOn)}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+
+        {predictOn && (
+          <>
+            <label className="field">
+              <span className="field-label">
+                速率回看天数
+                <em className="tag env">1 – 30 天</em>
+              </span>
+              <NumInput
+                className="vrs-predict-days"
+                value={predictConfig.windowDays}
+                min={1}
+                max={30}
+                step={1}
+                onCommit={(n) => onChangePredictConfig({ windowDays: n })}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">
+                本地快照保留天数
+                <em className="tag env">1 – {MAX_RETENTION_DAYS} 天</em>
+              </span>
+              <NumInput
+                className="vrs-predict-retention"
+                value={predictConfig.retentionDays}
+                min={1}
+                max={MAX_RETENTION_DAYS}
+                step={1}
+                onCommit={(n) => onChangePredictConfig({ retentionDays: n })}
+              />
+            </label>
+            <div className="advanced-note">
+              {/* ⚠ JSX 文本节点里写 `**粗体**` 会把星号原样渲染出来（Markdown 在 .tsx 里不生效），
+                  强调用 <b>，与本文件其它 advanced-note 一致 */}
+              预测基于本机每 15 分钟一条的用量快照，<b>是估算值不是官方数据</b>；
+              样本不足时不显示，余额类供应商没有「窗口」故不预测。
+            </div>
           </>
         )}
 

@@ -10,6 +10,7 @@ import type {
   PetMenuModel,
   PetHitbox
 } from '../shared/types'
+import type { UsagePoint } from '../shared/usage-predict'
 
 const api = {
   getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
@@ -86,6 +87,26 @@ const api = {
     body: string
     level: 'warn' | 'high' | 'reset'
   }): Promise<boolean> => ipcRenderer.invoke('notify:show', payload),
+
+  // ─── 用量预测（P0-2）─────────────────────────────────────────────────────
+  /**
+   * 读回某供应商最近若干天的分窗口用量采样。**只读本机已落盘的快照，不出网**。
+   *
+   * 返回 `{ 窗口名: UsagePoint[] }`；没有历史时是空对象（不是 null —— 渲染层
+   * 据此「不显示」，而不是当成一次失败）。
+   */
+  usagePredict: (providerId: string, days: number, now: number): Promise<Record<string, UsagePoint[]>> =>
+    ipcRenderer.invoke('usage:predict', providerId, days, now),
+
+  /**
+   * 改本地快照保留期并立即裁剪。
+   *
+   * ⚠ 走**专用通道**而不是 `setExtras`：extras:set 见到非 `ui:` 键就 refreshNow()
+   *   触发全量重采集（ipc.ts 的那段），而保留期由主进程自己持有（shared/usage-predict
+   *   的 PREDICT_KEYS 记了这条分界）。
+   */
+  usageSetRetention: (days: number): Promise<boolean> =>
+    ipcRenderer.invoke('usage:setRetention', days),
 
   // ─── 测试观测点（仅 --uitest 时主进程侧注册）──────────────────────────────
   debugPush: (snapshots: unknown, offline?: boolean): Promise<void> =>

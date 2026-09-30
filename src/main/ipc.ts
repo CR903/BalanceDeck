@@ -10,7 +10,7 @@ import {
   setAlwaysOnTopPref,
   petWindowState
 } from './overlay'
-import { refreshNow, currentState, resort, reconfigure, debugPush } from './scheduler'
+import { refreshNow, currentState, resort, reconfigure, debugPush, loadUsageHistory, pruneUsageHistory } from './scheduler'
 import { setTrayIcon, trayInteractionMode } from './tray'
 import { getAutostart, setAutostart, hasSystemLoginItem } from './autostart'
 import { trayTitle } from '../shared/tray-text'
@@ -30,6 +30,7 @@ import {
   listInstances
 } from './providers'
 import { startOpencodeAuth, cancelOpencodeAuth } from './opencode-auth'
+import { PREDICT_KEYS } from '../shared/usage-predict'
 import type { ProviderPatch, AddProviderPayload, ProvidersPayload, PetMenuModel } from '../shared/types'
 
 // 测试观测点：dragStart 是否被触发过（--uitest 用）
@@ -360,6 +361,33 @@ export function registerIpc(): void {
       console.warn('[notify] 通知弹出失败：', e)
       return false
     }
+  })
+
+  // ─── 用量预测（P0-2）────────────────────────────────────────────────────
+  //
+  // 读的是 usageStore 已落盘的本机快照 —— **不新增任何网络请求**（AC4）。主进程只负责
+  // 「把历史取出来」，速率怎么算、要不要显示，全部是渲染层纯函数的事（design.md D1）。
+  //
+  // ⚠ 逐字段复验（type-safety §D）：providerId 会被拼进对象键去查文件，now 会被拿去做
+  //   保留期裁剪。两个都必须是有限正数/非空字符串，否则静默返回空对象 —— 界面上是
+  //   「没有预测」，而用户会以为是自己用量太稳。
+  ipcMain.handle('usage:predict', async (_e, providerId: unknown, days: unknown, now: unknown) => {
+    if (typeof providerId !== 'string' || !providerId) return {}
+    if (typeof days !== 'number' || !Number.isFinite(days) || days <= 0) return {}
+    // now 只作参照；渲染层传的是 Date.now()，但它同样是不可信输入
+    const t = typeof now === 'number' && Number.isFinite(now) && now > 0 ? now : Date.now()
+    return loadUsageHistory(providerId, days, t)
+  })
+
+  // 保留期（sample:usageHistoryDays，**非 ui: 前缀** —— 走自己的通道而不是 extras:set）：
+  // extras:set 对含非 ui: 键的 patch 会 refreshNow() 触发全量重采集，而保留期是主进程
+  // 自己的采集侧配置；改完立刻裁一次，不等下一轮 15 分钟采样。
+  ipcMain.handle('usage:setRetention', async (_e, days: unknown) => {
+    if (typeof days !== 'number' || !Number.isFinite(days) || days <= 0) return false
+    const n = Math.floor(days)
+    await setExtra(PREDICT_KEYS.retention, String(n))
+    pruneUsageHistory(Date.now(), n)
+    return true
   })
 
   // ─── 托盘图标（渲染层栅格化的供应商 logo，template PNG）────────────────────

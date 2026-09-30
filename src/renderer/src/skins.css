@@ -851,6 +851,33 @@ textarea {
   flex-direction: column;
   gap: 8px;
 }
+
+/* 用量预测行（P0-2）。视觉刻意贴着 .dwin 的形状：它回答的是与「用量窗口」
+   同一批问题（这个窗口还能用多久），形状不同会让用户以为它属于别的模块。 */
+.predict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.predict-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.predict-win {
+  font-size: 12.5px;
+  font-weight: 600;
+  flex: none;
+}
+.predict-text {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+}
 .dwin {
   padding: 11px 12px;
   border-radius: var(--radius-md);
