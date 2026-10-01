@@ -1,5 +1,5 @@
-import { Component, useEffect, useRef, useState } from 'react'
-import type { AppState, ProviderSnapshot } from '../../shared/types'
+import { Component, useEffect, useMemo, useRef, useState } from 'react'
+import type { AppState, ProviderInfo, ProviderSnapshot } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
@@ -18,7 +18,7 @@ import {
 } from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
-import { speakableSnapshots } from './read-model'
+import { groupNames, speakableSnapshots } from './read-model'
 import {
   DEFAULT_TTS_CONFIG,
   PROBE_IDLE,
@@ -118,6 +118,19 @@ export default function App(): React.JSX.Element {
    *  留一个能写却没人听的开关，就是让用户以为设置生效了。 */
   /** 不播报的供应商 id（ui:voiceMuted，默认空 = 全部播报） */
   const [voiceMuted, setVoiceMuted] = useState<string[]>([])
+
+  // ─── 多账户分组（P1-4）────────────────────────────────────────────────────
+  /**
+   * 已隐藏的**分组 id**（ui:groupHidden）—— 黑名单，缺省空 = 全部显示。
+   *
+   * 语义是「只不展示」，不是 `enabled: false` 的停止采集：切回零延迟，且隐藏期间
+   * 采集与历史采样照常（趋势图不会因此缺一段）。语义照抄 ui:voiceMuted。
+   *
+   * ⚠ 存的是**组 id**（隐藏整个组才是需求），不是实例 id。
+   */
+  const [hiddenGroups, setHiddenGroups] = useState<string[]>([])
+  /** 实例身份（providers:list）：分组归属与同名区分都只能从这里取 —— 见 design.md D5 */
+  const [instanceInfo, setInstanceInfo] = useState<ProviderInfo[]>([])
 
   // ─── 语音提醒（TTS 集成 + 智能播报）────────────────────────────────────────
   // 所有键都是 ui: 前缀：非 ui: 的 extras 写入会触发一次全量重新采集（ipc.ts:191-193）
@@ -516,7 +529,9 @@ export default function App(): React.JSX.Element {
     return picked
   }
   useEffect(() => {
-    void window.api.getExtras(['ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted']).then((e) => {
+    void window.api.getExtras([
+      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:groupHidden'
+    ]).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
@@ -526,6 +541,17 @@ export default function App(): React.JSX.Element {
         setVoiceMuted(Array.isArray(muted) ? muted.filter((x): x is string => typeof x === 'string') : [])
       } catch {
         setVoiceMuted([])
+      }
+      // 分组黑名单：同一套「黑名单 id 列表」范式（读侧复验 + 损坏回落默认全开）。
+      // ⚠ 判「键缺失」用 `||` 而不是 `== null`：extras:get 对未写过的键返回 `''`
+      //   而不是 undefined，`== null` 永远为假（这坑本文件里已经踩过两次）。
+      try {
+        const hidden = JSON.parse(e['ui:groupHidden'] || '[]') as unknown
+        setHiddenGroups(
+          Array.isArray(hidden) ? hidden.filter((x): x is string => typeof x === 'string') : []
+        )
+      } catch {
+        setHiddenGroups([])
       }
       // ⚠ 这里**不再读** ui:voiceGender：性别改由 petGender(pet.id) 现算（FR3）。
       //   旧键留在 extras 里不动 —— 读过再用它改写用户选的助理，就是「覆盖用户显式偏好」
@@ -547,6 +573,49 @@ export default function App(): React.JSX.Element {
     setHideBalance(next)
     void window.api.setExtras({ 'ui:hideBalance': next ? '1' : '' })
   }
+
+  // ─── 多账户分组：实例列表 + 切换可见分组 ───────────────────────────────────
+  //
+  // 分组归属的唯一真相源是注册表里的 groupId，而**归组动作发生在设置页**（那才是列实例的
+  // 地方）。所以刷新时机绑定在「回到卡片页」上 —— 只在挂载时读一次的话，用户在设置页改了
+  // 组再返回，卡片仍按旧 groupId 排序，而界面上看不出任何异常。
+  useEffect(() => {
+    if (view !== 'card') return
+    // ⚠ 必须吞掉 rejection：一次 providers:list 失败不该变成渲染层的未捕获 promise，
+    //   也不该把 instanceInfo 写成别的形状（读侧按「空 = 没分组」兜底，见 CardView 的 shown）。
+    void window.api
+      .listProviders()
+      .then((p) => setInstanceInfo(p.providers))
+      .catch(() => setInstanceInfo([]))
+  }, [view])
+
+  /** 切换分组的可见性：黑名单语义（空 = 全部显示） */
+  const toggleGroup = (group: string): void => {
+    const next = hiddenGroups.includes(group)
+      ? hiddenGroups.filter((g) => g !== group)
+      : [...hiddenGroups, group]
+    setHiddenGroups(next)
+    // ui: 前缀 → 不触发 refreshNow()（隐藏只是显示层的事，出网一次都没必要）
+    void window.api.setExtras({ 'ui:groupHidden': JSON.stringify(next) })
+  }
+
+  /**
+   * 「显示全部分组」：**清空**黑名单，而不是 toggle 一个哨兵组。
+   *
+   * ⚠ 哨兵不能进存储：`ui:groupHidden` 里只该有真实组 id（`visibleIds` 拿它去查分组，
+   *   查不到就是噪声，而噪声会在「隐藏了组之后又删掉所有成员」这类编辑后越积越多）。
+   *   更实际的原因是可用性：toggle 哨兵的话，点「全部」是**空操作** ——
+   *   用户点了列表纹丝不动，而唯一能回来的路是把每一组挨个点回去。
+   */
+  const showAllGroups = (): void => {
+    if (!hiddenGroups.length) return
+    setHiddenGroups([])
+    void window.api.setExtras({ 'ui:groupHidden': '[]' })
+  }
+
+  // ⚠ 必须 memo：不 memo 的话每次渲染都是新数组引用，CardView 里依赖它的 useMemo
+  //   全部失效（分组排序会在每次状态推送时重算，等于没有缓存）。
+  const groups = useMemo(() => groupNames(instanceInfo), [instanceInfo])
 
   // ─── 语音提醒：智能播报 ───────────────────────────────────────────────────
 
@@ -1175,6 +1244,11 @@ export default function App(): React.JSX.Element {
             onRefresh={() => void window.api.refreshNow()}
             onSettings={() => setView('settings')}
             onCollapse={doCollapse}
+            instanceInfo={instanceInfo}
+            hiddenGroups={hiddenGroups}
+            groups={groups}
+            onToggleGroup={toggleGroup}
+            onShowAllGroups={showAllGroups}
           />
         )}
       </div>

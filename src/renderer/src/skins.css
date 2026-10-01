@@ -1198,6 +1198,74 @@ textarea {
   white-space: nowrap;
 }
 
+/* ─── 分组（P1-4）──────────────────────────────────────────────────────────
+   刻意复用 .field 的既有规则（token、圆角、focus 光晕），只补布局：
+   分组是纯展示层控件，不该有一套自己的视觉语言。
+
+   ⚠ 这里必须用块注释。CSS 不认 `//` 行注释，而这不是「忽略一行」的差别：
+     解析器会把 `//` 开头的那段当成一个**非法选择器**，连同后面紧跟的规则一起吞掉。
+     实测（npm run build 后在产物里查这几条规则）：写成 `//` 时本节的
+     .prow-group / .grp-note / .grp-filter .grp-select **全部不在产物里** ——
+     构建**不报错**、界面只是控件没排版，而没有任何一处会红。 */
+
+/** 供应商行里的归组下拉。放在 prow-sub 之下，与那一行左侧对齐 */
+.prow-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-left: 14px;
+}
+.prow-group .grp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 11.5px;
+  outline: none;
+}
+.prow-group .grp-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/** 设置页顶部的分组说明。存在的理由是语义（D6），不是装饰 */
+.grp-note {
+  margin: 0 2px 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+.grp-note b {
+  color: var(--fg-dim);
+}
+
+/** 标题栏里的分组筛选。max-width 免得组名很长时把状态文字挤没 */
+.grp-filter {
+  flex: 0 1 auto;
+  display: flex;
+  min-width: 0;
+}
+.grp-filter .grp-select {
+  max-width: 108px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 11px;
+  outline: none;
+}
+.grp-filter .grp-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .prow-empty {
   padding: 20px 14px;
   border-radius: var(--radius-md);

@@ -2,18 +2,66 @@
 
 ## Goal
 
-账户分组/标签（如公司 vs 个人）、每组独立显隐与排序，详情页区分同名供应商的多账号。
+让多中转站 / 多订阅的用户能把自己的账户按**分组**组织（如「公司 / 个人」），
+每组可独立显隐，并能在卡片上区分**同名**的多账号。
+
+竞品依据：CodeZeno（多账户）、CodexBar（多 session）、oh-myusage（账号状态诊断）。
+调研原文：`.trellis/tasks/10-01-p1-account-groups/research/`
 
 ## Requirements
 
-- TBD
+1. **用户自由标签**：分组不是固定枚举，用户可自建任意组名（「公司」「个人」「中转站A」…）。
+2. **隐藏 = 只不展示**：隐藏一个分组后，这些账户**仍在后台采集**，只是不在列表里显示。
+   与「停用供应商」（`enabled: false`，停止采集）是两件事。
+3. **托盘与提醒不受影响**：隐藏只作用于列表显示 —— 托盘标题与额度提醒**仍覆盖全部账户**。
+   设置页必须明示这一点。
+4. **同名多账号可区分**：同一预设的两条实例当前**连 logo 都一样**
+   （`mark = presetId || protocol`），需要用可辨识的后缀区分（如 `Claude 公司`）。
+   没有可区分依据时**不加后缀**（不造「(2)」这类假区分）。
+5. **数据诚实**：分组信息只影响展示与组织，不改变任何采集行为与数据口径。
+
+## Constraints
+
+- **不建组注册表**：分组就是「实例 `groupId` 字段的取值集合」，组名 = 去重结果 +
+  一个 `UNGROUPED = '未分组'` 兜底。一份真相源，不存在「组列表与实例列表不一致」的可能。
+  删掉一整组 = 把那些实例的 `groupId` 清空。
+- **组序不新增持久化维度**：组间顺序 = 该组**第一个成员在数组里的位置**，组内同数组顺序。
+  `providers:reorder` 的入参形状（`string[]`）保持不变。
+- **只增可选字段**：`ProviderInstance.groupId?` / `ProviderInfo.groupId?` / `distinguishKey?`。
+  ⚠ `ProviderSnapshot` **不加**字段（9 个适配器都不该关心它）。
+  迁移沿用 `.map()` 归一化先例（照 `encodePetState`）。
+- **写入必须「无变化不写」**：`setExtra` 是无条件整文件重写，照抄 `reorderInstances` 的守卫。
+- **`ui:hideBalance` 是反面教材，不要抄**：它的 `'1'`/`''` 编码被 spec 自己标注
+  「differs from every other boolean — don't copy」。隐藏语义照 `ui:voiceMuted`（id 列表 + 类型守卫）。
+- 判「extras 键缺失」只能用 `!v`（`extras:get` 对缺失键返回 `''`，判 `== null` 恒为假）。
+- 纯逻辑落 `read-model.ts` —— `scripts/test-read-model.mjs` **已 `loadTs` 它**，
+  因此**不新增测试脚本、不改 `package.json`**。
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] 分组是用户自由标签：可自建任意组名，改实例的分组后卡片名下的分组归属同步变化
+- [ ] 隐藏分组后卡片列表只剩可见组成员，**且这些账户仍在被采集**
+- [ ] 隐藏分组后**托盘标题不变**（托盘取全局第一位，与 `tray-text.ts` 既有契约一致）
+- [ ] 设置页明确写着「隐藏只影响列表显示，托盘与提醒仍覆盖全部账户」
+- [ ] 同名两账号的卡片名带不同后缀；无可区分依据时**不加后缀**
+- [ ] `groupNames()` 去重 + 升序 + 含 `UNGROUPED`（当存在无 `groupId` 的实例）
+- [ ] `visibleIds()` 按**组 id** 排除；隐藏列表含不存在的组 id 时不抛、不影响结果
+- [ ] `orderForDisplay()` 组间按组首成员位置、组内按数组顺序（**交错数组下**同组成员被聚到一起）
+- [ ] 全部组被隐藏 → 返回空数组（不抛），界面显示空态
+- [ ] 三个新纯函数**不修改入参**（深比较断言）
+- [ ] 三个新函数在 `read-model.ts` 内各只声明一次（静态守卫）
+- [ ] `ui:groupHidden` 判缺失用 `!v`（非 `== null`）
+- [ ] 组名写入前截断 32 字符并剥控制字符（会进 SVG / 托盘文案）
+- [ ] 新增 `--uitest` 断言：分组下拉存在、选项与注册表一致、隐藏后卡片变而托盘不变、同名后缀
+- [ ] `npm test` 与 `npm run typecheck` 通过
+- [ ] 两个反验实测有效：按实例 id 过滤 → 红；不分组排序 → 红
 
 ## Notes
 
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+- **已知代价（D4）**：组的顺序依赖成员 —— 当某组最后一个成员被移走时，该组位置按剩余成员重算。
+  由 I30 钉住。这是不新增「组序」持久化维度换来的。
+- **测试夹具陷阱（已处理）**：反验「不分组排序」最初是**绿的** —— 首版夹具用了**连续分组**的数组，
+  而连续分组时「纯数组顺序」与「分组后顺序」恰好输出相同。换成**交错数组**
+  （`interleaved` / `tri`）后才有 3 条红，并加了前置断言 I19 证明数组本身是交错的。
+  注释记在该夹具上方，避免下一个人重复这个误判。
+- 设计推导见 `design.md` 的 D1–D6，执行清单见 `implement.md`。

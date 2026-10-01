@@ -8,11 +8,34 @@
 // （CardLevel / snapLevel / severity / ballLevel 外加两份主窗口选择），
 // 没有一处能被测试盯住。收口成 read-model.ts 之后，这里就是它们的契约。
 
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { loadTs } from './lib/load-ts.mjs'
+
+// 仓库根（静态守卫要直接读源码文件；load-ts.mjs 里的 ROOT 不是导出，不能从那里拿）
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const rm = await loadTs('src/renderer/src/read-model.ts')
 const { fmtAmount } = await loadTs('src/renderer/src/format.ts')
-const { primaryWindow, primaryWindowIndex, worstWindow, maxPercent, snapshotLevel, windowLevel, severityRank, ballLevel, speakableSnapshots } = rm
+const {
+  primaryWindow,
+  primaryWindowIndex,
+  worstWindow,
+  maxPercent,
+  snapshotLevel,
+  windowLevel,
+  severityRank,
+  ballLevel,
+  speakableSnapshots,
+  UNGROUPED,
+  groupOf,
+  groupNames,
+  visibleIds,
+  orderForDisplay,
+  distinguishSuffixes,
+  displayName
+} = rm
 
 let pass = 0
 let fail = 0
@@ -26,6 +49,10 @@ function eq(actual, expected, label) {
     fail++
     console.log(`  ✗ ${label}\n      实际: ${a}\n      期望: ${e}`)
   }
+}
+/** 非 JSON 值也能比（布尔断言用） */
+function ok(cond, label) {
+  eq(!!cond, true, label)
 }
 
 const win = (o = {}) => ({ name: '5 小时', used: 0, unit: 'percent', ...o })
@@ -122,6 +149,235 @@ eq(speakableSnapshots([badSnap('a', 'error'), okSnap('b')]).map((s) => s.id).joi
 eq(speakableSnapshots([badSnap('a', 'error'), badSnap('b', 'nodata')]).length, 0, 'H5 都不可用 → 返回空数组')
 eq(speakableSnapshots([]).length, 0, 'H6 没有快照 → 返回空数组')
 eq(speakableSnapshots([okSnap('a')], ['不存在']).map((s) => s.id).join(','), 'a', 'H7 静音未列出的 id 不影响结果')
+
+console.log('\nI. 多账户分组（P1-4）')
+
+const info = (o = {}) => ({
+  id: 'p',
+  name: 'X',
+  kind: 'coding',
+  builtin: true,
+  enabled: true,
+  credentialSource: 'saved',
+  protocol: 'claude-code',
+  baseUrl: '',
+  presetId: '',
+  createdAt: 0,
+  groupId: '',
+  ...o
+})
+// 公司/个人两组各两条，数组顺序刻意与「公司在前」相反 —— 组序必须由**数组位置**决定，
+// 而不由组名字母序决定（把公司/个人换成 甲组/乙组 结论不变，那才是真在测排序规则）。
+const mixed = [
+  info({ id: 'a2', name: 'A2', groupId: '个人' }),
+  info({ id: 'a1', name: 'A1', groupId: '个人' }),
+  info({ id: 'b1', name: 'B1', groupId: '公司' }),
+  info({ id: 'b2', name: 'B2', groupId: '公司' })
+]
+const ids = (list) => [...list].join(',')
+
+eq(rm.UNGROUPED, '未分组', 'I1 未分组桶有固定的显示名')
+// 全部实例都有组 → 不该凭空多出一个「未分组」选项（用户没建过它就不该看见它）
+eq(groupNames(mixed), ['个人', '公司'], 'I2 去重后按组名升序；没有未分组成员就不出现该桶')
+eq(groupNames([]), [], 'I3 没有实例 → 空数组')
+eq(groupNames([info({}), info({})]), ['未分组'], 'I4 全未分组 → 只有一项（与今天行为一致）')
+eq(groupNames([info({ id: 'x', groupId: '公司' }), info({ id: 'y', groupId: '' })]), ['公司', '未分组'],
+  'I5 groupId 缺省与空串都归入未分组桶')
+eq(groupNames([info({ id: 'x' }), info({ id: 'y', groupId: '公司' }), info({ id: 'z', groupId: '公司' })]),
+  ['公司', '未分组'], 'I6 同一组出现两次只留一个')
+// '未分组' 参与排序时必须落在末尾：用户建的组才是正常排序的一部分
+eq(groupNames([info({ id: 'x', groupId: 'zzz' }), info({ id: 'y', groupId: 'aaa' }), info({ id: 'u' })]),
+  ['aaa', 'zzz', '未分组'], 'I7 未分组不参与字母序，恒在末尾')
+
+eq(groupOf(info({})), '未分组', 'I8 空 groupId → 未分组桶')
+eq(groupOf(info({ groupId: '公司' })), '公司', 'I9 有 groupId → 原样')
+
+eq([...visibleIds(mixed)].sort().join(','), 'a1,a2,b1,b2', 'I10 默认（空黑名单）全部可见')
+eq([...visibleIds(mixed, ['公司'])].sort().join(','), 'a1,a2', 'I11 隐藏整组 → 该组全部成员被排除')
+eq([...visibleIds(mixed, ['未分组'])].sort().join(','), 'a1,a2,b1,b2', 'I12 没有未分组成员 → 全部可见')
+eq([...visibleIds([info({ id: 'x' }), info({ id: 'y', groupId: '公司' })], ['未分组'])].join(','), 'y',
+  'I13 隐藏未分组 → 只排除无 groupId 的')
+eq([...visibleIds(mixed, ['公司', '个人', '未分组'])].length, 0, 'I14 全隐藏 → 空集合')
+eq([...visibleIds(mixed, ['不存在的组'])].sort().join(','), 'a1,a2,b1,b2', 'I15 黑名单含已消失的组 → 不影响结果')
+eq([...visibleIds([], ['公司'])].length, 0, 'I16 没有实例 → 空集合，不抛')
+
+eq(orderForDisplay(mixed), ['a2', 'a1', 'b1', 'b2'], 'I17 无隐藏时保持数组顺序（组首下标顺序）')
+eq(orderForDisplay(mixed, ['公司']), ['a2', 'a1'], 'I18 隐藏公司 → 只剩个人组，组内顺序不变')
+// **本节的核心护栏：数组顺序是交错的。**
+// 「两组各两条且各自连续」的数组下，纯数组顺序与分组顺序**恰好相同** —— 那种断言在
+// 「不分组」的实现下也是绿的（实测：把 orderForDisplay 换成纯数组顺序，全套仍然全绿）。
+// 交错数组才让这两条路径产生不同的输出。
+const interleaved = [
+  info({ id: 'a1', name: 'A1', groupId: '个人' }),
+  info({ id: 'b1', name: 'B1', groupId: '公司' }),
+  info({ id: 'a2', name: 'A2', groupId: '个人' }),
+  info({ id: 'b2', name: 'B2', groupId: '公司' })
+]
+eq(ids(interleaved.map((p) => p.id)), 'a1,b1,a2,b2', 'I19 前置：数组本身是交错的（不是分组排列）')
+eq(orderForDisplay(interleaved), ['a1', 'a2', 'b1', 'b2'],
+  'I20 交错数组 → 同组成员被聚到一起（组内仍按数组顺序：a1 在 a2 前）')
+eq(orderForDisplay(interleaved, ['个人']), ['b1', 'b2'], 'I21 交错数组下隐藏一组 → 只剩另一组且同样聚合')
+eq(orderForDisplay(interleaved, ['公司']), ['a1', 'a2'], 'I22 交错数组下隐藏另一组 → 结果对称')
+// 三组交错：中间那组也必须归位，且仍以「组首成员」定义组序
+const tri = [
+  info({ id: 'p1', groupId: '丙' }),
+  info({ id: 'q1', groupId: '甲' }),
+  info({ id: 'r1', groupId: '乙' }),
+  info({ id: 'q2', groupId: '甲' }),
+  info({ id: 'r2', groupId: '乙' }),
+  info({ id: 'p2', groupId: '丙' })
+]
+eq(orderForDisplay(tri), ['p1', 'p2', 'q1', 'q2', 'r1', 'r2'], 'I23 三组交错 → 按组首下标聚成三段')
+eq(orderForDisplay(tri, ['乙']), ['p1', 'p2', 'q1', 'q2'], 'I24 三组交错下隐藏中间那组 → 两段仍各自聚合')
+// 组序由**成员在数组里的位置**决定（D4：不存组序）。把「公司」整组挪到数组最前，
+// 组序就该跟着换 —— 这条在「按组名字母序排」的实现下会报红。
+const moved = [
+  info({ id: 'b1', name: 'B1', groupId: '公司' }),
+  info({ id: 'b2', name: 'B2', groupId: '公司' }),
+  info({ id: 'a2', name: 'A2', groupId: '个人' }),
+  info({ id: 'a1', name: 'A1', groupId: '个人' })
+]
+eq(orderForDisplay(moved), ['b1', 'b2', 'a2', 'a1'], 'I25 组首成员在前 → 该组在前（不按组名字母序）')
+eq(orderForDisplay([info({ id: 'x', groupId: '乙组' }), info({ id: 'y', groupId: '甲组' })]), ['x', 'y'],
+  'I26 汉字组名同样只看数组位置（甲在乙后不改变顺序）')
+eq(orderForDisplay(mixed, ['公司', '个人', '未分组']), [], 'I27 全隐藏 → 空数组（不抛）')
+eq(orderForDisplay([], []), [], 'I28 没有实例 → 空数组')
+eq(orderForDisplay(mixed, ['公司', '个人', '未分组']).length, 0, 'I29 全隐藏的长度也是 0 而不是 undefined')
+// D4 的已知代价：某组最后一个成员被移走 → 组的位置按剩下的成员重算。
+// 「个人」只剩 a2 且它在数组里排第一 → 该组移到最前。这是**刻意接受**的行为，
+// 钉住它是为了让下一个改排序规则的人看到代价，而不是误以为是回归。
+eq(orderForDisplay([info({ id: 'a2', name: 'A2', groupId: '个人' }), info({ id: 'b1', groupId: '公司' })]),
+  ['a2', 'b1'], 'I30 组末成员移走后，组序按剩余成员重算')
+
+// 纯度：三个函数都不得就地修改入参（渲染层拿到的实例列表会被多处复用）
+const purityInput = [
+  info({ id: 'a1', groupId: '个人' }),
+  info({ id: 'b1', groupId: '公司' })
+]
+const purityBefore = JSON.stringify(purityInput)
+groupNames(purityInput)
+visibleIds(purityInput, ['公司'])
+orderForDisplay(purityInput, ['公司'])
+ok(JSON.stringify(purityInput) === purityBefore, 'I31 三个函数都不就地修改入参（深比较）')
+// 连黑名单入参也不能被改：读侧不该「顺手清理」用户的存储
+const purityHidden = ['公司', '不存在的组']
+const hiddenBefore = JSON.stringify(purityHidden)
+orderForDisplay(purityInput, purityHidden)
+visibleIds(purityInput, purityHidden)
+ok(JSON.stringify(purityHidden) === hiddenBefore, 'I32 不修改黑名单入参（清理是写侧的事）')
+
+console.log('\nK. 同名多账号的区分（D5）')
+
+// 同名两账号，host 不同 → 两张卡都必须带后缀（今天是连 logo 都一样的）
+const dup = [
+  info({ id: 'c1', name: 'Claude', distinguishKey: 'corp.example.com' }),
+  info({ id: 'c2', name: 'Claude', distinguishKey: 'home.example.com' })
+]
+eq(distinguishSuffixes(dup), { c1: 'corp.example.com', c2: 'home.example.com' }, 'K1 同名两账号 → 两个都带 host 后缀')
+// 只有一个 → 不加后缀（host 拼到唯一那个名字后面是噪音）
+eq(distinguishSuffixes([dup[0]]), {}, 'K2 只有一个同名账号 → 不加后缀')
+// 同名但一个读不出 host：那个不加，**不编「(2)」**
+const halfDup = [
+  info({ id: 'c1', name: 'Claude', distinguishKey: 'corp.example.com' }),
+  info({ id: 'c2', name: 'Claude', distinguishKey: '' })
+]
+eq(distinguishSuffixes(halfDup), { c1: 'corp.example.com' }, 'K3 缺区分依据的那个不加后缀（不造假区分）')
+// 不同名 → 不加（哪怕两个都有 host）
+eq(
+  distinguishSuffixes([
+    info({ id: 'a', name: 'Claude', distinguishKey: 'x.com' }),
+    info({ id: 'b', name: 'Codex', distinguishKey: 'y.com' })
+  ]),
+  {},
+  'K4 不同名 → 都不加后缀（host 不是装饰品）'
+)
+// 三家同名：全部带后缀（不是只给「(2)」那个编的）
+const triDup = [
+  info({ id: 'a', name: 'X', distinguishKey: 'a.com' }),
+  info({ id: 'b', name: 'X', distinguishKey: 'b.com' }),
+  info({ id: 'c', name: 'X', distinguishKey: 'c.com' })
+]
+eq(Object.keys(distinguishSuffixes(triDup)).sort().join(','), 'a,b,c', 'K5 三家同名 → 全部带后缀')
+eq(distinguishSuffixes([]), {}, 'K6 没有实例 → 空对象')
+// 纯度：入参不被就地修改（渲染层拿到的实例列表会被多处复用）
+const dupBefore = JSON.stringify(dup)
+distinguishSuffixes(dup)
+ok(JSON.stringify(dup) === dupBefore, 'K7 distinguishSuffixes 不就地修改入参')
+
+eq(displayName('Claude', 'corp.example.com'), 'Claude corp.example.com', 'K8 有后缀 → 名称 + 空格 + 后缀')
+eq(displayName('Claude'), 'Claude', 'K9 无后缀 → 原样')
+eq(displayName('Claude', ''), 'Claude', 'K10 空串后缀（读不到区分依据）→ 原样，不留多余空格')
+
+console.log('\nJ. 静态守卫：纯函数各只声明一次')
+
+const rmSrc = readFileSync(resolve(ROOT, 'src/renderer/src/read-model.ts'), 'utf8')
+const declCount = (name) => (rmSrc.match(new RegExp(`export function ${name}\\b`, 'g')) ?? []).length
+for (const n of ['groupNames', 'visibleIds', 'orderForDisplay', 'distinguishSuffixes', 'displayName', 'groupOf']) {
+  eq(declCount(n), 1, `J1 ${n} 只声明一次（重复声明会让「契约是哪一份」变成问题）`)
+}
+// 纯函数纪律：不得引入 electron / DOM —— 纯度是它能被 loadTs 在纯 node 里加载的前提
+ok(!/from ['"]electron['"]/.test(rmSrc), 'J2 read-model 不 import electron（纯 node 可加载）')
+ok(!/\bdocument\.|\bwindow\./.test(rmSrc), 'J3 read-model 不碰 DOM')
+
+// 剥掉注释再判生效代码 —— 注释里写着「判 `v == null` 永远为假」这句说明本身
+// 会被裸 grep 匹配上，把一条守实现的门变成永红（test-structure.mjs §D 记的同一个坑）。
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const appSrc = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/App.tsx'), 'utf8'))
+const setSrc = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/SettingsView.tsx'), 'utf8'))
+ok(appSrc.length > 0, 'J4 前置：App.tsx 剥注释后非空（负向断言不能空洞通过）')
+
+console.log('\nJ2. 分组语义的边界守卫（这几条都是「写错了不报错、只是功能悄悄变了」）')
+
+// ⚠ `extras:get` 对**从未写过**的键返回 `''` 而不是 undefined，所以判「键缺失」只能用
+//   假值兜底。判 `== null` 恒为假 —— 后果不是崩，是**每个用户的分组黑名单第一次
+//   启动就被静默清空**（表现为「我藏的组怎么自己冒出来了」）。
+ok(
+  !/e\[['\"]ui:groupHidden['\"]\]\s*(==|===|!=|!==)\s*(null|undefined)/.test(appSrc),
+  "J5 ui:groupHidden 不与 null/undefined 比较（extras:get 对缺失键给 ''，判 == null 恒为假）"
+)
+ok(
+  /e\[['\"]ui:groupHidden['\"]\]\s*\|\|\s*'\[\]'/.test(appSrc),
+  "J6 ui:groupHidden 读侧用假值兜底 '' → []（缺失键 = 全部显示，而不是恒为假）"
+)
+ok(
+  /setExtras\(\{\s*'ui:groupHidden':\s*JSON\.stringify\(/.test(appSrc),
+  'J7 写侧存 JSON 数组（不是 hideBalance 那种被 spec 标注「别抄」的字符串编码）'
+)
+// 「隐藏只是不展示」是**结构性质**，用静态守卫钉住最省事：只要主进程读了这个键，
+// 就说明有人把隐藏接到了采集或托盘上 —— 而那正是 D1/D6 明确禁止的。
+// ⚠ uitest.ts 是观测点（它读这个键来断言托盘不变），豁免它。
+const mainHits = readdirSync(resolve(ROOT, 'src/main'), { recursive: true })
+  .filter((f) => typeof f === 'string' && f.endsWith('.ts') && !f.includes('qa/uitest'))
+  .filter((f) => /ui:groupHidden/.test(stripComments(readFileSync(resolve(ROOT, 'src/main', f), 'utf8'))))
+eq(mainHits, [], 'J8 主进程不读 ui:groupHidden（隐藏不碰采集与托盘：托盘仍覆盖全部账户）')
+
+// AC 明确要求设置页写出那句话。没有它，用户会以为隐藏了公司账户就收不到告警 —
+// 而实际上（且应该）仍然收得到。这条只能静态断言：仓库没有 React 测试基础设施。
+ok(
+  setSrc.includes('隐藏只影响列表显示') && setSrc.includes('托盘与提醒仍覆盖全部账户'),
+  'J9 设置页写明「隐藏只影响列表显示，托盘与提醒仍覆盖全部账户」'
+)
+// 卡片列表的两个出口都要给退路：全隐藏时的空态 + 一键恢复
+const cardSrc = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/CardView.tsx'), 'utf8'))
+ok(cardSrc.includes('分组已全部隐藏'), 'J10 卡片列表全隐藏时显示空态而不是空白网格')
+ok(/instanceInfo\.length/.test(cardSrc), 'J11 instanceInfo 未到手时不过滤（否则「查不到实例」会变成「卡片全没了」）')
+// ⚠ 「显示全部分组」必须**一次清空**整份黑名单。早先写成 `for (const g of hiddenGroups)
+//   onToggleGroup(g)` 时，循环里每一轮都从**同一份闭包**里的 hiddenGroups 出发，
+//   于是 setHiddenGroups 被同一个旧值覆盖 N 次 —— 净效果是**只放开最后一组**，
+//   而用户看到的是「点了没反应」。React 测试缺席时只有静态门能钉住它。
+ok(
+  /className="btn-primary sm empty-cta" onClick=\{onShowAllGroups\}/.test(cardSrc),
+  'J12 空态的「显示全部分组」直接调 onShowAllGroups（for 循环逐个 toggle 只会放开最后一组）'
+)
+// 哨兵 value 必须带控制字符：sanitizeGroupId 剥掉全部 C0 控制字符 → 用户组名撞不上它。
+// 用裸「全部」当 value 的话，自建一个叫「全部」的组就会与「显示全部分组」同值，
+// 而选中哪一项变成浏览器的实现细节（受控 select 的 value 只认字符串）。
+const sentinel = /const ALL_GROUPS_VALUE = '([^']*)'/.exec(cardSrc)
+ok(
+  // 源码里写的是转义序列而不是裸控制字符，所以判据两种写法都要认
+  !!sentinel && (/\\u00[0-9a-fA-F]{2}/.test(sentinel[1]) || /[\u0000-\u001F]/.test(sentinel[1])),
+  `J13 下拉哨兵 value 含控制字符（用户组名不可能与之相等）实得 ${JSON.stringify(sentinel?.[1])}`
+)
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

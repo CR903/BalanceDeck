@@ -8,6 +8,7 @@ import type {
   ProviderPatch
 } from '../../shared/types'
 import { Icon, IconButton } from './components'
+import { UNGROUPED, groupNames } from './read-model'
 import { ProviderMark } from './ProviderMark'
 import { PetSection, type PetSectionProps } from './PetSection'
 import { VoiceReminderSection, type VoiceReminderSectionProps } from './VoiceReminderSection'
@@ -70,7 +71,11 @@ function ProviderRow({
   onToggle,
   onRemove,
   muted,
-  onToggleVoice
+  onToggleVoice,
+  groupSuggestions,
+  draftGroup,
+  setDraftGroup,
+  onSetGroup
 }: {
   p: ProviderInfo
   editing: boolean
@@ -90,6 +95,12 @@ function ProviderRow({
   /** 该供应商是否已静音（不参与语音播报） */
   muted: boolean
   onToggleVoice: () => void
+  /** 全部组名（datalist 的建议项；用户也可以直接输入新组名） */
+  groupSuggestions: string[]
+  /** 归组输入框的草稿（实例 id → 正在敲的组名）。父组件持有：草稿必须活过列表重排 */
+  draftGroup: Record<string, string>
+  setDraftGroup: (fn: (d: Record<string, string>) => Record<string, string>) => void
+  onSetGroup: (groupId: string) => void
 }): React.JSX.Element {
   const [confirmRemove, setConfirmRemove] = useState(false)
   return (
@@ -151,6 +162,35 @@ function ProviderRow({
           {KIND_LABEL[p.kind]} · {credLabel(p)}
           {p.baseUrl && <span className="prow-url"> · {p.baseUrl.replace(/^https?:\/\//, '')}</span>}
         </div>
+        {/* 归组：分组是**用户自由标签**，所以控件必须能直接**输入**新组名，而不只是
+            在已有组里挑。用 `<input list>` + `<datalist>`：既有下拉建议，又能自由输入，
+            一个控件同时满足两者。
+
+            ⚠ 不用 `<select>`：空串在 select 里**不能**当「未分组」的哨兵 ——
+              受控 select 找不到匹配项会静默回落到第一个选项，于是「未分组」与
+              「新建分组」都表达不出来（state-management.md 记过这个坑）。
+            ⚠ 组名不建注册表（design.md D2）：删掉最后一组成员，那个组自然消失。 */}
+        <label className="prow-group">
+          <span className="field-label">分组</span>
+          <input
+            className="grp-input"
+            type="text"
+            list={`grp-list-${p.id}`}
+            value={draftGroup[p.id] ?? p.groupId ?? ''}
+            placeholder={UNGROUPED}
+            title="分组：主页卡片按组聚合显示。留空 = 未分组（不影响采集）"
+            onChange={(e) => setDraftGroup((d) => ({ ...d, [p.id]: e.target.value }))}
+            onBlur={(e) => void onSetGroup(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }}
+          />
+          <datalist id={`grp-list-${p.id}`}>
+            {groupSuggestions.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+        </label>
       </div>
 
       {editing && (
@@ -318,6 +358,14 @@ export function SettingsView({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [authState, setAuthState] = useState<'idle' | 'waiting' | 'ok'>('idle')
   const [authMsg, setAuthMsg] = useState('')
+  /**
+   * 归组输入框的**草稿**（实例 id → 用户正在敲的组名）。
+   *
+   * 为什么不直接 `value={p.groupId}`：受控输入框里每次按键都会立刻触发一次
+   * `setInstanceGroup` → 每次按键一次 `setExtra` → **整文件重写 secrets.bin**（store.ts）。
+   * 草稿 + onBlur 提交 = 一次编辑只写一次盘。
+   */
+  const [draftGroup, setDraftGroup] = useState<Record<string, string>>({})
 
   // 外观 / 频率 / 系统
   const [skin, setSkin] = useState('aero')
@@ -415,6 +463,14 @@ export function SettingsView({
     onDataChanged()
   }
 
+  /** 归组：写回主进程注册表（groupId 的唯一真相源在那里），响应体即最新列表 */
+  const setGroup = async (p: ProviderInfo, groupId: string): Promise<void> => {
+    const next = await window.api.setInstanceGroup(p.id, groupId)
+    setPayload(next)
+    onDataChanged()
+    flash()
+  }
+
   const remove = async (p: ProviderInfo): Promise<void> => {
     const next = await window.api.removeProvider(p.id)
     setPayload(next)
@@ -497,6 +553,17 @@ export function SettingsView({
     return out
   }, [payload])
 
+  /**
+   * 全部组名（含「未分组」兜底）。
+   *
+   * ⚠ 组名不是独立存储的：它就是 `groupId` 字段取值集合的去重结果（design.md D2），
+   *   所以这个列表永远与实例列表一致 —— 删除最后一个成员，那个组自然消失。
+   */
+  const allGroups = useMemo(
+    () => groupNames(payload?.providers ?? []),
+    [payload]
+  )
+
   const presetEntries = useMemo(() => catalog.filter((c) => c.presetId), [catalog])
   const protocolEntries = useMemo(() => catalog.filter((c) => !c.presetId), [catalog])
   const activeCustom = customProtocol ? protocolEntries.find((e) => e.protocol === customProtocol) : undefined
@@ -515,6 +582,14 @@ export function SettingsView({
 
       <div className="body-scroll settings-body">
         <div className="section-title">供应商</div>
+
+        {/* 隐藏分组只影响列表显示的**说明**：不写这句话，用户会以为隐藏了公司账户
+            就收不到它的额度告警 —— 而实际上（且应该）仍然收得到（design.md D6）。
+            托盘取的是**全局**排序第一位，被隐藏的那家排在前面时托盘会换一家显示。 */}
+        <div className="grp-note">
+          分组用于主页卡片聚合显示。
+          <b>隐藏只影响列表显示</b>：隐藏的账户仍会正常采集，托盘与提醒仍覆盖全部账户。
+        </div>
 
         {grouped.length === 0 && (
           <div className="prow-empty">还没有添加供应商，从下方「添加提供方」开始</div>
@@ -543,6 +618,10 @@ export function SettingsView({
                 onRemove={() => void remove(p)}
                 muted={voiceMuted.includes(p.id)}
                 onToggleVoice={() => onToggleVoice(p.id)}
+                groupSuggestions={allGroups}
+                draftGroup={draftGroup}
+                setDraftGroup={setDraftGroup}
+                onSetGroup={(g) => void setGroup(p, g)}
               />
             ))}
           </div>

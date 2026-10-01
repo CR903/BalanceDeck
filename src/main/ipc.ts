@@ -11,7 +11,7 @@ import {
   petWindowState
 } from './overlay'
 import { refreshNow, currentState, resort, reconfigure, debugPush, loadUsageHistory, pruneUsageHistory } from './scheduler'
-import { setTrayIcon, trayInteractionMode } from './tray'
+import { setTrayIcon, trayBadgeInfo, trayInteractionMode } from './tray'
 import { getAutostart, setAutostart, hasSystemLoginItem } from './autostart'
 import { trayTitle } from '../shared/tray-text'
 import { getKey, setKey, setExtra, getExtra } from './keystore'
@@ -26,6 +26,7 @@ import {
   setInstanceEnabled,
   setInstanceBaseUrl,
   setInstanceName,
+  setInstanceGroup,
   reorderInstances,
   listInstances
 } from './providers'
@@ -82,8 +83,14 @@ const TTS_TIMEOUT_MS = 12_000
 
 /**
  * 系统通知的档位全集。渲染层那份在 `renderer/src/systemNotify.ts`（`NOTIFY_LEVELS`）——
- * 两边没有共享模块（文件所有权不许新增 shared 文件），所以由
- * `scripts/test-system-notify.mjs` 静态比对两侧字面量，与 F5 对原因码的处理同套路。
+ * 两边没有共享模块，由 `scripts/test-system-notify.mjs` 静态比对两侧字面量，
+ * 与 F5 对原因码的处理同套路。
+ *
+ * ⚠ 「不新增 shared 文件」**不是本仓的长期法律**，它是 P0-1 当时那个任务的边界，
+ *   记在这里只说明「本任务当时没拿到 shared 的所有权」，不是「以后也不许」。
+ *   引用它当理由会挡住真正该消重的场景：P1-3 就因为它把 85/60 阈值在托盘侧又写了一份，
+ *   造成「卡片橙、托盘绿」这个用户解释不了的同屏矛盾（现已搬到 shared/levels.ts）。
+ *   判据是「两份字面量会不会打架」，不是「谁先建的目录」。
  */
 const NOTIFY_LEVELS = ['warn', 'high', 'reset']
 
@@ -167,6 +174,19 @@ export function registerIpc(): void {
     if (typeof id !== 'string' || !id) return providersPayload()
     await removeInstance(id)
     refreshNow()
+    return providersPayload()
+  })
+
+  // 归组（用户自由标签）：逐字段复验 —— 渲染层不可信（type-safety.md §D）。
+  // groupId 允许空串（= 移出分组），但必须是字符串：非字符串会被清洗函数悄悄转成
+  // 「移出分组」，那等于一次没被用户触发的编辑。
+  //
+  // ⚠ **不改** providers:reorder 的入参形状（下面的守卫写死了 string[]）：分组排序复用
+  //   同一份实例数组顺序，不给组序另开一条通道（design.md D4）。
+  ipcMain.handle('providers:setGroup', async (_e, id: unknown, groupId: unknown) => {
+    if (typeof id !== 'string' || !id) return providersPayload()
+    if (typeof groupId !== 'string') return providersPayload()
+    await setInstanceGroup(id, groupId)
     return providersPayload()
   })
 
@@ -495,6 +515,8 @@ export function registerIpc(): void {
     ipcMain.handle('debug:tray-title', () => trayTitle(currentState().snapshots, !!currentState().offline))
     // 托盘交互模式：macOS 必须是 click-toggle（左键直接显隐；右键才弹菜单）
     ipcMain.handle('debug:tray-mode', () => trayInteractionMode())
+    // 图标等级与状态点形状：模板图标在 macOS 上没有颜色，等级只能从这里读
+    ipcMain.handle('debug:tray-image', () => trayBadgeInfo())
     // 穿透状态 / 收起态 / 漫游轮询是否在跑（验证球外区域可点到桌面）
     ipcMain.handle('debug:pet-state', () => ({ ...petIgnoreState(), ...petWindowState() }))
     // 设置置顶偏好（uitest 用；生产走渲染层 UI）

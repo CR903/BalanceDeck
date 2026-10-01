@@ -1,6 +1,7 @@
-import type { ProviderSnapshot, ProviderWindow } from '../../shared/types'
+import type { ProviderInfo, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { levelOfPercent, windowPercent, type Level } from './format'
 
+// 纯函数模块（无 electron / 无 DOM / 无 React），scripts/test-read-model.mjs 直接加载本文件。
 // ═══════════════════════════════════════════════════════════════════════════════
 // 供应商快照的读模型：**一个**回答「哪个窗口重要、多严重」的地方
 //
@@ -86,6 +87,133 @@ export function speakableSnapshots(
   muted: readonly string[] = []
 ): ProviderSnapshot[] {
   return snapshots.filter((s) => s.status === 'ok' && !muted.includes(s.id))
+}
+
+// ─── 同名多账号的区分（D5）────────────────────────────────────────────────────
+//
+// 区分依据只能从 `ProviderInfo` 拿：`ProviderSnapshot` 里没有 baseUrl/presetId/protocol
+// （shared/types.ts 的刻意选择），而 `mark = presetId || protocol` 在同一预设下完全相同
+// —— 今天两家公司同名账号**连 logo 都一样**。
+
+/**
+ * 需要加区分后缀的实例 id → 后缀文本。
+ *
+ * ⚗ 只有**同名的多个**账户才加后缀（`Claude 公司` / `Claude 个人`）：
+ *   只有一个 Claude 账号时把 host 拼到名字后面纯粹是噪音。
+ * ⚗ 缺区分依据的那个**不加**（`Claude`），而不是编一个「(2)」：
+ *   假区分会让用户以为那确实是另一个账户 —— 比看不出来更糟。
+ */
+export function distinguishSuffixes(info: ProviderInfo[]): Record<string, string> {
+  // 按名字分桶时**不过滤**缺区分依据的实例 —— 否则「两家同名、只有一家读得出 host」
+  // 会被算成一组（读不出 host 的那个根本没进桶），结果是两家都不加后缀，
+  // 白白丢掉唯一可用的那条区分信息。
+  const byName = new Map<string, ProviderInfo[]>()
+  for (const p of info) {
+    const arr = byName.get(p.name)
+    if (arr) arr.push(p)
+    else byName.set(p.name, [p])
+  }
+  const out: Record<string, string> = {}
+  for (const arr of byName.values()) {
+    if (arr.length < 2) continue
+    // 同名 ≥2 家才加；没有依据的那家仍然不加（不编「(2)」）
+    for (const p of arr) if (p.distinguishKey) out[p.id] = p.distinguishKey
+  }
+  return out
+}
+
+/** 卡片显示名：有区分后缀时 `名称 后缀`，否则原样（不造假区分） */
+export function displayName(name: string, suffix?: string): string {
+  return suffix ? `${name} ${suffix}` : name
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 多账户分组（P1-4）：**只决定列表怎么显示**，不决定采不采集
+//
+// 为什么放在这里而不是 App.tsx：这个仓库没有 React 测试基础设施（quality-guidelines
+// 记着这条），组件里的任何东西都测不到。本文件已被 scripts/test-read-model.mjs 加载，
+// 所以分组的判定规则从今天起有契约 —— 而「隐藏的是组 id 还是实例 id」「组序从哪来」
+// 这两件事正是最容易被后人手滑改错的。
+//
+// 语义边界（design.md D1）：隐藏**只是不展示**，采集照跑（照抄 ui:voiceMuted 的
+// 黑名单范式）。为什么不复用 `enabled: false` —— 那是停止采集，切回要等一轮，
+// 而且这段时间的历史会断掉，P1-1 的趋势图会出现空档。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** 未分组实例的显示名。渲染与存储都不能让用户看到空字符串当组名 */
+export const UNGROUPED = '未分组'
+
+/**
+ * 实例所属的分组 id —— 空串/缺省归一化成 `UNGROUPED`。
+ *
+ * ⚠ 归一化只在这里发生：**不要**让「空串」与「未分组」两种形状流进别处，
+ * 那是 state-management.md 记过的「同一件事两处写法」那一类漂移。
+ */
+export function groupOf(info: ProviderInfo): string {
+  return info.groupId ? info.groupId : UNGROUPED
+}
+
+/**
+ * 全部分组 id（去重 + 升序）。
+ *
+ * 组名不是独立存储的：它就是「哪些实例的 groupId 等于这个字符串」的去重结果。
+ * 没有组注册表，也就没有「组列表与实例列表不一致」的第二份真相源（design.md D2）。
+ *
+ * `UNGROUPED` 排在末尾 —— 它是兜底桶，不是用户建的组，不该混在自定义组里排序。
+ */
+export function groupNames(info: ProviderInfo[]): string[] {
+  const names = new Set<string>()
+  for (const p of info) names.add(groupOf(p))
+  const out = [...names].sort()
+  const i = out.indexOf(UNGROUPED)
+  if (i >= 0) out.push(...out.splice(i, 1))
+  return out
+}
+
+/**
+ * 可见实例 id（黑名单：不在 hidden 列表里的）。
+ *
+ * ⚠ `hidden` 存的是**组 id**，不是实例 id —— 隐藏整个组才是需求。
+ * 隐藏列表里出现已不存在的组 id 是常态（组被删空了），读侧**忽略**它而不是清理：
+ * 清理是写侧的事，在读侧改用户的存储是副作用。
+ */
+export function visibleIds(info: ProviderInfo[], hiddenGroupIds: readonly string[] = []): Set<string> {
+  const hidden = new Set(hiddenGroupIds)
+  const out = new Set<string>()
+  for (const p of info) if (!hidden.has(groupOf(p))) out.add(p.id)
+  return out
+}
+
+/**
+ * 展示顺序：**组间按「该组第一个成员在数组里的位置」，组内按数组顺序**。
+ *
+ * 为什么组序不另存一层（design.md D4）：注册表只有一个数组、extras 是扁平 map，
+ * `providers:reorder` 的入参形状已被 ipc.ts 的守卫写死成 `string[]`。把组序定义成
+ * 成员的数组位置，就不需要新的持久化维度，reorder 的形状也不用动 —— 用户的拖拽结果
+ * 天然就蕴含了组序（把 A 组的卡拖到 B 组前面，A 组就在前面）。
+ *
+ * 代价（钉在测试第 5 条）：某组最后一个成员被移走后，组的位置按剩下的成员重算。
+ *
+ * 返回的是**实例 id 列表**，被隐藏的组不出现 —— 渲染层据此直接少渲染几张卡。
+ */
+export function orderForDisplay(info: ProviderInfo[], hiddenGroupIds: readonly string[] = []): string[] {
+  const shown = visibleIds(info, hiddenGroupIds)
+  // 每个可见组的「组首下标」= 该组第一个可见成员在数组里的位置（组序的唯一定义）
+  const firstAt = new Map<string, number>()
+  for (let i = 0; i < info.length; i++) {
+    const p = info[i]
+    if (!shown.has(p.id)) continue
+    const g = groupOf(p)
+    if (!firstAt.has(g)) firstAt.set(g, i)
+  }
+  // 按组首下标排序。Array.prototype.sort 自 ES2019 起保证**稳定** ——
+  // 键相同的成员维持原数组顺序，于是「组内按数组顺序」这条规则由它免费给出，
+  // 不需要把下标拼进排序键（那会让 id 里带分隔符的实现变得难读）。
+  return info
+    .filter((p) => shown.has(p.id))
+    .map((p) => ({ id: p.id, key: firstAt.get(groupOf(p)) ?? 0 }))
+    .sort((a, b) => a.key - b.key)
+    .map((x) => x.id)
 }
 
 /**

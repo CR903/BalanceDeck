@@ -39,6 +39,9 @@ const api = {
   addProvider: (p: AddProviderPayload): Promise<ProvidersPayload> => ipcRenderer.invoke('providers:add', p),
   removeProvider: (id: string): Promise<ProvidersPayload> => ipcRenderer.invoke('providers:remove', id),
   reorderProviders: (ids: string[]): Promise<ProvidersPayload> => ipcRenderer.invoke('providers:reorder', ids),
+  /** 归组：groupId 传空串 = 移出分组（组名是用户自由标签，不校验是否为已存在的组） */
+  setInstanceGroup: (id: string, groupId: string): Promise<ProvidersPayload> =>
+    ipcRenderer.invoke('providers:setGroup', id, groupId),
   setTrayIcon: (key: string, png1x: string, png2x: string): void =>
     ipcRenderer.send('tray:icon', key, png1x, png2x),
   startOpencodeAuth: (): Promise<OpencodeAuthResponse> => ipcRenderer.invoke('opencode:auth'),
@@ -114,6 +117,12 @@ const api = {
   debugTrayTitle: (): Promise<string> => ipcRenderer.invoke('debug:tray-title'),
   /** 托盘交互模式：macOS 应为 click-toggle（左键直接显隐，右键菜单） */
   debugTrayMode: (): Promise<string> => ipcRenderer.invoke('debug:tray-mode'),
+  /**
+   * 托盘图标等级与状态点形状。**macOS 上托盘图标是 template image，RGB 被系统丢弃**，
+   * 所以图标的等级信号无法从画面上验证 —— 只能由主进程把这个值回传。
+   */
+  debugTrayImage: (): Promise<{ level: string; shape: string; iconKey: string }> =>
+    ipcRenderer.invoke('debug:tray-image'),
 
   // ─── 皮肤 ──────────────────────────────────────────────────────────────────
   listSkins: (): Promise<SkinInfo[]> => ipcRenderer.invoke('skins:list'),

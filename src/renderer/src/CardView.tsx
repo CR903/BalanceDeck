@@ -1,6 +1,6 @@
-import { primaryWindowIndex, snapshotLevel, windowLevel } from './read-model'
+import { distinguishSuffixes, displayName, groupOf, orderForDisplay, primaryWindowIndex, snapshotLevel, windowLevel } from './read-model'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
+import type { AppState, ProviderInfo, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { isPlan } from '../../shared/quality'
 import { Ring, Icon, IconButton, Bar, StatusDot } from './components'
@@ -39,11 +39,14 @@ function PlanCard({
   s,
   now,
   winIndex,
+  suffix,
   onSelectWindow
 }: {
   s: ProviderSnapshot
   now: number
   winIndex: number
+  /** 同名多账号的区分后缀；空串 = 不加（不造假区分） */
+  suffix: string
   onSelectWindow: (name: string) => void
 }): React.JSX.Element {
   const lvl = snapshotLevel(s)
@@ -58,7 +61,7 @@ function PlanCard({
     <>
       <span className="pcard-top">
         <ProviderMark mark={s.mark} size={22} />
-        <span className="pcard-name">{s.name}</span>
+        <span className="pcard-name">{displayName(s.name, suffix)}</span>
         <StatusDot lvl={lvl} />
       </span>
       {multi && (
@@ -125,7 +128,18 @@ function PlanCard({
 }
 
 /** 余额卡：金额为主 */
-function BalanceCard({ s, now, hide }: { s: ProviderSnapshot; now: number; hide: boolean }): React.JSX.Element {
+function BalanceCard({
+  s,
+  now,
+  hide,
+  suffix
+}: {
+  s: ProviderSnapshot
+  now: number
+  hide: boolean
+  /** 同名多账号的区分后缀；空串 = 不加 */
+  suffix: string
+}): React.JSX.Element {
   const lvl = snapshotLevel(s)
   const w = s.windows[0]
   const isActive = s.status === 'ok' && !!w
@@ -136,7 +150,7 @@ function BalanceCard({ s, now, hide }: { s: ProviderSnapshot; now: number; hide:
     <>
       <span className="pcard-top">
         <ProviderMark mark={s.mark} size={22} />
-        <span className="pcard-name">{s.name}</span>
+        <span className="pcard-name">{displayName(s.name, suffix)}</span>
         <StatusDot lvl={lvl} />
       </span>
       <span className="pcard-big">
@@ -188,6 +202,20 @@ function Skeleton(): React.JSX.Element {
   )
 }
 
+/** 下拉里「显示全部分组」那一项的**哨兵 value**（显示文案是「全部」，不是这个值）。
+ *
+ * ⚠ value 里带一个控制字符：`sanitizeGroupId` 会剥掉全部 C0 控制字符，所以**任何用户
+ *   输入的组名都不可能等于它**。用裸的「全部」当 value 的话，用户自建一个叫「全部」的组
+ *   就会与哨兵撞名 —— `<option value>` 出现两个同值项，选中哪一项变成浏览器的实现细节
+ *   （state-management.md 记过的「存下的值不能兼任哨兵」，这里是同一类，只是撞名的是用户数据）。
+ *
+ * ⚠ 不能用空串：受控 `<select>` 找不到匹配项时会静默回落到第一个选项（`selectedIndex` 变 -1），
+ *   于是「选中的是哪一项」永远读不准 —— AC 里的下拉断言会变成恒真。
+ */
+const ALL_GROUPS_VALUE = '\u0001all'
+/** 哨兵那一项在界面上的文案（与 value 分开，正是为了上面那条撞名防护） */
+const ALL_GROUPS_LABEL = '全部'
+
 /** 顺序对齐：保留已有顺序，新出现的追加到末尾 */
 function reconcileOrder(prev: string[], ids: string[]): string[] {
   const set = new Set(ids)
@@ -203,7 +231,12 @@ export function CardView({
   onOpen,
   onRefresh,
   onSettings,
-  onCollapse
+  onCollapse,
+  instanceInfo,
+  hiddenGroups,
+  groups,
+  onToggleGroup,
+  onShowAllGroups
 }: {
   state: AppState
   hideBalance: boolean
@@ -212,6 +245,21 @@ export function CardView({
   onRefresh: () => void
   onSettings: () => void
   onCollapse: () => void
+  /**
+   * 实例身份列表（`providers:list` 的 ProviderInfo[]）—— **卡片只认它，不认 extras**。
+   *
+   * 为什么必须跨进程取：`ProviderSnapshot` 里没有 baseUrl/presetId/protocol
+   * （types.ts 的刻意选择），而同名的两家公司账号 `mark = presetId || protocol` 完全相同，
+   * 连 logo 都一样。不给它，卡片就只能裸渲染 `{s.name}`。
+   */
+  instanceInfo: ProviderInfo[]
+  /** 已隐藏的**分组 id**（不是实例 id）—— 空 = 全部显示 */
+  hiddenGroups: string[]
+  /** 分组下拉的选项（含「未分组」兜底） */
+  groups: string[]
+  onToggleGroup: (group: string) => void
+  /** 「显示全部分组」：清空黑名单。**不是** toggle 一个哨兵组 —— 见下面 onChange */
+  onShowAllGroups: () => void
 }): React.JSX.Element {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
@@ -222,6 +270,8 @@ export function CardView({
   const snaps = state.snapshots
   const configured = useMemo(() => snaps.filter((s) => s.status !== 'nodata'), [snaps])
   const idsKey = configured.map((s) => s.id).join(',')
+  const suffixes = useMemo(() => distinguishSuffixes(instanceInfo), [instanceInfo])
+  const suffixOf = (id: string): string => suffixes[id] ?? ''
   const [order, setOrder] = useState<string[]>([])
   useEffect(() => {
     setOrder((prev) => reconcileOrder(prev, idsKey ? idsKey.split(',') : []))
@@ -253,11 +303,79 @@ export function CardView({
     void window.api.setExtras({ [`ui:cardWindow:${id}`]: name })
   }
 
-  const ordered = useMemo(() => {
-    if (!order.length) return configured
+  /**
+   * 展示列表 = 可见的卡片，按**分组序 ⨯ 组内拖拽序**排。
+   *
+   * 为什么两个维度都要：`order` 是用户在网格里拖出来的**组内**次序，
+   * `orderForDisplay` 给的是**组与组**之间的次序（组首成员的位置）。只按其中一层排，
+   * 另一层的语义就没了 —— 只按 order 排，A 组的卡会被拖散到别的组中间。
+   *
+   * 组合方式：先按 read-model 给出的展示序列把**组**编号，再在每组内部按 `order`
+   * 的名次排。`Array.sort` 稳定（ES2019+），所以名次相同的卡维持原顺序。
+   *
+   * ⚠ 隐藏只是**不展示**（D1）：不碰 `order` 状态，切回来立刻恢复用户原来的排法。
+   * ⚠ 隐藏的账户**仍然在采集**，因此托盘与提醒覆盖全部账户（design.md D6）。
+   */
+  const shown = useMemo(() => {
+    // 组内名次 < BIG 是前提（卡片数远小于 1000），于是两个整数合成一个词典序键
+    const BIG = 1000
     const rank = new Map(order.map((id, i) => [id, i]))
-    return [...configured].sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999))
-  }, [configured, order])
+    const byId = new Map(instanceInfo.map((p) => [p.id, p]))
+    // ⚠ `instanceInfo` 还没到手时（首帧 IPC 未返回 / providers:list 失败）**一律不过滤**。
+    //   orderForDisplay 对空数组返回空集，拿空集去过滤会把**每一张卡**都滤掉 →
+    //   用户看到「分组已全部隐藏」这个与事实相反的空态，而那个按钮点了也回不来。
+    //   快照 id 就是实例 id（bind-instance 用实例 id 铸快照 id），所以「查不到实例」
+    //   只可能是加载问题，不可能是「没有实例」—— 那时 configured 本身就是空的。
+    if (!instanceInfo.length) {
+      return {
+        hidden: (_id: string): boolean => false,
+        key: (id: string): number => rank.get(id) ?? BIG
+      }
+    }
+    const seq = orderForDisplay(instanceInfo, hiddenGroups)
+    // 组序：组 → 名次（它在展示序列里第一次出现的位置）
+    // ⚠ 用 read-model 的 `groupOf` 而不是裸 `p.groupId`：未分组实例的 groupId 是**空串**
+    //   （假值），裸读会把所有未分组的卡踢出组序，它们的**拖拽名次就成了死代码**。
+    //   今天恰好不出错，只因为 resort 让 configured 的序与 order 始终同步 —— 那是巧合，
+    //   一旦采集侧开始自己重排（resort 不再只在拖拽时调），全部老用户的卡片就会开始乱跳。
+    const groupRank = new Map<string, number>()
+    for (const id of seq) {
+      const it = byId.get(id)
+      if (!it) continue
+      const g = groupOf(it)
+      if (!groupRank.has(g)) groupRank.set(g, groupRank.size)
+    }
+    const inDisplay = new Set(seq)
+    return {
+      hidden: (id: string): boolean => !inDisplay.has(id),
+      // 未知实例（快照有、instanceInfo 里查不到 —— IPC 竞态下的短暂状态）排到末尾：
+      // 混进任何一组的名次里，用户看到的是「某张卡莫名其妙换了个位置」，排最后反而可诊断。
+      key: (id: string): number => {
+        const it = byId.get(id)
+        if (!it) return Number.MAX_SAFE_INTEGER
+        return (groupRank.get(groupOf(it)) ?? 0) * BIG + (rank.get(id) ?? BIG)
+      }
+    }
+  }, [instanceInfo, hiddenGroups, order])
+
+  const ordered = useMemo(
+    () =>
+      // ⚠ filter 天然返回新数组，所以这个 sort 不会就地改 configured 的顺序
+      configured.filter((s) => !shown.hidden(s.id)).sort((a, b) => shown.key(a.id) - shown.key(b.id)),
+    [configured, shown]
+  )
+
+  /**
+   * 下拉当前选中项：能唯一确定一个组时显示它，否则显示「全部」。
+   *
+   * ⚠ 黑名单语义：`hiddenGroups` 可能为空（全部显示）、可能恰好藏了一个（显示剩下的
+   *   那一组）、也可能藏了多个（此时无法用一个组名代表，显示「全部」）。
+   *   不用 `value=''` 当哨兵 —— 受控 `<select>` 找不到匹配项会静默回落到第一个选项，
+   *   那样断言「选中了哪组」永远读到第一项（state-management.md 记过这个坑）。
+   */
+  const hiddenSet = new Set(hiddenGroups)
+  const shownGroups = groups.filter((g) => !hiddenSet.has(g))
+  const activeGroup = shownGroups.length === 1 ? shownGroups[0] : ALL_GROUPS_VALUE
 
   // ─── 拖拽排序 ──────────────────────────────────────────────────────────────
   //
@@ -515,6 +633,32 @@ export function CardView({
             )}
           </span>
         </span>
+        {/* 分组筛选：只影响**列表显示**，采集照跑（隐藏的账户仍在托盘与提醒里）。
+
+            ⚠ 选项是**取反**语义：选某一组 = 把那一组藏起来（于是列表只剩其余的），
+              再选一次 = 放回来。而「显示全部分组」必须**清空**黑名单，不能走同一条
+              toggle —— 早先把它做成「toggle 一个不存在的哨兵组 id」时，点它是纯空操作：
+              用户点了看到列表纹丝不动，而唯一能回来的路是把每一组挨个点回去。
+              现在它直接写 `[]`，「隐藏了 → 点全部 → 全回来」是一步可达的。 */}
+        <span className="grp-filter">
+          <select
+            className="grp-select"
+            value={activeGroup}
+            aria-label="按分组筛选"
+            title="按分组筛选卡片（只影响列表显示，托盘与提醒仍覆盖全部账户）"
+            onChange={(e) => {
+              if (e.target.value === ALL_GROUPS_VALUE) onShowAllGroups()
+              else onToggleGroup(e.target.value)
+            }}
+          >
+            <option value={ALL_GROUPS_VALUE}>{ALL_GROUPS_LABEL}</option>
+            {groups.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </span>
         <IconButton
           name={hideBalance ? 'eyeOff' : 'eye'}
           title={hideBalance ? '显示余额' : '隐藏余额'}
@@ -540,6 +684,19 @@ export function CardView({
             <span className="empty-sub">添加供应商与凭据后，这里会显示余额与用量</span>
             <button type="button" className="btn-primary sm empty-cta" onClick={onSettings}>
               去添加
+            </button>
+          </div>
+        ) : ordered.length === 0 ? (
+          // 全部组被隐藏：**不是**错误状态 —— 采集与托盘都还在跑（design.md D6），
+          // 所以文案说清「仍在采集」，别让用户以为应用坏了。
+          <div className="empty-state">
+            <span className="empty-icon">
+              <Icon name="eyeOff" size={22} />
+            </span>
+            <span className="empty-title">分组已全部隐藏</span>
+            <span className="empty-sub">这些账户仍在正常采集，托盘与提醒依然覆盖它们</span>
+            <button type="button" className="btn-primary sm empty-cta" onClick={onShowAllGroups}>
+              显示全部分组
             </button>
           </div>
         ) : (
@@ -573,12 +730,13 @@ export function CardView({
                       这里原先写的是裸 `s.kind === 'balance'`，与 558 行的 isPlan() 并存 ——
                       今天两者等价，但 isPlan 的规则一旦改动，分支与类名就会各走各的 */}
                   {!isPlan(s) ? (
-                    <BalanceCard s={s} now={now} hide={hideBalance} />
+                    <BalanceCard s={s} now={now} hide={hideBalance} suffix={suffixOf(s.id)} />
                   ) : (
                     <PlanCard
                       s={s}
                       now={now}
                       winIndex={activeWindowIndex(s)}
+                      suffix={suffixOf(s.id)}
                       onSelectWindow={(name) => selectWindow(s.id, name)}
                     />
                   )}

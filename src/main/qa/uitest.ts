@@ -112,6 +112,16 @@ export async function runUiTest(
    *  AC3.3 要的正是它 —— 轨道仍在、没有填充弧、中心是金额而不是 0% */
   const FIX_NOLIMIT = [planFix('fix-nolimit', 'Fix 无比例', [{ name: '5 小时', used: 1288.5, unit: 'cny' }])]
 
+  // ── P1-3 托盘等级：四档夹具（10-01-p1-tray-color）──────────────────────────
+  //
+  // 真实数据落在哪一档由用户决定，写死一个百分比再断言「标题是红的」是**恒绿**的假门。
+  // 所以四档各造一份夹具，用量刻意取在档位**内部**（不是边界上）：
+  //   10 → ok（无转义、无点）/ 70 → warn / 90 → danger / 无比例 → muted
+  // 余额那档复用 FIX_BAL：它既无 percent 也无 limit → windowPercent 为 null → muted。
+  const FIX_TRAY_OK = [planFix('fix-tray-ok', 'Fix 正常', [fw('本周', 10)])]
+  const FIX_TRAY_WARN = [planFix('fix-tray-warn', 'Fix 偏高', [fw('本周', 70)])]
+  const FIX_TRAY_DANGER = [planFix('fix-tray-danger', 'Fix 爆表', [fw('本周', 90)])]
+
   /**
    * 推夹具。**先推一个空数组**，两件事：
    *  ① 窗口索引经夹紧效应回到 0（`winCount===0 → setWinIdx(0)`），每个场景起点一致；
@@ -684,12 +694,72 @@ export async function runUiTest(
   await sleep(600)
   r.settingsBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
 
-  // 状态栏（托盘）标题：多时限窗口应平铺展示（如 `5H 4% W 52% M 68%`）
-  const trayTitle = String(await exec('window.api.debugTrayTitle()'))
-  r.trayTitle =
-    !trayTitle || (!/undefined|NaN/.test(trayTitle) && /[0-9]/.test(trayTitle))
-      ? `ok(${trayTitle})`
-      : `fail:${trayTitle}`
+  // 下面的托盘等级断言要自己推夹具；**先把真实快照存下来**，测完原样推回去 ——
+  // 紧跟其后的余额卡 / 套餐卡 / 窗口胶囊断言全都依赖真实数据。
+  const savedSnapshots = (await exec('window.api.getState().then(s=>s.snapshots)')) as unknown[]
+
+  // ── P1-3 状态栏（托盘）标题的等级着色 + 图标状态点 ──────────────────────────
+  //
+  // ⚠ 旧判据（「非空 + 不含 undefined/NaN + 含数字」）在加色之后**既不会红也没有区分力**：
+  //   它对标题长什么样几乎没有约束，换成任何一档都照样绿。所以改成按 level 判 ——
+  //   自己推夹具（用量落在档位内部），读回标题里的 ANSI 包裹码与图标等级。
+  //
+  // 判据的形状：`ANSI_RESET` 之后不许再有色（否则颜色会漏到 ⚠ 前缀或分隔符上）。
+  const readTray = async (): Promise<{ title: string; level: string; shape: string }> => ({
+    title: String(await exec('window.api.debugTrayTitle()')),
+    ...(await exec('window.api.debugTrayImage().then(b=>({level:b.level,shape:b.shape}))') as {
+      level: string
+      shape: string
+    })
+  })
+  /** 某档的完整判据：标题里的包裹码 + 剥掉转义后的文案 + 图标等级/形状 */
+  const trayCase = async (
+    label: string,
+    fix: unknown[],
+    want: { esc: string; plain: string; level: string; shape: string }
+  ): Promise<string> => {
+    await pushFix(fix)
+    const got = await readTray()
+    const stripped = got.title.replace(/\x1b\[[0-9;]*m/g, '')
+    const esc = got.title.includes(want.esc) || (want.esc === '' && !got.title.includes('\x1b['))
+    const why = `esc=${esc ? 'y' : 'n'} plain=${stripped} lvl=${got.level} shape=${got.shape}`
+    if (esc && stripped === want.plain && got.level === want.level && got.shape === want.shape) return `ok(${why})`
+    return `fail(${why} 期望 esc=${JSON.stringify(want.esc)}/${want.plain}/${want.level}/${want.shape})`
+  }
+  // ⚠ ok 档判的是「**一个转义都没有**」：加色不许让正常用量的用户看到任何变化。
+  r.trayTitleOk = await trayCase('ok', FIX_TRAY_OK, { esc: '', plain: 'W 10%', level: 'ok', shape: 'none' })
+  r.trayTitleWarn = await trayCase('warn', FIX_TRAY_WARN, {
+    esc: '\x1b[33m',
+    plain: 'W 70%',
+    level: 'warn',
+    shape: 'translucent'
+  })
+  r.trayTitleDanger = await trayCase('danger', FIX_TRAY_DANGER, {
+    esc: '\x1b[31m',
+    plain: 'W 90%',
+    level: 'danger',
+    shape: 'solid-large'
+  })
+  // 余额类既无 percent 也无 limit → muted 灰 + 空心小点（两处信号必须**同时**变：
+  // 只给灰字不加点，用户会把「没数据」读成「低用量」）
+  r.trayTitleMuted = await trayCase('muted', FIX_BAL, {
+    esc: '\x1b[1;30m',
+    plain: '¥1288.50',
+    level: 'muted',
+    shape: 'hollow-small'
+  })
+  // 图标等级的独立键（不依赖标题那条）：`debug:tray-image` 是本任务新增的观测点，
+  // 少了它「图标分层」就只剩逻辑测试，界面层无人能验（macOS 模板图标根本没有颜色可看）。
+  {
+    await pushFix(FIX_TRAY_DANGER)
+    const img = (await readTray()) as { level: string; shape: string }
+    r.trayBadge = img.level === 'danger' && img.shape === 'solid-large' ? 'ok' : `fail:${JSON.stringify(img)}`
+    await pushFix(FIX_TRAY_OK)
+    const img2 = (await readTray()) as { level: string; shape: string }
+    r.trayBadgeNone = img2.level === 'ok' && img2.shape === 'none' ? 'ok' : `fail:${JSON.stringify(img2)}`
+  }
+  // 把真实快照推回去：下面的断言（余额卡 / 套餐卡 / 窗口胶囊）都依赖真实数据
+  await pushFix(savedSnapshots)
 
   // 托盘交互模式：macOS 左键直接显隐面板（回归"点击状态栏只弹菜单"）
   const trayMode = String(await exec('window.api.debugTrayMode()'))
@@ -2039,6 +2109,223 @@ export async function runUiTest(
     r.settingsRemovePreset = 'fail:no-picker'
     r.settingsDeleteConfirm = 'fail:no-picker'
   }
+
+  // ─── P1-4 多账户分组：下拉 / 隐藏只影响列表 / 同名区分 ─────────────────────
+  //
+  // 三组断言对应 design.md 的 D1（隐藏只不展示）、D6（托盘语义不变）、D5（同名靠
+  // distinguishKey 区分）。键统一 `grp*` 前缀，与其它 section 的键不重叠 —— 本段与
+  // 趋势图子任务共用同一个 uitest.ts，各自只加自己的键，合并时不需要去重。
+  const backToCards = async (): Promise<void> => {
+    await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
+    await sleep(700)
+  }
+  const cardIds = async (): Promise<string> =>
+    (await exec("[...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId).join(',')")) as string
+
+  // ① 归组下拉存在，且列出的组名与注册表里 groupId 的去重结果一致
+  await backToCards()
+  r.grpSelect = (await exec("!!document.querySelector('.grp-select')")) ? 'ok' : 'fail:no-select'
+  // ⚠ 比**文案**（option.textContent）而不是 value：第 0 项的 value 是防撞名的哨兵
+  //   （含控制字符，用户输入的组名不可能等于它），拿 value 比会永远对不上。
+  const grpOptions = String(
+    await exec("JSON.stringify([...document.querySelectorAll('.grp-select option')].map(o=>o.textContent))")
+  )
+  // 期望值在页面里现算（不能把 read-model 的实现复制进断言 —— 那就是假护栏）：
+  // 组名 = 实例 groupId 的去重集合 + 未分组兜底，排序升序、兜底桶恒在末尾。
+  const grpExpected = String(
+    await exec(`window.api.listProviders().then(p=>{
+      const us='未分组'
+      const s=new Set(p.providers.map(x=>x.groupId||us))
+      const rest=[...s].filter(x=>x!==us).sort()
+      return JSON.stringify(['全部', ...rest, ...(s.has(us)?[us]:[])])
+    })`)
+  )
+  r.grpOptions = grpOptions === grpExpected ? 'ok' : `fail:${grpOptions}!=${grpExpected}`
+  // 哨兵 value 必须**不与任何真实组名相等**，否则用户自建同名组就会与「显示全部分组」撞名
+  r.grpSentinelDistinct =
+    (await exec(`(()=>{const os=[...document.querySelectorAll('.grp-select option')]
+      const all=os[0]?.value
+      return os.length>1 && !!all && !os.slice(1).some(o=>o.value===all)})()`)) === true
+      ? 'ok'
+      : 'fail:sentinel-collision'
+
+  // ② 隐藏若干组：卡片列表变，但**托盘标题不变**（D6 的行为断言）
+  //
+  // ⚠ 这里必须按**黑名单**语义驱动下拉，不是「单选当前组」。`ui:groupHidden` 存的是
+  //   「被隐藏的组 id」，而 `onToggleGroup` 是**取反**：在某一项上选一次 = 把那一组藏起来
+  //   （列表只剩其余的），再选一次 = 放回来。所以「只留 keep 可见」= 把其余每一组各点一遍。
+  //   「显示全部分组」那一项走的是**清空黑名单**，不是 toggle 一个哨兵组。
+  //   （首版探针两处都按「单选」写：先点 G2..Gn 再点 G1 → G1 也被藏 → 列表全空 → 断言必红；
+  //     还原时点「全部」在旧实现下只往黑名单里加一个查不到的哨兵，卡片回不来。
+  //     `--uitest` 不在 npm test 链里，所以这两条错一直没人跑出来。）
+  const cardsBefore = await cardIds()
+  const trayBeforeHide = String(await exec('window.api.debugTrayTitle()'))
+  // 用 React 受控 select 的原生 setter 派发 change（直接设 .value 不会触发 onChange）。
+  // ⚠ 值没变时**不能**派发：React 的 inputValueTracking 会把 change 吞掉，于是「点同项」
+  //   变成静默 no-op。受控 select 在只剩一组可见时会把自己钉在那一项上（activeGroup），
+  //   所以下面的序列每一步都先回到「全部」再点目标组，保证值一定发生变化。
+  const pickGroups = async (names: string[], resetFirst = false): Promise<string> =>
+    String(
+      await exec(`(async()=>{
+        const sel=document.querySelector('.grp-select')
+        if(!sel) return 'skip:no-select'
+        const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
+        const pick=async(v)=>{ if(sel.value===v) return; setter.call(sel,v); sel.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,220)) }
+        const all=[...sel.options].map(o=>o.value)[0]
+        for(const g of ${JSON.stringify(names)}){
+          ${resetFirst ? "await pick(all)" : ''}
+          await pick(g)
+        }
+        await new Promise(r=>setTimeout(r,700))
+        return JSON.stringify({
+          hidden: await window.api.getExtras(['ui:groupHidden']).then(e=>{try{return JSON.parse(e['ui:groupHidden']||'[]')}catch{return null}}),
+          cards: [...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId)
+        })
+      })()`)
+    )
+  // 期望留在列表里的 id：由**注册表**现算（不复制 read-model 的实现，否则是假护栏）
+  const expectedFor = async (group: string): Promise<string> =>
+    String(
+      await exec(`window.api.listProviders().then(p=>{
+        const us='未分组'
+        return JSON.stringify(p.providers.filter(x=>(x.groupId||us)===${JSON.stringify(group)}).map(x=>x.id))
+      })`)
+    )
+  const parsePick = (raw: string): { hidden: string[] | null; cards: string[] } =>
+    raw.startsWith('skip:') ? { hidden: null, cards: [] } : (JSON.parse(raw) as { hidden: string[] | null; cards: string[] })
+  // 只留第一个真实组可见：把其余每一组各点一遍（第 0 项是「显示全部分组」，不是真组）
+  const realGroups = (JSON.parse(grpOptions) as string[]).slice(1)
+  const keep = realGroups[0]
+  const members = new Set<string>(keep ? (JSON.parse(await expectedFor(keep)) as string[]) : [])
+  const beforeList = cardsBefore === '' ? [] : cardsBefore.split(',')
+  // 留用的那一组在注册表里有成员、但一个都没配置（全是 nodata）→ 留不下任何卡，
+  // 这时候「只剩 keep 可见」与「一张卡都不剩」是同一件事，断言无从判起 → 跳过而不是误报红
+  const keepCards = beforeList.filter((x) => members.has(x))
+  if (cardsBefore === '' || realGroups.length < 2 || keepCards.length === 0) {
+    const skip =
+      cardsBefore === '' ? 'skip:no-cards-before' : realGroups.length < 2 ? 'skip:only-one-group' : 'skip:keep-group-empty'
+    r.grpHideCards = skip
+    r.grpHideTrayStable = skip
+    r.grpHiddenAreGroups = skip
+    r.grpRestore = skip
+    r.grpHiddenCleared = skip
+    r.grpEmptyState = skip
+    r.grpEmptyRestore = skip
+  } else {
+    const toHide = realGroups.slice(1)
+    const first = parsePick(await pickGroups(toHide))
+    const hideable = beforeList.filter((x) => !members.has(x)).length
+    const left = first.cards
+    // 每张留下的卡都必须属于 keep；且确实少了一些（keep 里没有可配置的卡时自动跳过长度比较，
+    // 否则会因为「本来就没东西可藏」而误报红）
+    r.grpHideCards =
+      left.length > 0 && left.every((x) => members.has(x)) && (hideable === 0 || left.length < beforeList.length)
+        ? 'ok'
+        : `fail:期望仅[${[...members].join(',')}]实际[${left.join(',')}]隐藏前[${cardsBefore}]`
+    // 隐藏只影响列表。托盘仍取**全局**排序第一位（tray-text.ts 的既有契约），
+    // 所以标题必须与隐藏前逐字相同 —— 这正是 D6 要求在设置页写明的那句话的另一半。
+    const trayAfterHide = String(await exec('window.api.debugTrayTitle()'))
+    r.grpHideTrayStable = trayAfterHide === trayBeforeHide ? 'ok' : `fail:${trayBeforeHide}->${trayAfterHide}`
+    // 黑名单里存的是**组 id**、且恰好是刚点过的那几组（不是实例 id —— 那是 D1 的核心）
+    r.grpHiddenAreGroups =
+      first.hidden && JSON.stringify([...first.hidden].sort()) === JSON.stringify([...toHide].sort())
+        ? 'ok'
+        : `fail:hidden=${JSON.stringify(first.hidden)} 期望组 id ${JSON.stringify(toHide)}`
+
+    // 每一组都藏起来 → 空态（而不是空白网格）。
+    // 每轮先点「显示全部分组」再点目标组：否则最后一步会撞上受控 select 的自钉（值没变，
+    // React 吞掉 change），于是**最后那一组永远藏不掉**，空态也就永远走不到。
+    const allHidden = parsePick(await pickGroups(realGroups, true))
+    r.grpEmptyState =
+      allHidden.cards.length === 0 &&
+      Array.isArray(allHidden.hidden) &&
+      allHidden.hidden.length === realGroups.length &&
+      (await exec(
+        "!!document.querySelector('.empty-title') && document.querySelector('.empty-title').textContent.includes('分组已全部隐藏')"
+      )) === true
+        ? 'ok'
+        : `fail:cards=${JSON.stringify(allHidden.cards)} hidden=${JSON.stringify(allHidden.hidden)}`
+
+    // 还原：点空态里的「显示全部分组」按钮（它必须一次清空整份黑名单 —— 见 CardView 的说明：
+    // 逐组 toggle 的话每次都从**同一份**闭包里的 hiddenGroups 出发，只有最后一组会真的被放开）
+    await exec("(document.querySelector('.empty-cta')?.textContent||'').includes('显示全部分组') && document.querySelector('.empty-cta').click()")
+    await sleep(900)
+    const restored = await cardIds()
+    r.grpEmptyRestore = restored === cardsBefore ? 'ok' : `fail:${cardsBefore}->${restored}`
+    r.grpRestore = r.grpEmptyRestore
+    r.grpHiddenCleared =
+      (await exec(
+        "window.api.getExtras(['ui:groupHidden']).then(e=>{try{return JSON.parse(e['ui:groupHidden']||'[]').length===0}catch{return false}})"
+      )) === true
+        ? 'ok'
+        : 'fail:not-cleared'
+  }
+
+  // ③ 同名两账号的卡片名带不同后缀（D5）
+  //
+  // 必须造两个**同名、不同 host** 的自定义实例 —— 只有一个同名时后缀本来就不该加
+  // （不造「(2)」这类假区分），那种情况下断言的是「两张卡名字一样」这种恒真事实。
+  await exec(footerClick('设置'))
+  await sleep(700)
+  const dupIds: string[] = []
+  for (let i = 0; i < 2; i++) {
+    await exec("[...document.querySelectorAll('.add-btn')].find(b=>b.textContent.includes('自定义'))?.click()")
+    await sleep(400)
+    await exec(`(()=>{
+      const form=document.querySelector('.custom-form')
+      if(!form) return
+      const inputs=[...form.querySelectorAll('input[type=text]')]
+      const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set
+      // inputs[0]=名称，inputs[1]=API 地址（协议是 select，Key 是 password）
+      setter.call(inputs[0],'uitest-dup'); inputs[0].dispatchEvent(new Event('input',{bubbles:true}))
+      if(inputs[1]){ setter.call(inputs[1],'https://uitest-${'ab'[i]}.example.com/v1'); inputs[1].dispatchEvent(new Event('input',{bubbles:true})) }
+    })()`)
+    await sleep(200)
+    await exec("[...document.querySelectorAll('.custom-form .btn-primary')].find(b=>b.textContent.includes('添加'))?.click()")
+    await sleep(1100)
+  }
+  const dupAdded = String(
+    await exec(
+      "window.api.listProviders().then(p=>JSON.stringify(p.providers.filter(x=>x.name==='uitest-dup').map(x=>({id:x.id,host:x.distinguishKey||''}))))"
+    )
+  )
+  const dupList = JSON.parse(dupAdded) as { id: string; host: string }[]
+  dupIds.push(...dupList.map((x) => x.id))
+  // 注册表层面就分得开：两个实例拿到的 host 必须非空且不同
+  // （host 取不出来 = 整条区分链路在第一步就断了，而界面层看不出来）
+  r.grpDupHost =
+    dupList.length === 2 && dupList[0].host !== '' && dupList[0].host !== dupList[1].host ? 'ok' : `fail:${dupAdded}`
+  await backToCards()
+  await sleep(600)
+  const dupCardNames = String(
+    await exec(
+      "[...document.querySelectorAll('[data-card-id]')].filter(c=>c.querySelector('.pcard-name')?.textContent.includes('uitest-dup')).map(c=>c.querySelector('.pcard-name').textContent).join('|')"
+    )
+  )
+  const dupParts = dupCardNames ? dupCardNames.split('|') : []
+  r.grpDupCardName =
+    dupParts.length === 2 && dupParts[0] !== dupParts[1] && dupParts.some((x) => x.includes('uitest-a.example.com'))
+      ? 'ok'
+      : `fail:${dupCardNames}`
+
+  // 清理：测试实例必须删掉，否则反复跑会越堆越多（同名的还会干扰分组断言）
+  await exec(footerClick('设置'))
+  await sleep(700)
+  for (const id of dupIds) {
+    await exec(
+      `(()=>{const row=document.querySelector('[data-provider-id="${id}"]'); if(row) row.querySelector('.mini-btn.danger')?.click()})()`
+    )
+    await sleep(300)
+    await exec(
+      `(()=>{const row=document.querySelector('[data-provider-id="${id}"]'); if(row) row.querySelector('.mini-btn.danger')?.click()})()`
+    )
+    await sleep(800)
+  }
+  r.grpDupCleanup =
+    (await exec("window.api.listProviders().then(p=>!p.providers.some(x=>x.name==='uitest-dup'))")) === true
+      ? 'ok'
+      : 'fail:not-cleaned'
+  await backToCards()
 
   r.consoleErrors = consoleErrors.length === 0 ? 'none' : consoleErrors.join(' | ').slice(0, 300)
   r.execErrors = execErrors.length === 0 ? 'none' : execErrors.join(' | ').slice(0, 300)

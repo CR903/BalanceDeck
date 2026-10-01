@@ -935,6 +935,68 @@ await check('T20 未知协议 → 通用宽容解析兜底（与旧 custom.ts �
   }
 })
 
+// ── P1-4 多账户分组：注册表侧的归组 API（setInstanceGroup / sanitizeGroupId）──
+//
+// 为什么在这里：分组纯逻辑（groupNames / visibleIds / orderForDisplay）落在
+// read-model.ts、由 test-read-model.mjs 守着；**注册表这一侧**（写盘 / 清洗 /
+// 「无变化不写」守卫 / distinguishKey 的取值）只有本段能测 —— 它绑着 keystore，
+// 纯 node 套件里唯一能拿到真 store 的地方就是 T 段的 regStore。
+//
+// 守的是三种「写错了不抛不红、只是功能悄悄没了」的形态：
+//   · 去掉「无变化不写」守卫 → T21c 红（setExtra 是**无条件整文件重写**，一次按键一次全写）
+//   · 去掉清洗 → T21a/b 红（控制字符会进 <option> 与 SVG；超长组名撑破标题栏）
+//   · distinguishKey 写成裸 baseUrl → T21f 红（卡片名后缀从 host 退化成整条地址）
+console.log('\nT-b. 多账户分组：归组写入（T21 · P1-4）')
+
+const { sanitizeGroupId } = providers
+eq(sanitizeGroupId('公司'), '公司', 'T21a 正常组名原样通过')
+eq(sanitizeGroupId('  公司  '), '公司', 'T21b 两端空白被 trim（存进去的组名不带尾随空格）')
+eq(sanitizeGroupId('公\n司\t'), '公司', 'T21c 控制字符被剥掉（\\n / \\t 会破坏 <option> 布局）')
+eq(sanitizeGroupId('x'.repeat(40)).length, 32, 'T21d 超长组名截断到 32 字符')
+// ⚠ 截断按 UTF-16 码元计数，emoji 占 2 个码元 —— 不补最后那道检查就会切出半个字符（U+FFFD）
+eq(sanitizeGroupId('a'.repeat(31) + '😀'), 'a'.repeat(31), 'T21e 截断不切开代理对（不留半个 emoji）')
+eq(sanitizeGroupId('😀😀'.repeat(20)).length, 32, 'T21e2 纯 emoji 组名也截到 32 码元且成对')
+
+// 「无变化不写」：setExtra 是无条件整文件重写，所以守卫必须真的挡住重复写。
+// 判据用**调用计数**（而不是比文件内容）—— 内容本来就没变，比内容是恒绿的门。
+let setExtraCalls = 0
+const realSetExtra = regStore.setExtra.bind(regStore)
+regStore.setExtra = (...args) => {
+  setExtraCalls++
+  return realSetExtra(...args)
+}
+const grpInst = await providers.addInstance({ protocol: 'generic', name: '归组靶子' })
+eq((await providers.listInstances()).find((i) => i.id === grpInst.id).groupId, '', 'T21f 新实例的 groupId 缺省为空串（.map() 归一化）')
+
+setExtraCalls = 0
+eq(await providers.setInstanceGroup(grpInst.id, '公司'), true, 'T21g 首次归组返回 true（有写入）')
+eq(setExtraCalls, 1, 'T21g2 首次归组真的写了一次盘')
+eq((await providers.listInstances()).find((i) => i.id === grpInst.id).groupId, '公司', 'T21h groupId 落盘后能读回')
+
+setExtraCalls = 0
+eq(await providers.setInstanceGroup(grpInst.id, '公司'), false, 'T21i 重复赋同一个组名返回 false')
+eq(setExtraCalls, 0, 'T21i2 重复赋同一个组名**一次盘都不写**（守卫生效；否则是整文件重写）')
+// 守卫要比的是**清洗后**的值：输入多带一个尾随空格时不该触发写盘
+setExtraCalls = 0
+eq(await providers.setInstanceGroup(grpInst.id, '  公司  '), false, 'T21j 只差空白也算无变化（清洗后再比）')
+eq(setExtraCalls, 0, 'T21j2 只差空白不写盘')
+setExtraCalls = 0
+eq(await providers.setInstanceGroup(grpInst.id, ''), true, 'T21k 空串 = 移出分组（不是「无变化」）')
+eq((await providers.listInstances()).find((i) => i.id === grpInst.id).groupId, '', 'T21k2 移出后读回空串')
+eq(await providers.setInstanceGroup('不存在的实例', '公司'), false, 'T21l 未知实例 id 返回 false，不抛')
+regStore.setExtra = realSetExtra
+
+// distinguishKey：卡片名后缀的依据（ProviderInfo 层，ProviderSnapshot 刻意不加）
+const dupA = await providers.addInstance({ protocol: 'generic', name: '同名', baseUrl: 'https://a.test/v1/balance' })
+const dupB = await providers.addInstance({ protocol: 'generic', name: '同名', baseUrl: 'https://b.test:8443/v1' })
+eq((await providers.instanceInfo(dupA)).distinguishKey, 'a.test', 'T21m distinguishKey 取 baseUrl 的 host')
+eq((await providers.instanceInfo(dupB)).distinguishKey, 'b.test:8443', 'T21n 带端口也取对（正则切地址会在这里漏）')
+eq(
+  (await providers.instanceInfo(grpInst)).distinguishKey,
+  '',
+  'T21o baseUrl 为空 → 空串（读侧据此不加后缀，不造「(2)」假区分）'
+)
+
 rmSync(tmp, { recursive: true, force: true })
 
 // ═══════════════════════════════════════════════════════════════════════════════

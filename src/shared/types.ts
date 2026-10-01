@@ -101,6 +101,20 @@ export interface ProviderInfo {
   /** 内置预设 id（内置实例）；空串 = 自定义 */
   presetId: string
   createdAt: number
+  /**
+   * 分组 id（**用户自由标签**，不是固定枚举）；缺省 / 空串 = 未分组。
+   *
+   * `ProviderInfo` 是「实例身份」类型，分组与区分依据都属于身份，因此在这里透传
+   * （design.md 的架构图：providers:list 已返回 ProviderInfo，增字段是它的本职）。
+   */
+  groupId?: string
+  /**
+   * 同名多账号的区分依据（如 baseUrl 的 host）；缺省 / 空串 = 无需区分。
+   *
+   * ⚠ 只在**实例身份**这一层有它：`ProviderSnapshot` 刻意不加（9 个适配器都不该关心
+   *   它 —— 加了等于让每条采集链都要考虑「怎么从 baseUrl 取 host」）。
+   */
+  distinguishKey?: string
   /** 是否为多行凭据（如 AK:SK 对） */
   keyHint?: string
   /** 协议支持控制台 cookie（用于更精确的百分比） */
@@ -125,6 +139,11 @@ export interface ProviderInstance {
   builtin: boolean
   enabled: boolean
   createdAt: number
+  /**
+   * 分组 id（**用户自由标签**，不是固定枚举）；缺省 / 空串 = 未分组。
+   * 存储：extras.providerInstances 数组内的字段，随实例一起落盘。
+   */
+  groupId?: string
 }
 
 /** 可添加项（「添加提供方」选择列表 = 内置预设 + 自定义协议） */

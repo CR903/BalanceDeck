@@ -218,7 +218,11 @@ export async function listInstances(): Promise<ProviderInstance[]> {
   try {
     const arr = JSON.parse(raw) as unknown
     if (!Array.isArray(arr)) return []
-    return arr.filter(isInstance).map((i) => ({ ...i, enabled: i.enabled !== false }))
+    // .map() 归一化（迁移先例，与 petState 的 encodePetState 同一手法）：
+    // `groupId` 是可选字段，旧实例读出来是 undefined —— 渲染层与纯函数不能各自处理
+    // 「可能没有」这一种形状，统一补成空串（= 未分组）。**不回写磁盘**：
+    // 没有变更就不该产生一次 setExtra（那是整文件重写）。
+    return arr.filter(isInstance).map((i) => ({ ...i, enabled: i.enabled !== false, groupId: i.groupId ?? '' }))
   } catch {
     return []
   }
@@ -331,6 +335,41 @@ export async function setInstanceName(id: string, name: string): Promise<boolean
 }
 
 /**
+ * 组名清洗：组名会进下拉选项、SVG 文本与托盘文案，必须截断并剥掉控制字符。
+ *
+ * 剥的是 C0 控制字符（含 `\n`/`\t`）—— 它们在 `<option>` 里会破坏布局，
+ * 在 title 属性里会误导读屏。保留普通空白（含全角空格）：组名是用户输入。
+ *
+ * ⚠ 截断按 **UTF-16 码元**计数（`slice` 的语义），而一个 emoji 占 2 个码元。
+ *   不补最后那道检查的话，第 32 位正好落在代理对中间时会切出**半个字符** ——
+ *   渲染出来是 U+FFFD 替换符，而且它会一路进 SVG 与托盘文案。
+ */
+export function sanitizeGroupId(raw: string): string {
+  return raw
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim()
+    .slice(0, 32)
+    .replace(/[\uD800-\uDBFF]$/, '')
+}
+
+/**
+ * 设置某个实例所属的分组（空串 = 移出分组）。**用户自由标签**：不校验是否为已存在的组。
+ *
+ * ⚠ 写入前必须有「无变化不写」守卫（照抄 reorderInstances）：`setExtra` 是**无条件整文件
+ *   重写**（store.ts），而组名是偏好里唯一可能被高频改的键 —— 下拉切换一次就是一次全文件写。
+ */
+export async function setInstanceGroup(id: string, groupId: string): Promise<boolean> {
+  const list = await listInstances()
+  const inst = list.find((i) => i.id === id)
+  if (!inst) return false
+  const next = sanitizeGroupId(groupId)
+  if ((inst.groupId ?? '') === next) return false
+  inst.groupId = next
+  await saveInstances(list)
+  return true
+}
+
+/**
  * 按给定 id 顺序重排实例（卡片拖拽排序）。
  * 未出现在 ids 里的实例保持相对顺序追加到末尾（防御：渲染层可能拿到过期列表）。
  */
@@ -351,6 +390,22 @@ export async function reorderInstances(ids: string[]): Promise<boolean> {
 }
 
 // ─── ProviderInfo 组装 ──────────────────────────────────────────────────────
+
+/**
+ * baseUrl → host（`https://api.deepseek.com/v1` → `api.deepseek.com`）。
+ *
+ * 用 `URL` 而不是正则切：地址形态太多（带端口、带路径、带 query），正则会漏。
+ * 解析失败（空串 / 不是合法 URL）返回 **空串** 而不是抛 —— 区分依据缺失是常态
+ * （claude / codex / copilot 的 baseUrl 就是空的），不该让一次组装失败。
+ */
+function baseUrlHost(baseUrl: string): string {
+  if (!baseUrl) return ''
+  try {
+    return new URL(baseUrl).host
+  } catch {
+    return ''
+  }
+}
 
 export async function instanceInfo(inst: ProviderInstance): Promise<ProviderInfo> {
   const preset = inst.presetId ? presetById(inst.presetId) : undefined
@@ -391,6 +446,11 @@ export async function instanceInfo(inst: ProviderInstance): Promise<ProviderInfo
     baseUrl: inst.baseUrl,
     presetId: inst.presetId,
     createdAt: inst.createdAt,
+    groupId: inst.groupId ?? '',
+    // 同名多账号的区分依据：baseUrl 的 host（两家公司同名账号的地址不同）。
+    // 拿不到 host（claude/codex 这类 baseUrl 为空的本机凭据源）时**留空串**：
+    // 渲染层据此「不加后缀」，而不是造一个「(2)」式的假区分。
+    distinguishKey: baseUrlHost(inst.baseUrl),
     keyHint: preset?.keyHint ?? (custom ? 'sk-…' : undefined),
     supportsCookie,
     cookieHint:
