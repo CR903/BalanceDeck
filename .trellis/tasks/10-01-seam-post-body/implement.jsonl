@@ -1,0 +1,6 @@
+{"file": "./prd.md", "reason": "需求与 8 条验收标准"}
+{"file": "../../spec/adapters/index.md", "reason": "采集接缝的可执行契约（本任务改的就是它）"}
+{"file": "../../spec/frontend/type-safety.md", "reason": "字面量联合与缺失值纪律（method 用联合而非 string）"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（loadTs 测真源码、静态守卫纪律）"}
+{"file": "../10-01-gemini-code-assist/research/03-testing-and-pitfalls.md", "reason": "三家适配器的接缝缺口实证（含 CollectRequest 无 body 的行号）"}
+{"file": "../10-01-google-antigravity/research/02-quota-lookup-paths.md", "reason": "GET-only 接缝问题的第二个实证"}

@@ -24,7 +24,8 @@
     "10-01-cursor",
     "10-01-openai-quota",
     "10-01-p1-5-resource",
-    "10-01-tauri-eval"
+    "10-01-tauri-eval",
+    "10-01-seam-post-body"
   ],
   "parent": null,
   "relatedFiles": [],
