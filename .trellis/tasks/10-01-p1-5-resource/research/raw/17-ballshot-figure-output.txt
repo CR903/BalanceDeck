@@ -1,0 +1,8 @@
+[79361:1001/203405.814240:ERROR:ui/gl/gl_display.cc:408] EGL Driver message (Error) eglQueryDeviceAttribEXT: Bad attribute.
+(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
+petFormOn: true
+[renderer:2] THREE.PropertyBinding: No target node found for track: MotionExtractionHelper.position.
+[renderer:2] THREE.PropertyBinding: No target node found for track: MotionExtractionHelper.quaternion.
+shot: pet
+diag: {"win":[213,293],"stage":[213,293],"canvas":[426,586,213,293],"overlay":[["petball-caption",65,245,148,289]],"ball":{"idx":0,"winIdx":1,"winCount":3,"rect":{"x":26.880806326334206,"y":39.53742447368828,"width":159.23838734733158,"height":212.83465409088166},"center":{"x":106.5,"y":145.9547515191291},"rootMotion":32.3,"perf":{"fps":43,"maxGap":362},"stride":26.8,"gesture":{"cur":null,"step":0,"planned":"fixHair","last":"enter","pool":["clap","lookAround","stretch","think","fixHair","rollHead"]},"pose":{"x":0,"y":0,"yaw":0,"lean":0},"travel":{"minX":-28.71,"maxX":0},"clipParseMs":206,"measure":{"box":{"x":24.5,"y":42.5,"width":119,"height":212},"ratio":0.15446890672819624},"petReady":true,"dump":[{"name":"PlaneGeometry","type":"PlaneGeometry","visible":true,"self":true,"parent":"Group","pos":[0,9,0],"size":[48,0,48]},{"name":"PlaneGeometry","type":"PlaneGeometry","visible":true,"self":true,"parent":"Group","pos":[0,9,0],"size":[16,0,16]},{"name":"f014_hipoly_81_bones_opacity","type":"BufferGeometry","visible":true,"self":true,"parent":"Group","pos":[0,27,0],"size":[25,36,6]}]}}
+ballState: {"ignore":true,"collapsed":true,"roaming":true,"shadow":false}

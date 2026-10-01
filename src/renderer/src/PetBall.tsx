@@ -8,7 +8,9 @@ import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './forma
 import { ballLevel, severityRank, worstWindow } from './read-model'
 import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
-import { createPet3dScene, type Pet3dHandle } from './pet3d/scene'
+// ⚠ 这里只留**类型**导入 —— `import type` 会被 esbuild 整条擦掉，不产生运行时代码。
+//    createPet3dScene 必须走下面 effect 里的动态 import，理由见那段注释（2026-10-01 修）。
+import type { Pet3dHandle } from './pet3d/scene'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 收起态，两种形态（尺寸见 shared/pet-view）：
@@ -178,6 +180,19 @@ export function PetBall({
   }
 
   // ─── 3D 场景（仅个性人物形态；挂载一次，换角色走 setPet，皮肤变化走 setSkin）────
+  //
+  // ⚠ `./pet3d/scene` 必须是**动态** import，且不能改回顶层静态 import（2026-10-01 实测后改）：
+  //   scene.ts:1 静态 `import * as THREE from 'three'`，静态 import 会把 three.js 本体
+  //   （实测 1,298,574 B）打进入口 chunk —— 首屏 1,699,669 B 的 **76%** 是它，
+  //   而默认的球形态压根用不到（球形态在下面 `if (!figure) return` 就走了）。
+  //   改后实测：入口 489,106 B（原 1,699,669 B，−71%），three 独立成 1,182,414 B 的
+  //   three-*.js，CDP 取证里球形态首屏对它的请求数 = **0**，切人物形态时才出现。
+  //   配套的 manualChunks 在 electron.vite.config.ts —— **两条缺一不可**：
+  //     · 只拆 chunk 不改 import = 白拆（实测拆包前后球形态 V8 堆 5.7 vs 5.4 MB，
+  //       拆 chunk 只影响何时*下载*，不影响何时*解析*）
+  //     · 只改 import 不拆 chunk：vite 可能因 scene.ts 与 human.ts 同时引用 three
+  //       而把它并回入口（仓库既有先例：App.tsx 的 voice.ts 就因为同时被静态+动态引用
+  //       而被 vite 合并，构建时会有一条 dynamic-import 警告）
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -187,21 +202,41 @@ export function PetBall({
     // 而不是给场景加一个「什么都不渲染」的形态 —— 后者照样占着 GPU 上下文。
     if (!figure) return
     let handle: Pet3dHandle | null = null
-    try {
-      handle = createPet3dScene(host, petRef.current.id)
-    } catch (e) {
-      // WebGL 不可用（老显卡/驱动异常）→ 退回 2D 小圆环，功能不丢
-      setFailed(true)
-      console.error('[pet3d] 初始化失败，退回 2D 小圆环：', e)
-      return
-    }
-    sceneRef.current = handle
-    setReady(true)
-    // 上一轮失败留下的 failed 必须复位，否则「人物→球→人物」再来一次时，
-    // 即便这次 WebGL 正常，也会被上一次的 failed 钉在 2D 兜底上（人物形态看得见人，
-    // 但走的是 2D 环）。failed 只在 catch 里置 true，不复位就是单向棘轮。
-    setFailed(false)
+    // 动态 import 多出一个 await 空窗：这期间组件可能已经卸载 / 形态又切回去了。
+    // 没有这个闸，加载完成后会把一个没人要的场景挂到 sceneRef 上（泄漏 + 幽灵 dispose）。
+    let alive = true
+    void import('./pet3d/scene')
+      .then(({ createPet3dScene }) => {
+        if (!alive) return
+        try {
+          handle = createPet3dScene(host, petRef.current.id)
+        } catch (e) {
+          // WebGL 不可用（老显卡/驱动异常）→ 退回 2D 小圆环，功能不丢
+          setFailed(true)
+          console.error('[pet3d] 初始化失败，退回 2D 小圆环：', e)
+          return
+        }
+        sceneRef.current = handle
+        // ⚠ setReady 必须落在 import 之后：ready 的下游（命中区上报 / 皮肤重算 /
+        //   __bd_ball 的 petReady）都假定「3D 已就位」，报早了会拿一个不存在的场景算投影。
+        setReady(true)
+        // 上一轮失败留下的 failed 必须复位，否则「人物→球→人物」再来一次时，
+        // 即便这次 WebGL 正常，也会被上一次的 failed 钉在 2D 兜底上（人物形态看得见人，
+        // 但走的是 2D 环）。failed 只在失败分支里置 true，不复位就是单向棘轮。
+        setFailed(false)
+      })
+      .catch((e) => {
+        if (!alive) return
+        // **chunk 加载失败**（文件缺失 / 打包漏了该 chunk / 网络不可达）——
+        // 这是动态 import 引入的**新**失败模式。它的正确表现与 WebGL 失败完全相同：
+        // 退回 2D 圆环。缺了这一段，three chunk 取不到时是**白屏**而不是兜底。
+        setFailed(true)
+        console.error('[pet3d] 场景模块加载失败，退回 2D 小圆环：', e)
+      })
     return () => {
+      alive = false
+      // handle 可能还没被赋值（import 还没回来）；那种情况 alive 闸已经让上面不建场景，
+      // 这里不需要额外处置 —— 没有 handle 就没有需要 dispose 的东西。
       handle?.dispose()
       sceneRef.current = null
       setReady(false)

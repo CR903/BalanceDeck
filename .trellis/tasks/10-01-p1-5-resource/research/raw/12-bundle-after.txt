@@ -1,0 +1,31 @@
+=== AFTER (optimized build, 2026-10-01T12:06:56Z) ===
+
+--- out/renderer/assets (bytes) ---
+   1182414  three-wZxwjy_j.js
+    489106  index-C0A6XRMa.js
+    120816  human-Ch0XCOva.js
+     83209  index-gJteAiOs.css
+     30025  scene-DSiVMxFF.js
+      2747  voice-CCQ2qdzT.js
+
+--- entry chunk < 600 kB ? ---
+entry chunk: index-C0A6XRMa.js = 489106 B = 477.64 kB
+  baseline  : 1699669 B = 1699.67 kB
+  delta     : -1210563 B = -71.2%
+  AC (<600 kB i.e. <614400 B): PASS
+three-*.js exists: PASS (three-wZxwjy_j.js, 1182414 B)
+
+--- three.js signatures in ENTRY chunk ---
+  has WebGLRenderer: false
+  has ACESFilmic: false
+  has RoomEnvironment: false
+  has PMREMGenerator: false
+  has SkinnedMesh: false
+  has AnimationMixer: false
+--- same signatures in three-*.js ---
+  has WebGLRenderer: true
+  has ACESFilmic: true
+  has RoomEnvironment: false
+  has PMREMGenerator: true
+  has SkinnedMesh: true
+  has AnimationMixer: true

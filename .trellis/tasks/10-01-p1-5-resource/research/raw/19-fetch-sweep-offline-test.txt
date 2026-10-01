@@ -1,0 +1,14 @@
+# scripts/fetch-human-pets.mjs 的 .tga 清理：零网络确定性验证
+# （本机网络跑不完「全新下载 221MB」，原版脚本同样失败，见 18-*.log）
+#
+# 做法：复制真实素材树到临时目录 → 人为放回 11 个 .tga（其中 1 个没有同名 .png）
+#       → todo 为空，脚本走 cached 短路，全程零网络
+BEFORE: 150M   tga 11 个
+
+$ node scripts/fetch-human-pets.mjs --out <tmp>
+  aria: 删掉 5 个已转换的 .tga，释放 40.0MB
+  aria: 保留 1 个 .tga（同名 .png 尚未就位）
+  ray: 删掉 5 个已转换的 .tga，释放 40.0MB
+human-pets cached → <tmp>
+
+AFTER:  70M    tga 1 个（正是那个没转成 .png 的）  png 12 个  fbx 24 个

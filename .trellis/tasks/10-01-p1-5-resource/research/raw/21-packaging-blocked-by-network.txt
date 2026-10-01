@@ -1,0 +1,27 @@
+# electron-builder --mac --dir 在本机跑不完（两次尝试，同样的网络超时）
+# 不是配置错误：配置在超时前已被 'loaded configuration' 正常读入。
+
+=== 尝试 1 ===
+  • electron-builder  version=26.15.3 os=21.6.0
+  • loaded configuration  file=/Users/zhouri/project/BalanceDeck/electron-builder.yml
+  • executing @electron/rebuild  electronVersion=37.10.3 arch=x64 buildFromSource=false workspaceRoot=/Users/zhouri/project/BalanceDeck projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=x64 electron=37.10.3 appOutDir=dist/mac
+  • downloaded      label=electron progress=100%
+  ⨯ Timeout awaiting 'request' for 600000ms  failedTask=build stackTrace=RequestError: Timeout awaiting 'request' for 600000ms
+
+=== 尝试 2 ===
+  • electron-builder  version=26.15.3 os=21.6.0
+  • loaded configuration  file=/Users/zhouri/project/BalanceDeck/electron-builder.yml
+  • executing @electron/rebuild  electronVersion=37.10.3 arch=x64 buildFromSource=false workspaceRoot=/Users/zhouri/project/BalanceDeck projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=x64 electron=37.10.3 appOutDir=dist/mac
+  • downloaded      label=electron progress=100%
+  ⨯ Timeout awaiting 'request' for 600000ms  failedTask=build stackTrace=RequestError: Timeout awaiting 'request' for 600000ms
+
+=== 结果 ===
+两次都是 exit=1，dist/mac 未生成。
+与 18-fetch-fresh-network-control.txt 同一个网络限制。
+filter 的语义改由 20-filter-semantics-verified.txt 用 app-builder-lib 自己的 FileMatcher 验证。

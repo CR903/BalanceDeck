@@ -1,0 +1,25 @@
+=== 从 electron-builder.yml 读到的配置（未经任何改写）===
+  from   : resources/human-pets
+  to     : human-pets
+  filter : ["**/*","!**/*.tga","!reyna-pilot/**"]
+
+=== matcher 对真实文件树的判定 ===
+  磁盘文件数 : 38 {"fbx":24,"json":2,"png":12}
+  进包文件数 : 38 {"fbx":24,"json":2,"png":12}
+  磁盘字节   : 62.2 MB
+  进包字节   : 62.2 MB
+
+=== 逐条判定（含当前盘上不存在的死重路径）===
+  ✓   aria/model.fbx                             进包=true  运行时读的模型
+  ✓   aria/anims/f_walk_neutral.fbx              进包=true  运行时读的动作
+  ✓   aria/textures/f014_body_color.png          进包=true  运行时读的贴图
+  ✓   aria/preview.png                           进包=true  设置页缩略图
+  ✓   aria/meta.json                             进包=true  元数据
+  ✓ * aria/textures/f014_body_color.tga          进包=false 死重：已转 PNG 的源 tga
+  ○ * ray/textures/m008_head_normal.TGA          进包=true  大写后缀  ← minimatch 大小写敏感 → 不匹配，已知边界
+  ✓ * reyna-pilot/model.glb                      进包=false 死重：零引用的 GLB 原型
+  ✓ * reyna-pilot/preview.png                    进包=false 死重目录下的任何文件
+  （* = 该文件当前不在盘上，已被脚本/人工删除；此处验的是 filter 的语义）
+  ○  = 已知边界，不计失败，见 measurements.md「filter 的大小写边界」
+
+结果：8 通过 / 0 失败 / 1 已知边界

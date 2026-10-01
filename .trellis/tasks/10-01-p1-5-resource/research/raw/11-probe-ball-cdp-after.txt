@@ -1,0 +1,69 @@
+═══════════════════════════════════════════════════════════════════
+  probe mode = ball   (ui:pet='0')   SMOKE_WAIT_MS=70000
+  date = 2026-10-01T12:14:25.854Z
+═══════════════════════════════════════════════════════════════════
+DevTools 端口 = 63330
+CDP page target : file:///Users/zhouri/project/BalanceDeck/out/renderer/index.html
+CDP browser端点 : ws://127.0.0.1:63330/devtools/browser/50d51cb1-c8d4-4e71-8233-31c7b6368254
+
+① 首屏（生产启动后，**未** reload）
+   <script> 标签          : [{"type":"module","src":"file:///Users/zhouri/project/BalanceDeck/out/renderer/assets/index-C0A6XRMa.js"}]
+   <canvas> 数            : 0
+   .pet3d-canvas         : null
+   .petball data-figure   : 0
+   window.__bd_ball 类型  : function
+   __bd_ball()            : {"petReady":false,"rect":null,"clipParseMs":0,"dumpLen":0}
+   Runtime.getHeapUsage   : usedSize=4.5 MB  totalSize=6.8 MB
+
+② Page.reload 冷加载 —— Network.requestWillBeSent 全量（只列渲染层相关）
+   assets/index-C0A6XRMa.js
+   assets/index-gJteAiOs.css
+   assets/voice-CCQ2qdzT.js
+   index.html
+   总请求数 8，其中渲染层相关 4
+
+   判定:
+      入口 chunk index-*.js  : true
+      human-*.js（FBX/骨骼/材质，**动态** import）: false
+      voice-*.js（speechOut **动态** import）      : true
+      bd-asset:// 3D 素材                        : false
+
+③ reload 后
+   <canvas> 数=0  .pet3d-canvas=null
+   __bd_ball()          : null
+   Runtime.getHeapUsage : usedSize=6.7 MB  totalSize=11.8 MB
+
+③ UI 驱动切到「个性人物」（用 ballshot.ts:41-49 那套 JS；Network 全程开着）
+   驱动日志 : {"switch":"clicked","petReadyAtSec":"1.0"}
+   bd-asset://aria/anims/f_idle_breathe_01.fbx
+   bd-asset://aria/anims/f_walk_neutral.fbx
+   bd-asset://aria/anims/f_wave_01.fbx
+   bd-asset://aria/model.fbx
+   bd-asset://aria/preview.png
+   bd-asset://aria/textures/f014_body_color.png
+   bd-asset://aria/textures/f014_body_normal.png
+   bd-asset://aria/textures/f014_body_specular.png
+   bd-asset://aria/textures/f014_head_color.png
+   bd-asset://aria/textures/f014_head_normal.png
+   bd-asset://aria/textures/f014_head_specular.png
+   bd-asset://aria/textures/f014_opacity_color.png
+   bd-asset://ray/preview.png
+   data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22currentColor%22%20d%3D%22m4.714%2015.956l4.718-2.648l.079-.23l-.08-.128h-.23l-.79-.048l-2.695-.073l-2.337-.097l-2.265-.122l-.57-.121l-.535-.704l.055-.353l.48-.321l.685.06l1.518.104l2.277.157l1.651.098l2.447.255h.389l.054-.158l-.133-.097l-.103-.098l-2.356-1.596l-2.55-1.688l-1.336-.972l-.722-.491L2%206.223l-.158-1.008l.656-.722l.88.06l.224.061l.893.686l1.906%201.476l2.49%201.833l.364.304l.146-.104l.018-.072l-.164-.274l-1.354-2.446l-1.445-2.49l-.644-1.032l-.17-.619a3%203%200%200%201-.103-.729L6.287.133L6.7%200l.995.134l.42.364l.619%201.415L9.735%204.14l1.555%203.03l.455.898l.243.832l.09.255h.159V9.01l.127-1.706l.237-2.095l.23-2.695l.08-.76l.376-.91l.747-.492l.583.28l.48.685l-.067.444l-.286%201.851l-.558%202.903l-.365%201.942h.213l.243-.242l.983-1.306l1.652-2.064l.728-.82l.85-.904l.547-.431h1.032l.759%201.129l-.34%201.166l-1.063%201.347l-.88%201.142l-1.263%201.7l-.79%201.36l.074.11l.188-.02l2.853-.606l1.542-.28l1.84-.315l.832.388l.09.395l-.327.807l-1.967.486l-2.307.462l-3.436.813l-.043.03l.049.061l1.548.146l.662.036h1.62l3.018.225l.79.522l.473.638l-.08.485l-1.213.62l-1.64-.389l-3.825-.91l-1.31-.329h-.183v.11l1.093%201.068l2.003%201.81l2.508%202.33l.127.578l-.321.455l-.34-.049l-2.204-1.657l-.85-.747l-1.925-1.62h-.127v.17l.443.649l2.343%203.521l.122%201.08l-.17.353l-.607.213l-.668-.122l-1.372-1.924l-1.415-2.168l-1.141-1.943l-.14.08l-.674%207.254l-.316.37l-.728.28l-.607-.461l-.322-.747l.322-1.476l.388-1.924l.316-1.53l.285-1.9l.17-.632l-.012-.042l-.14.018l-1.432%201.967l-2.18%202.945l-1.724%201.845l-.413.164l-.716-.37l.066-.662l.401-.589l2.386-3.036l1.439-1.882l.929-1.086l-.006-.158h-.055L4.138%2018.56l-1.13.146l-.485-.456l.06-.746l.231-.243l1.907-1.312Z%22%2F%3E%3C%2Fsvg%3E
+   assets/human-Ch0XCOva.js
+   assets/scene-DSiVMxFF.js
+   assets/three-wZxwjy_j.js
+   → human-*.js（FBX/骨骼/材质）: **已加载**
+   → bd-asset:// 3D 素材         : 13 个请求
+   <canvas> 数=1  .pet3d-canvas=[426,586,213,293]  data-figure=1
+   __bd_ball()          : {"petReady":true,"rect":{"x":26.880806326334206,"y":39.53742447368828,"width":159.23838734733158,"height":212.83465409088166},"clipParseMs":242,"dumpLen":3}
+   Runtime.getHeapUsage : usedSize=17.5 MB  totalSize=59.5 MB
+
+④ SystemInfo.getProcessInfo（browser 端点）
+   type=browser pid=55834 cpuTime=2.974237
+   type=renderer pid=55837 cpuTime=3.158478
+   type=GPU pid=55835 cpuTime=2.807717
+   type=network.mojom.NetworkService pid=55836 cpuTime=0.181009
+
+electron exit=0
+临时 userData 已清理: /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-probe-ball
+原始结果: /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-probe-ball.json

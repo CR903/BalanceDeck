@@ -987,7 +987,12 @@ export async function runUiTest(
   r.petBallOn = (await exec("document.querySelector('.petball')?.dataset.figure === '1'")) ? 'ok' : 'fail:figure-off'
   r.petFigureWindow = bounds().width === FIGURE_VIEW.width && bounds().height === FIGURE_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
   r.pet3dCanvas = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
-  for (let i = 0; i < 30; i++) {
+  // ⚠ 窗口从 30×300ms(9s) 放宽到 60×300ms(18s)：`petReady` 现在**必然晚于 three chunk
+  //   的下载与解析**（PetBall 改成动态 import 之后才成立）。原来那 9 秒是在「three 随入口
+  //   chunk 同步解析」的前提下定的，高负载下不够 → `petFigureUnchanged` 偶发报
+  //   `model-not-ready`（2026-10-01 资源占用优化时暴露）。
+  //   只放宽窗口、不改成「ready 后再等一帧」：多等那几帧对判定没有帮助，超时语义更直观。
+  for (let i = 0; i < 60; i++) {
     if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) break
     await sleep(300)
   }

@@ -10,8 +10,19 @@ extraResources:
   - from: build
     to: build
   # 真人系宠物素材（MIT，gitignored，dist 前由 predist 钩子拉取；缺失则构建失败并提示）
+  # ⚠ from/to 不能动：src/main/human-assets.ts:31 靠 process.resourcesPath/human-pets 寻址。
+  # filter 是**第二道**防线（第一道是 fetch-human-pets.mjs 转完即删源 .tga）——
+  # 两道各挡一种漏：脚本挡住「新下载的死重」，filter 挡住「磁盘上的历史残留」。
+  # 两类都是运行时从不被读取的文件：
+  #   · *.tga —— FBX 里记的是 xxx.tga，但 pet3d/human.ts:27-33 取 URL 时按 basename
+  #     换成 textures/<base>.png，main/human-assets.ts:39-44 的 MIME 表也没有 .tga
+  #   · reyna-pilot/ —— 更早的 GLB 原型遗留，全仓库零引用，不在 fetch 脚本的 PETS 列表里
   - from: resources/human-pets
     to: human-pets
+    filter:
+      - '**/*'
+      - '!**/*.tga'
+      - '!reyna-pilot/**'
 asar: true
 mac:
   category: public.app-category.utilities

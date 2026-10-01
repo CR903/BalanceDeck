@@ -1,0 +1,3 @@
+aria: 缺 模型 10 条动作（f_walk_neutral, f_idle_breathe_01, f_wave_01, f_gestic_talk_neutral_01, f_idle_look_around_01, f_idle_stretch_arms_01, f_gestic_thoughtful_01, f_idle_touch_hair_01, f_claphands_01, f_idle_roll_head_01）
+ray: 缺 模型 10 条动作（m_walk_neutral, m_idle_breathe_01, m_wave_01, m_gestic_talk_neutral_01, m_idle_look_around_01, m_idle_stretch_arms_01, m_gestic_shrug_01, m_gestic_thoughtful_01, m_claphands_01, m_idle_shake_arms_01）
+fetch failed

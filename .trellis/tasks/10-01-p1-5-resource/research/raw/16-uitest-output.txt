@@ -1,0 +1,224 @@
+
+> balancedeck@0.1.1 uitest
+> npm run build && electron . --uitest
+
+
+> balancedeck@0.1.1 build
+> electron-vite build
+
+vite v7.3.6 building ssr environment for production...
+transforming...
+✓ 50 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/overlay.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/qa/ballshot.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/index.ts, /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/ballshot.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/modes.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/uitest.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode-console-api.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode-cookie.ts, /Users/zhouri/project/BalanceDeck/src/main/opencode-auth.ts, /Users/zhouri/project/BalanceDeck/src/main/opencode-details.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode-cookie.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, /Users/zhouri/project/BalanceDeck/src/main/ipc.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/providers.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/index.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/keystore.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/overlay.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/modes.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/index.ts, /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, /Users/zhouri/project/BalanceDeck/src/main/scheduler.ts, /Users/zhouri/project/BalanceDeck/src/main/skins.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/skins.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/qa/ballshot.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/shots.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/opencode-auth.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts, /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/modes.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, dynamic import will not move module into another chunk.
+
+out/main/opencode-details-DBsfzIB6.js    5.99 kB
+out/main/index.js                      262.98 kB
+✓ built in 644ms
+vite v7.3.6 building ssr environment for production...
+transforming...
+✓ 1 modules transformed.
+rendering chunks...
+out/preload/index.js  8.93 kB
+✓ built in 16ms
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 70 modules transformed.
+rendering chunks...
+../../out/renderer/index.html                     1.23 kB
+../../out/renderer/assets/index-gJteAiOs.css     83.21 kB
+../../out/renderer/assets/voice-CCQ2qdzT.js       2.75 kB
+../../out/renderer/assets/scene-DSiVMxFF.js      30.03 kB
+../../out/renderer/assets/human-Ch0XCOva.js     120.82 kB
+../../out/renderer/assets/index-C0A6XRMa.js     489.11 kB
+../../out/renderer/assets/three-wZxwjy_j.js   1,182.41 kB
+✓ built in 2.47s
+(node:78861) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `Electron --trace-warnings ...` to show where the warning was created)
+[78862:1001/203029.323215:ERROR:ui/gl/gl_display.cc:408] EGL Driver message (Error) eglQueryDeviceAttribEXT: Bad attribute.
+(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
+{
+  "uitest": true,
+  "consoleErrors": "none",
+  "snapDiag": "OpenCode Go:ok/w3, Claude Code:nodata/w0, Codex:ok/w3, GitHub Copilot:error/w0 | scanning=false | offline=false",
+  "card": "ok",
+  "cardGrid": "ok",
+  "detailOpen": "ok",
+  "detailWindows": "ok",
+  "trendChart": "ok",
+  "trendBars": "1",
+  "detailBack": "ok",
+  "footerBtns": "[\"设置\",\"收起\"]",
+  "collapse": "ok",
+  "dotDom": "ok",
+  "ballValue": "0%",
+  "dragNoExpand": "ok",
+  "dragMoved": "no-real-cursor-move",
+  "dragFired": "ok",
+  "dotClickExpand": "ok",
+  "cardBack": "ok",
+  "reClickExpand": "ok",
+  "noDrift": "ok",
+  "logoBadge": "ok",
+  "gridAfterRefresh": "ok",
+  "titleRefreshBtn": "ok",
+  "refreshThenCollapse": "ok",
+  "refreshThenExpand": "ok",
+  "settingsOpen": "ok",
+  "settingsProviders": "ok",
+  "settingsAddBtns": "ok",
+  "settingsAddPreset": "ok",
+  "settingsRemovePreset": "ok",
+  "settingsAddCustom": "ok",
+  "settingsRemoveCustom": "ok",
+  "intervalSelect": "ok",
+  "intervalSaved": "ok",
+  "intervalFlash": "ok",
+  "intervalDiag": "已保存\n设置即改即存。凭据加密存入系统密钥链（Keychain / DPAPI），本应用不做任何上传。 | sel=aero,10",
+  "settingsSave": "ok",
+  "vrsSection": "ok",
+  "vrsHiddenWhenOff": "ok",
+  "vrsPowerOn": "ok",
+  "vrsPowerSaved": "ok",
+  "vrsPreset": "ok",
+  "vrsEndpoint": "ok",
+  "vrsPresetSet": "set",
+  "vrsCustom": "ok",
+  "vrsPresetSaved": "ok",
+  "vrsSecretNoExtras": "ok",
+  "vrsPresetBack": "set",
+  "vrsPresetUrlSynced": "ok",
+  "vrsTriggers": "ok",
+  "vrsFormatSet": "set",
+  "vrsFormatSaved": "ok",
+  "vrsRoutineHidden": "ok",
+  "vrsRoutineOn": "ok",
+  "vrsRoutineSteps": "ok",
+  "vrsRoutineSet": "set",
+  "vrsRoutineSaved": "ok",
+  "vrsHistoryCap": "ok",
+  "vrsGradeNote": "ok",
+  "vrsPowerOff": "ok",
+  "vrsNotifyVisible": "ok",
+  "vrsNotifyDefaults": "ok",
+  "vrsNotifyOff": "ok",
+  "vrsNotifyHidden": "ok",
+  "vrsNotifyCfg": "ok",
+  "settingsBack": "ok",
+  "trayTitleOk": "ok(esc=y plain=W 10% lvl=ok shape=none key=opencode#none)",
+  "trayTitleWarn": "ok(esc=y plain=W 70% lvl=warn shape=translucent key=opencode#translucent)",
+  "trayTitleDanger": "ok(esc=y plain=W 90% lvl=danger shape=solid-large key=opencode#solid-large)",
+  "trayTitleMuted": "ok(esc=y plain=¥1288.50 lvl=muted shape=hollow-small key=deepseek#hollow-small)",
+  "trayBadge": "ok(opencode#solid-large)",
+  "trayBadgeNone": "ok(opencode#solid-large → opencode#none)",
+  "trayMode": "ok",
+  "hideBalance": "ok",
+  "hideBalanceRestore": "ok",
+  "planMetaOneLine": "ok",
+  "windowChips": "{\"first\":0,\"after\":1,\"saved\":true,\"restored\":0}",
+  "petCardRemoved": "ok",
+  "petSection": "ok",
+  "petThumbs": "ok",
+  "petSwitch": "ok",
+  "petToggleSaved": "ok",
+  "petBallOn": "ok",
+  "petFigureWindow": "ok",
+  "pet3dCanvas": "ok",
+  "petModel": "ok",
+  "petSvgIdle": "ray",
+  "petCenterValue": "ok",
+  "petFigureNoWheel": "ok",
+  "petFigureOnly": "ok",
+  "petFigureBig": "ok",
+  "petEnterWalk": "ok",
+  "petExitWalk": "ok",
+  "petGesturePool": "ok",
+  "petStride": "ok",
+  "petTopDefault": "ok",
+  "petTopOff": "ok",
+  "petTopOn": "ok",
+  "petPierce": "ok",
+  "petCmdOk": "ok",
+  "petNoWindowShadow": "ok",
+  "petDiag": "{\"watch\":{\"ignore\":true,\"collapsed\":true,\"roaming\":true,\"shadow\":false},\"hb\":{\"w\":171,\"h\":225},\"rect\":{\"w\":159,\"h\":213},\"ink\":{\"w\":95.5,\"h\":175},\"perf\":{\"fps\":60,\"maxGap\":1742},\"stride\":27.7,\"gesture\":{\"cur\":\"exit\",\"step\":1,\"planned\":\"lookAround\",\"last\":\"enter\",\"pool\":[\"clap\",\"lookAround\",\"stretch\",\"think\",\"shrug\",\"shakeArms\"]},\"clipParseMs\":584}",
+  "petNoStickyDrag": "ok",
+  "petStillCollapsed": "ok",
+  "petFigureHeightKept": "ok",
+  "petFigureUnchanged": "ok",
+  "petMenuOpened": "ok",
+  "petToggleOff": "ok",
+  "petBallOff": "ok",
+  "petBallNoBubble": "ok",
+  "petBallWindow": "ok",
+  "petBall3d": "ok",
+  "petBallCenterValue": "ok",
+  "petBallRingDiag": "{\"ring\":\"plan\",\"track\":\"rgba(235, 235, 245, 0.16)\",\"fill\":\"rgb(48, 209, 88)\",\"dash\":\"7.18796px, 138.23px\",\"value\":\"5.2%\"}",
+  "petBallHitRect": "ok",
+  "petRingRemoved": "ok",
+  "petRingAlwaysOn": "ok",
+  "petWinLabelBelow": "ok",
+  "petCountUp": "ok",
+  "petCountUpExact": "ok",
+  "petWheelInertia": "ok",
+  "petWindowCycle": "ok",
+  "petWinLabel": "ok",
+  "petNoRingOnBalance": "ok",
+  "petHideBalanceNoAnim": "ok",
+  "petWheelHold": "ok",
+  "petCarouselOrder": "ok",
+  "petProviderCycle": "ok",
+  "petCarouselRhythm": "ok",
+  "petBallSkinSurface": "ok",
+  "petBallExpand": "ok",
+  "autostart": "ok",
+  "cachedCard": "ok",
+  "offlineBanner": "ok",
+  "cachedBanner": "ok",
+  "localChip": "ok",
+  "errorState": "ok",
+  "dragReorder": "ok",
+  "dragNoFlicker": "ok",
+  "dragSettles": "ok",
+  "dragPreviewShift": "ok",
+  "dragPersist": "ok",
+  "dragEscapeCancel": "ok",
+  "settingsIcons": "ok",
+  "settingsDeleteConfirm": "ok",
+  "grpSetup": "ok",
+  "grpFixtureCard": "ok",
+  "grpSelect": "ok",
+  "grpOptions": "ok",
+  "grpSentinelDistinct": "ok",
+  "grpGroupTag": "ok",
+  "grpFilterCards": "ok",
+  "grpFilterStored": "ok",
+  "grpFilterTrayStable": "ok",
+  "grpFilterNoRecollect": "ok",
+  "grpEmptyState": "ok",
+  "grpEmptyRestore": "ok",
+  "grpEmptyFilterCleared": "ok",
+  "grpDupHost": "ok",
+  "grpDupCardName": "ok",
+  "grpDupGroupTag": "ok",
+  "grpDupCleanup": "ok",
+  "execErrors": "none"
+}

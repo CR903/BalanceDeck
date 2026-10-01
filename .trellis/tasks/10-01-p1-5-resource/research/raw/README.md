@@ -15,6 +15,26 @@
 | `09-cpu-wakeups-3-modes.txt` | 三次 `measure-memory.mjs <ball\|figure> 60 <1\|0>` 的 A0（CPU）段 | 同上 |
 | `10-packaged-app-measurements.txt` | `npx electron-builder --mac --dir` → `du -sh .app` → `npx asar extract` → 逐目录 `du` | 同上（macOS x86_64，`identity: null` 未签名） |
 
+## 优化后的实测（2026-10-01，task `10-01-p1-5-resource` 实现轮）
+
+索引与口径见 [`../../measurements.md`](../../measurements.md)。命令与上面**完全同一套脚本**，
+没有另起炉灶 —— 口径不同则数字不可比。
+
+| 文件 | 产生命令 | 环境 |
+|---|---|---|
+| `11-probe-ball-cdp-after.{txt,json}` | `node research/probe-renderer.mjs ball 70` | 同上（球形态冷加载 + UI 驱动切形态） |
+| `11-probe-figure-cdp-after.txt` | `node research/probe-renderer.mjs figure 70` | 同上 |
+| `12-bundle-after.txt` | `npm run build` + 逐 chunk 字节与 three.js 特征串归属 | 同上 |
+| `13-memory-ball-after.txt` | `node research/measure-memory.mjs ball 60 1` | 同上 |
+| `14-memory-figure-after.txt` | `node research/measure-memory.mjs figure 60 1` | 同上 |
+| `15-memory-figure-before-samesession.txt` | 同上，但**代码已还原到 HEAD** | ⚠ load average 8.4；用来做「同负载下的改前/改后」对照 |
+| `16-uitest-output.txt` | `BD_USER_DATA=<tmp> npm run uitest` | 141 断言 |
+| `17-ballshot-figure-output.txt` | `BD_USER_DATA=<tmp> BD_PET=1 npx electron . --ballshot` | 人物形态截图 |
+| `18-fetch-fresh-network-control.txt` | `node scripts/fetch-human-pets.mjs --out <fresh>` —— **原版脚本**（`git show HEAD:`） | ⚠ 对照组：证明「全新下载跑不完」是本机网络限制，与改动无关 |
+| `19-fetch-sweep-offline-test.txt` | 零网络用例：复制真实素材树 + 人为放回 11 个 `.tga`，跑 `fetch-human-pets.mjs --out` | 不依赖网络，确定性 |
+| `20-filter-semantics-verified.txt` | `app-builder-lib` 的 `FileMatcher.createFilter()` 对真实文件树逐条判定 | 不依赖网络；本机 `electron-builder --mac --dir` 因网络超时跑不完 |
+| `21-packaging-blocked-by-network.txt` | `npx electron-builder --mac --dir` × 2 | ⚠ 两次都 600 s 请求超时，`dist/mac` 未生成 |
+
 ## 复现前的准备
 
 ```bash

@@ -280,9 +280,55 @@ There is **no** channel-name constant module, so channel strings live twice by n
 3. **`tsconfig.web.json:15` includes `src/preload/index.d.ts`, which does not exist.**
 4. `qa/shots.ts:10` imports `app` from electron and never uses it.
 5. `qa/ballshot.ts` keeps 4-space indentation on purpose (`:6-7` explains why).
-6. `resources/human-pets/reyna-pilot/` exists locally with no producer or consumer.
+6. ~~`resources/human-pets/reyna-pilot/` exists locally with no producer or consumer.~~
+   **Resolved 2026-10-01** (task `10-01-p1-5-resource`): deleted, and `electron-builder.yml`
+   now filters it. It was 31 MB of `model.glb` — an artefact of an abandoned GLB prototype,
+   referenced nowhere and unreachable from `PETS`. `scripts/test-resource.mjs` E6/E7 pin that
+   the fetch list still contains only `aria`/`ray` (adding `reyna` there would make
+   `fetch:humans` download 31 MB nobody uses, and — because it is *not* in `PETS` — nothing
+   would ever recreate the directory once deleted).
 7. `minimax`'s `findAmount` is byte-identical to `qwen`'s; `plan-utils.activeBlockRange` is
    duplicated in `opencode.ts:270-285`.
+
+---
+
+## Never-shipped assets: two barriers, and the proof that makes them safe
+
+`resources/human-pets/` shipped **159 MB that no code path ever reads** — 128 MB of source
+`.tga` and 31 MB of `reyna-pilot/model.glb` — for as long as it was in the repo. `du` on the
+source tree found it; nothing else would have.
+
+**Two barriers, because each covers a leak the other cannot** (2026-10-01):
+
+| | Where | Blocks |
+|---|---|---|
+| 1 | `scripts/fetch-human-pets.mjs` → `sweepConvertedTga()` | new downloads: converts, then deletes the source `.tga`. Also runs **before** the `human-pets cached` short-circuit, so an already-populated machine cleans up on its next `fetch:humans` instead of printing `cached` and exiting. |
+| 2 | `electron-builder.yml` `extraResources.filter` | packaging: excludes `!**/*.tga` and `!reyna-pilot/**` from whatever is on disk, including pre-existing residue barrier 1 never saw. |
+
+Doing only (1) leaves historic residue in the package. Doing only (2) leaves 159 MB on every
+developer's disk, and the next `fetch:humans` puts it back. **The `filter` starts with `'**/*'`
+because electron-builder's filter is *overriding*, not additive** — two exclusion patterns and
+no inclusion pattern means nothing gets copied at all.
+
+**Sweep semantics.** Delete a `.tga` **only when the same-named `.png` already exists**. A
+`.tga` whose conversion has not landed yet is not dead weight, it is the only copy; the next
+run re-downloads it. A failed `unlink` logs and continues — the assets are already converted
+and the build hook must not fail because a directory was read-only. Result:
+`resources/human-pets` **221 MB → 62 MB**, with all 24 `.fbx` and 12 `.png` intact.
+
+**The proof that makes deleting them safe** — this is the part to insist on. Before removing an
+asset, show the runtime never asks for it, by three independent signals:
+
+1. `pet3d/human.ts:27-33` rewrites `*.tga` → `textures/<base>.png` at URL-construction time,
+   so the `.tga` name never reaches the network layer;
+2. `human-assets.ts`'s `MIME` table has no `.tga` entry — the `bd-asset://` handler was never
+   designed to serve it;
+3. a CDP probe shows the texture requests are **all** `.png`.
+
+Point 3 is the only one that observes the real system; 1 and 2 are inferences about the code.
+`scripts/test-resource.mjs` §F re-asserts 1 and 2 on every `npm test`, so the *premise* of the
+deletion is re-verified continuously — if someone later changes the loader to genuinely read
+`.tga`, the suite goes red instead of the packaged app quietly breaking.
 
 ---
 

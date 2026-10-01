@@ -423,6 +423,53 @@ The `>= 2` is the load-bearing one: the behavioural assertions (L22/L27) prove t
 *independent*, and this proves they also *fit* in the budget. Neither alone is enough.
 
 
+### Don't: fix a false claim in the docs before fixing the code
+
+**Problem.** `README.md:45-46` claimed 「默认形态不加载 three.js」. It was false, and it had
+been false since the day it was written: `git show 89d5f3b:src/renderer/src/PetBall.tsx`
+already contains the static `import … from './pet3d/scene'` that commit added. Three.js was
+**76 % of the entry chunk** (1,298,574 B / 1,699,669 B), so the default 2D ball form parsed
+the whole library it never draws with.
+
+The tempting fix is to delete or soften the sentence — the statement is wrong, and a wrong
+statement should not ship. That fix is worse than the bug, because it converts *a false claim*
+into *the absence of a true one*, and leaves the actual defect untouched. A user who verifies
+in DevTools finds the same result either way; the difference is only whether we were willing
+to stand behind the claim when asked.
+
+**Rule: when a user-facing claim and the code disagree, fix the code first, then rewrite the
+claim from the measurement.** The order is load-bearing — rewriting the docs first means
+shipping an unverified number, which is the same failure wearing different clothes. The
+sequence that works:
+
+1. Change the code so the claim is *true* (`PetBall.tsx` → `await import`, plus `manualChunks`
+   in `electron.vite.config.ts`).
+2. **Re-measure.** Build the artifact; check `out/renderer/assets/` for the chunk sizes.
+3. Re-run the **runtime** probe, not just the bundle diff. Bundle splitting shows what is on
+   disk; only CDP `Network.requestWillBeSent` shows what was actually fetched. Baseline said
+   the ball form requested `index-*.js` — after the change: **0 requests for `three-*.js`**,
+   and they appear on the form switch.
+4. Only then rewrite the sentence, citing the number you measured.
+
+**Corollary — verify at the level the claim is made.** "Doesn't load three.js" is a runtime
+claim; a bundle-size table cannot establish it, because a chunk can be fetched but unparsed,
+or parsed but idle. Use the probe. `research/probe-renderer.mjs` is the reusable form of this
+(a CDP driver that switches forms and reports every request); `measure-memory.mjs` covers the
+process-level numbers.
+
+**Corollary — a number without its measurement conditions is not a number.** The figure-form
+CPU reading on this machine swings from 25 % to 60 % of one core purely with background load
+(measured: 58.6 % before the change vs 59.8 % after, same session, load average 8.4 — versus
+25–29 % at idle). Before reporting "unchanged" or "regressed", take the **before** measurement
+in the *same* conditions as the after one; comparing against a number from a quieter machine
+manufactures a difference that the code did not produce.
+
+**And when the claim cannot be made true, degrade it to what *is* provable.** The design note
+(`DESIGN.md:303`) said 「默认形态既不下载 human 分包也不解析 FBX」 — verified true by CDP, and
+more precise than the README. When the fix was unavailable, the fallback for the README was
+the weaker but provable claim (no WebGL context, no 3D assets downloaded), not a stronger
+guess.
+
 ### Don't: assert on text you found in a comment
 
 **Problem.** A guard asserted that a string appears somewhere in a file. The only occurrence
@@ -563,6 +610,27 @@ An assertion that cannot be broken is a **fake guard**. The proof is mandatory, 
 blast radius was not controlled — the batch proves nothing about its intended target and must be
 redone with a narrower break. Batching several assertions into one run is fine *only* when each
 target has a break that isolates it.
+
+**Third way this fails, and it is the easiest one to miss: the "call site" is not the definition.**
+An assertion of the form *"the cleanup runs before the early return"* was written as
+`src.indexOf('cleanup()') < src.indexOf('early return')`. `indexOf` matched the **function
+declaration** `function cleanup() {` — which sits above `main()` and is therefore always earlier —
+so moving the real call site below the early return left the assertion green. Verified red only
+after stripping the definition with a regex first. Same failure mode as the next one, one level up.
+
+**A negative assertion needs a coordinate system, and so does a slice.** Two variants, both
+green-forever before they were fixed:
+
+- **A slice hides the regression.** "The first `setReady(true)` comes after the `await import`"
+  was checked with `indexOf` over a slice that *started at* the import line. Hoisting an extra
+  `setReady(true)` above the import put it outside the slice entirely, so the slice's first match
+  was still the correct one. Index into the **whole file**, and convert slice-relative offsets to
+  absolute ones (`sliceStart + slice.indexOf(...)`) — mixing the two coordinate systems also
+  silently breaks a comparison that reads correctly.
+- **"After X" is not "inside Y".** "`filter:` appears after `from: resources/human-pets`" passes
+  even when the filter has been moved into a *different* entry of the same list. Assert
+  containment: slice the file to the end of that entry (next sibling `- from:`, or the next
+  top-level key if it is the last one) and require the token to be inside the slice.
 
 **Two ways this fails, both seen in practice:**
 

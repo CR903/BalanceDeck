@@ -3,7 +3,7 @@
 // attribution goes to README. Output dir is gitignored; run before dev/dist.
 // Usage: node scripts/fetch-human-pets.mjs [--out <dir>]
 import { execFile } from 'node:child_process'
-import { mkdirSync, writeFileSync, statSync, readdirSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, statSync, readdirSync, existsSync, unlinkSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -75,6 +75,49 @@ async function ghDir(apiPath) {
   return r.json()
 }
 
+/**
+ * 清掉「已转成同名 .png」的源 .tga —— 两位角色共 128.0 MB 的**死重**。
+ *
+ * 为什么运行时用不到 .tga：FBX 里记的是 `xxx.tga`，而 pet3d/human.ts:27-33 取 URL 时
+ * 按 basename 换成 `textures/<base>.png`；main/human-assets.ts:39-44 的 MIME 表里也没有
+ * `.tga`（这条协议路径从设计上就不服务它）。CDP 取证里 7 条贴图请求全是 .png。
+ *
+ * 只删「.png 已经在」的：转换失败的那一张留着（未转换的源文件不是死重），
+ * 下一轮重跑会重新下载它 —— 幂等与安全都靠这一条。
+ *
+ * 删不掉（权限 / 只读）只记一条日志继续走：素材已经转好，功能不受影响，
+ * 不该因为清磁盘把整个 dist 钩子挂掉。
+ */
+function sweepConvertedTga(dir, label) {
+  let freed = 0
+  let n = 0
+  // 两个「保留」的原因分开计数 —— 合并成一个计数器会让日志说错话：
+  // 「删不掉」（.png 已在，纯粹是权限）被报成「同名 .png 尚未就位」，
+  // 排查的人会顺着错误方向去找转换流程，而真正的原因是 EACCES。
+  let keptNoPng = 0
+  let keptUndeletable = 0
+  for (const name of readdirSync(dir)) {
+    if (!name.toLowerCase().endsWith('.tga')) continue
+    if (!existsSync(join(dir, name.replace(/\.tga$/i, '.png')))) {
+      keptNoPng += 1
+      continue
+    }
+    const p = join(dir, name)
+    try {
+      freed += statSync(p).size
+      unlinkSync(p)
+      n += 1
+    } catch (e) {
+      console.warn(`  ⚠ ${label}: 删不掉源文件 ${name}（${e.message}）—— 素材已转好，不影响功能`)
+      keptUndeletable += 1
+    }
+  }
+  if (n > 0) console.log(`  ${label}: 删掉 ${n} 个已转换的 .tga，释放 ${(freed / 1048576).toFixed(1)}MB`)
+  if (keptNoPng > 0) console.log(`  ${label}: 保留 ${keptNoPng} 个 .tga（同名 .png 尚未就位）`)
+  if (keptUndeletable > 0) console.log(`  ${label}: 保留 ${keptUndeletable} 个 .tga（删不掉，见上方 ⚠）`)
+  return n
+}
+
 async function main() {
   // 幂等：**逐个文件**判断，缺哪个补哪个。
   // 为什么不能只看 model.fbx 就整体跳过：动作目录会随功能增补（本次就一次加了 7 条/人），
@@ -84,6 +127,12 @@ async function main() {
     p.clips.filter((c) => !existsSync(join(OUT, p.id, 'anims', `${c}.fbx`)))
   const needModel = (p) => !existsSync(join(OUT, p.id, 'model.fbx'))
   const todo = PETS.filter((p) => needModel(p) || missingOf(p).length > 0)
+  // 清源 .tga 放在幂等短路**之前**：素材早已齐的机器（正是本任务要救的那批）
+  // 重跑一次也该把 128MB 死重清掉，而不是打一行「cached」就退出。
+  for (const p of PETS) {
+    const dir = join(OUT, p.id, 'textures')
+    if (existsSync(dir)) sweepConvertedTga(dir, p.id)
+  }
   if (todo.length === 0) {
     console.log('human-pets cached →', OUT)
     return
@@ -118,6 +167,9 @@ async function main() {
         // sips: macOS built-in TGA→PNG + downscale (verified in spike; zero installs).
         await execFileAsync('sips', ['-Z', '1024', '-s', 'format', 'png', tmp, '--out', out])
       }
+      // 转完即删源 .tga（见 sweepConvertedTga 的注释）。放在循环**之外**而不是每转一张就删：
+      // 这样半途失败的一轮重跑时，未转换的那张会重新下载，而不会被提前删掉源文件。
+      sweepConvertedTga(join(pd, 'textures'), pet.id)
     }
     for (const c of missingOf(pet)) {
       const loc = clipIndex.get(c)

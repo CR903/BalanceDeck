@@ -228,6 +228,59 @@ const { instantiateHuman } = await import('./human')
 
 Follow that pattern for any new heavy dependency.
 
+### The one above the heavy module: the scene entry itself is dynamic too
+
+`human.ts` is the *second* thing to load lazily. `./pet3d/scene` — which statically imports
+`three` — is the first, and it is loaded by `PetBall.tsx` with `await import`, not a top-level
+`import`:
+
+```tsx
+// src/renderer/src/PetBall.tsx — the only value reference to './pet3d/scene' in the repo
+import type { Pet3dHandle } from './pet3d/scene'   // type-only: esbuild erases it entirely
+…
+void import('./pet3d/scene')
+  .then(({ createPet3dScene }) => { … setReady(true) … })
+  .catch((e) => { setFailed(true); /* ← NOT a blank screen */ })
+```
+
+Three rules came out of making that change (2026-10-01, task `10-01-p1-5-resource`), each of
+which had already been paid for once:
+
+**1. Splitting the chunk is not a substitute for the dynamic import — you need both.**
+`electron.vite.config.ts` has `manualChunks: { three: ['node_modules/three'] }`, and it does
+nothing on its own. Measured: with the chunk split but the import still static, the ball form's
+`Runtime.getHeapUsage` was **5.7 MB vs 5.4 MB** unsplit — no change. A manual chunk governs
+*when bytes are fetched*, not *when they are parsed*; a static import parses three on first
+paint either way. In the other direction, the dynamic import alone can be undone by the
+bundler: `three` is referenced by both `scene.ts` and `human.ts`, so vite will fold it back
+into the entry unless it is pinned. Entry chunk measured: **1,699,669 B → 489,106 B (−71 %)**.
+
+**2. `await import` introduces a new failure mode — it needs the *existing* fallback, not a
+new one.** `import()` rejects on chunk load failure (missing file, packaging that dropped the
+chunk, unreachable CDN). Before the change there was exactly one failure path, WebGL being
+unavailable. Now there are two, and **both must end at `setFailed(true)` → the 2D ring**. A
+bare `.catch` that only logs leaves the window blank. The chunk-failure path is not
+hypothetical bookkeeping: it is the one you discover from a user's bug report.
+
+**3. `setReady(true)` moves *after* the import resolves.** `createPet3dScene` used to return
+its handle synchronously, so `ready` was true the moment the effect body finished. With an
+`await` in front of it, reporting ready early means the hitbox reporting (`PetBall.tsx:361`),
+the skin re-read, and the `__bd_ball().petReady` probe all compute a projection from a scene
+that does not exist yet.
+
+The `alive` guard in the same effect is for the window the `await` opens: the component can
+unmount or the form can toggle back while three is still loading, and without it you attach a
+scene nobody asked for.
+
+`scripts/test-resource.mjs` pins all three (A/B/C sections), and `scripts/test-structure.mjs`
+still pins the older `import('./human')` shape. **Verified red by reverting** the dynamic
+import: `git checkout src/renderer/src/PetBall.tsx electron.vite.config.ts` →
+**14 red** (A2 A3 A4 · B1–B7 · C1–C4), `23 通过 / 14 失败`, and the bundle returns to
+`index-*.js = 1,699,669 B`. Narrower breaks isolating each mechanism are in
+`measurements.md` §七 (①b/①c/①d cover three alternative spellings of a static import;
+④ covers dropping `setFailed(true)` from the chunk-failure catch; ⑤/⑥ cover the two
+`setReady` orderings).
+
 ---
 
 ## Common Mistakes
