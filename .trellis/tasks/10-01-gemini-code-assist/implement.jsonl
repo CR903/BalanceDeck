@@ -1,0 +1,9 @@
+{"file": "./prd.md", "reason": "需求与 31 条验收标准"}
+{"file": "./design.md", "reason": "技术设计与决策依据（D1-D8）"}
+{"file": "./implement.md", "reason": "分阶段清单 + 20 套件断言数基线 + Review Gates"}
+{"file": "./research/01-protocol-research.md", "reason": "端点/请求体/响应形状逐字、凭据来源、4 条否决路线、10 个必踩的坑"}
+{"file": "./research/02-adapter-design.md", "reason": "落点判据、kind/mark 取值、凭据只读理由、9 条降级分支表、collect 骨架"}
+{"file": "./research/03-testing-and-pitfalls.md", "reason": "共享文件段位地图、fixture 造法、凭据注入方案、33 条断言清单"}
+{"file": "./research/00-README.md", "reason": "一页纸推荐方案 + 信息源清单（含许可）+ 改动落点清单"}
+{"file": "../../spec/adapters/index.md", "reason": "适配器契约：CollectRequest 接缝（method/body）、readJson、快照铸造器纪律"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（静态守卫需前置断言、loadTs 用法）"}
