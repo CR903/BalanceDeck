@@ -13,6 +13,20 @@ export interface CollectRequest {
   headers: Record<string, string>
   /** 超时毫秒；缺省 12s */
   timeoutMs?: number
+  /** HTTP 方法；缺省 'GET'（不传与改动前逐字相同） */
+  method?: 'GET' | 'POST'
+  /**
+   * 请求体 —— **已序列化**的字符串，接缝不决定序列化方式。
+   *
+   * 为什么是字符串而不是对象：同一个供应商的不同端点要不同的编码
+   * （Gemini 的 token 刷新端点是 form-encoded，配额端点是 JSON）。
+   * 若接缝自作聪明地 `JSON.stringify`，form 请求会被静默改成 JSON →
+   * 服务端 400 → 适配器报「解析失败」，病因与症状隔了三层。序列化归调用方。
+   *
+   * 同理 Content-Type 归调用方：实现只在「有 body 且调用方未带 Content-Type」时
+   * 补 `application/json`；自带就原样用（form-encoded 端点自己会带）。
+   */
+  body?: string
 }
 
 /** 出网结果：只保证原始文本，JSON 解析是引擎的便利（见 engine.readJson） */

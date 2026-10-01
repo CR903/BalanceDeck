@@ -117,6 +117,54 @@ function callProject(url, headers) {
   }
 }
 
+/**
+ * callProject 的「富投影」版：在原三字段之外**多记** method / body / contentType。
+ *
+ * 为什么要另起一个函数而**不是**给 callProject 加字段：
+ * `inst.list` 的元素被 `expect.call` / `expect.calls` 做**全等**比较
+ * （check() :196-197）。给 callProject 加键会让既有 A~U 段每一条请求断言变红 ——
+ * 那不是「顺手」，是把既有套件的基线改了。既有投影一个字段都不动，
+ * 依赖 POST 的适配器（Gemini / Antigravity / Codex 升级）改用这个版本。
+ *
+ * method 缺省投影成 'GET'：接缝把「不传 method」定义为 GET，适配器断言
+ * 「我发的就是 POST」时不该关心调用方有没有显式写出来。
+ */
+function callProjectRich(req) {
+  const headers = req.headers ?? {}
+  const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+  return {
+    ...callProject(req.url, headers),
+    method: req.method ?? 'GET',
+    contentType: ctKey ? headers[ctKey] : null,
+    body: req.body ?? null
+  }
+}
+
+/**
+ * 与 makeRequest 行为**完全相同**（同 URL 精确匹配、未覆盖即抛），只是 list 里记的是富投影。
+ * ⚠️ 路由仍**只按 url 匹配**：匹配逻辑一旦引入 body，既有段会因桩行为变化而变红。
+ *
+ * ⚠️ **本函数目前还没有消费者** —— 它是给三家 POST 类适配器预留的：
+ * Gemini（V 段）/ Antigravity（X 段）/ Codex 升级（Y 段）各自在拼
+ * CollectContext 时用它，而不是复制一遍这段桩。
+ * 未使用的代码会腐烂，所以 `scripts/test-seam.mjs` 的 S7f/S7g 钉住了它的两条
+ * 不变量（记的是富投影 / 路由仍只按 URL 匹配）。**若将来决定删掉它，
+ * 把那两条一并删掉** —— 别留一条永远绿的假护栏。
+ */
+function makeRichRequest(routes) {
+  const list = []
+  return {
+    list,
+    request: async (req) => {
+      list.push(callProjectRich(req))
+      const r = routes.find((x) => x.url === req.url)
+      if (!r) throw new TypeError(`fetch failed（本套件未覆盖的 URL: ${req.url}）`)
+      if (r.throw) throw new TypeError(r.throw)
+      return { status: r.status ?? 200, text: typeof r.body === 'string' ? r.body : JSON.stringify(r.body) }
+    }
+  }
+}
+
 /** 只冻结「界面与托盘消费得到」的字段；updatedAt 不单列（与 dataAt 同源） */
 function project(s) {
   return {
