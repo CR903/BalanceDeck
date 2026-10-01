@@ -178,7 +178,7 @@ function ProviderRow({
             list={`grp-list-${p.id}`}
             value={draftGroup[p.id] ?? p.groupId ?? ''}
             placeholder={UNGROUPED}
-            title="分组：主页卡片按组聚合显示。留空 = 未分组（不影响采集）"
+            title="分组：主页卡片按组聚合显示，可用标题栏的下拉只显示某一组。留空 = 未分组（不影响采集）"
             onChange={(e) => setDraftGroup((d) => ({ ...d, [p.id]: e.target.value }))}
             onBlur={(e) => void onSetGroup(e.target.value)}
             onKeyDown={(e) => {
@@ -583,12 +583,12 @@ export function SettingsView({
       <div className="body-scroll settings-body">
         <div className="section-title">供应商</div>
 
-        {/* 隐藏分组只影响列表显示的**说明**：不写这句话，用户会以为隐藏了公司账户
+        {/* 分组筛选只影响列表显示的**说明**：不写这句话，用户会以为筛掉了公司账户
             就收不到它的额度告警 —— 而实际上（且应该）仍然收得到（design.md D6）。
-            托盘取的是**全局**排序第一位，被隐藏的那家排在前面时托盘会换一家显示。 */}
+            托盘取的是**全局**排序第一位，被筛掉的那家排在前面时托盘会换一家显示。 */}
         <div className="grp-note">
-          分组用于主页卡片聚合显示。
-          <b>隐藏只影响列表显示</b>：隐藏的账户仍会正常采集，托盘与提醒仍覆盖全部账户。
+          分组用于主页卡片聚合显示，主页标题栏的下拉可只显示某一组。
+          <b>筛选只影响列表显示</b>：被筛掉的账户仍会正常采集，托盘与提醒仍覆盖全部账户。
         </div>
 
         {grouped.length === 0 && (

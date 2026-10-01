@@ -563,6 +563,18 @@ export async function runUiTest(
     (await exec("[...document.querySelectorAll('.section-title')].some(e=>e.textContent==='语音提醒')"))
       ? 'ok'
       : 'fail:no-section-title'
+  // ⚠ **先把开关归位再断言**。这一段测的是「总开关关着时配置区不渲染」，前提是**进来时
+  //   它就是关的** —— 而它不成立：用户自己开着（真实存在的状态），或上一轮 run 崩在中途
+  //   没把它关回去。实测 2026-10-01：`ui:ttsOn='1'` 时下面第一条直接报
+  //   `fail:shown-while-off`，接着那次 click 把**已经开着**的开关又关了一次，
+  //   于是整段 **13 条**（vrsPowerOn / Preset / Endpoint / Custom / Triggers /
+  //   Routine* / HistoryCap…）一起崩 —— 崩在 TTS 段，与本段代码、与 P1-4 都没有任何关系，
+  //   却把验收数字淹掉了。`ui:ttsOn` 由 `SettingsView` 挂载时读一次，IPC 直接写**不会**
+  //   让它重渲染，所以只能按 DOM 上的实际状态点开关。
+  if ((await exec("!!document.querySelector('.vrs-power')?.classList.contains('on')")) === true) {
+    await exec("document.querySelector('.vrs-power')?.click()")
+    await sleep(700)
+  }
   // 总开关关着时，**整块配置都不该渲染**（默认关 = 默认不发声、不发请求）
   r.vrsHiddenWhenOff = (await exec("!!document.querySelector('.vrs-preset') || !!document.querySelector('.vrs-power')?.classList.contains('on')"))
     ? 'fail:shown-while-off'
@@ -2165,158 +2177,253 @@ export async function runUiTest(
     r.settingsDeleteConfirm = 'fail:no-picker'
   }
 
-  // ─── P1-4 多账户分组：下拉 / 隐藏只影响列表 / 同名区分 ─────────────────────
+  // ─── P1-4 多账户分组：筛选只影响列表 / 托盘不变 / 同名区分 / 组名标签 ─────────
   //
-  // 三组断言对应 design.md 的 D1（隐藏只不展示）、D6（托盘语义不变）、D5（同名靠
-  // distinguishKey 区分）。键统一 `grp*` 前缀，与其它 section 的键不重叠 —— 本段与
-  // 趋势图子任务共用同一个 uitest.ts，各自只加自己的键，合并时不需要去重。
+  // 键统一 `grp*` 前缀，与其它 section 的键不重叠 —— 本段与趋势图子任务共用同一个
+  // uitest.ts，各自只加自己的键，合并时不需要去重。
+  //
+  // ⚠ 本段**自建夹具**（两个自定义实例 + 两个组名），不依赖用户机器上已有的分组。
+  // 第一版依赖「用户恰好有 ≥2 个组」，实测整段 skip，等于没有护栏。
   const backToCards = async (): Promise<void> => {
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
     await sleep(700)
   }
-  const cardIds = async (): Promise<string> =>
-    (await exec("[...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId).join(',')")) as string
+  /**
+   * 轮询直到 cond 为真（默认 ~20s 上限）。采集是异步的，固定 sleep 会偶发读到上一帧。
+   *
+   * ⚠ 上限不是随手的：默认 10s 时，本机（有 3 个真实供应商在出网）一轮 collect 就能超过它，
+   *   于是**第二个**同名实例的卡片迟迟不出现、`grpDupCardName` 必红 —— 那是探针的时序假设
+   *   比被测行为还不确定。所以要先 `forceCollect()` 再等，且给足预算。
+   */
+  const waitFor = async (cond: string, tries = 80): Promise<boolean> => {
+    for (let i = 0; i < tries; i++) {
+      if ((await exec(cond)) === true) return true
+      await sleep(250)
+    }
+    return false
+  }
+  /**
+   * 主动点标题栏的「立即刷新」，强制跑一轮 collect。
+   *
+   * ⚠ 不能只等后台轮询：加完实例到下一次**自然**采集最多要一个完整周期
+   *   （uitest 里 `refreshInterval` 被设成 60s），而断言通常在几秒内就要出结果。
+   *   `grpDupCardName` 第一版就是这么红的 —— 注册表里两个实例都在（`grpDupHost` 绿），
+   *   界面上只出现了一张卡。
+   */
+  const forceCollect = async (): Promise<void> => {
+    await exec("document.querySelector('button[title=立即刷新]')?.click()")
+  }
+  /** 下拉选中某一项（React 受控 select 必须走原生 setter，直接设 .value 不触发 onChange） */
+  const pickGroup = async (value: string): Promise<void> => {
+    await exec(`(async()=>{
+      const sel=document.querySelector('.grp-select')
+      if(!sel) return
+      const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
+      if(sel.value===${JSON.stringify(value)}) return
+      setter.call(sel,${JSON.stringify(value)})
+      sel.dispatchEvent(new Event('change',{bubbles:true}))
+      await new Promise(r=>setTimeout(r,260))
+    })()`)
+  }
+  const cardsNow = async (): Promise<string[]> => {
+    const s = String(await exec("[...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId).join(',')"))
+    return s === '' ? [] : s.split(',')
+  }
+  const storedFilter = async (): Promise<string> =>
+    String(await exec("window.api.getExtras(['ui:groupFilter']).then(e=>e['ui:groupFilter']||'')"))
 
-  // ① 归组下拉存在，且列出的组名与注册表里 groupId 的去重结果一致
-  await backToCards()
-  r.grpSelect = (await exec("!!document.querySelector('.grp-select')")) ? 'ok' : 'fail:no-select'
-  // ⚠ 比**文案**（option.textContent）而不是 value：第 0 项的 value 是防撞名的哨兵
-  //   （含控制字符，用户输入的组名不可能等于它），拿 value 比会永远对不上。
-  const grpOptions = String(
-    await exec("JSON.stringify([...document.querySelectorAll('.grp-select option')].map(o=>o.textContent))")
-  )
-  // 期望值在页面里现算（不能把 read-model 的实现复制进断言 —— 那就是假护栏）：
-  // 组名 = 实例 groupId 的去重集合 + 未分组兜底，排序升序、兜底桶恒在末尾。
-  const grpExpected = String(
-    await exec(`window.api.listProviders().then(p=>{
-      const us='未分组'
-      const s=new Set(p.providers.map(x=>x.groupId||us))
-      const rest=[...s].filter(x=>x!==us).sort()
-      return JSON.stringify(['全部', ...rest, ...(s.has(us)?[us]:[])])
-    })`)
-  )
-  r.grpOptions = grpOptions === grpExpected ? 'ok' : `fail:${grpOptions}!=${grpExpected}`
-  // 哨兵 value 必须**不与任何真实组名相等**，否则用户自建同名组就会与「显示全部分组」撞名
-  r.grpSentinelDistinct =
-    (await exec(`(()=>{const os=[...document.querySelectorAll('.grp-select option')]
-      const all=os[0]?.value
-      return os.length>1 && !!all && !os.slice(1).some(o=>o.value===all)})()`)) === true
-      ? 'ok'
-      : 'fail:sentinel-collision'
+  /** 加一个自定义实例。⚠ key 必须填：没有 key 时适配器铸的是 noDataSnap（status
+   *  'nodata'），而 CardView 的 configured 过滤掉 nodata → **根本没有卡片**。
+   *  第一版的 grpDupCardName 就是这么红的（注册表层面两个实例都在、host 也不同，
+   *  但界面上找不到任何一张叫 uitest-dup 的卡）。 */
+  const addCustom = async (name: string, url: string, key: string): Promise<void> => {
+    await exec("[...document.querySelectorAll('.add-btn')].find(b=>b.textContent.includes('自定义'))?.click()")
+    await sleep(400)
+    await exec(`(()=>{
+      const form=document.querySelector('.custom-form')
+      if(!form) return
+      const text=[...form.querySelectorAll('input[type=text]')]
+      const pw=form.querySelector('input[type=password]')
+      const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set
+      // text[0]=名称，text[1]=API 地址（协议是 select，Key 是 password）
+      setter.call(text[0],${JSON.stringify(name)}); text[0].dispatchEvent(new Event('input',{bubbles:true}))
+      if(text[1]){ setter.call(text[1],${JSON.stringify(url)}); text[1].dispatchEvent(new Event('input',{bubbles:true})) }
+      if(pw){ setter.call(pw,${JSON.stringify(key)}); pw.dispatchEvent(new Event('input',{bubbles:true})) }
+    })()`)
+    await sleep(200)
+    await exec("[...document.querySelectorAll('.custom-form .btn-primary')].find(b=>b.textContent.includes('添加'))?.click()")
+    await sleep(1100)
+  }
+  const removeProvider = async (id: string): Promise<void> => {
+    await exec(`(()=>{const row=document.querySelector('[data-provider-id="${id}"]'); if(row) row.querySelector('.mini-btn.danger')?.click()})()`)
+    await sleep(300)
+    await exec(`(()=>{const row=document.querySelector('[data-provider-id="${id}"]'); if(row) row.querySelector('.mini-btn.danger')?.click()})()`)
+    await sleep(800)
+  }
 
-  // ② 隐藏若干组：卡片列表变，但**托盘标题不变**（D6 的行为断言）
-  //
-  // ⚠ 这里必须按**黑名单**语义驱动下拉，不是「单选当前组」。`ui:groupHidden` 存的是
-  //   「被隐藏的组 id」，而 `onToggleGroup` 是**取反**：在某一项上选一次 = 把那一组藏起来
-  //   （列表只剩其余的），再选一次 = 放回来。所以「只留 keep 可见」= 把其余每一组各点一遍。
-  //   「显示全部分组」那一项走的是**清空黑名单**，不是 toggle 一个哨兵组。
-  //   （首版探针两处都按「单选」写：先点 G2..Gn 再点 G1 → G1 也被藏 → 列表全空 → 断言必红；
-  //     还原时点「全部」在旧实现下只往黑名单里加一个查不到的哨兵，卡片回不来。
-  //     `--uitest` 不在 npm test 链里，所以这两条错一直没人跑出来。）
-  const cardsBefore = await cardIds()
-  const trayBeforeHide = String(await exec('window.api.debugTrayTitle()'))
-  // 用 React 受控 select 的原生 setter 派发 change（直接设 .value 不会触发 onChange）。
-  // ⚠ 值没变时**不能**派发：React 的 inputValueTracking 会把 change 吞掉，于是「点同项」
-  //   变成静默 no-op。受控 select 在只剩一组可见时会把自己钉在那一项上（activeGroup），
-  //   所以下面的序列每一步都先回到「全部」再点目标组，保证值一定发生变化。
-  const pickGroups = async (names: string[], resetFirst = false): Promise<string> =>
-    String(
-      await exec(`(async()=>{
-        const sel=document.querySelector('.grp-select')
-        if(!sel) return 'skip:no-select'
-        const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
-        const pick=async(v)=>{ if(sel.value===v) return; setter.call(sel,v); sel.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,220)) }
-        const all=[...sel.options].map(o=>o.value)[0]
-        for(const g of ${JSON.stringify(names)}){
-          ${resetFirst ? "await pick(all)" : ''}
-          await pick(g)
-        }
-        await new Promise(r=>setTimeout(r,700))
+  // ── 夹具：建一个「有卡」实例 + 一个「没卡」实例（没 key → nodata → 不占卡片）
+  //    两个组：GRP_VIS（给有卡的） / GRP_EMPTY（给没卡的 → 筛它必然空）
+  //    ⚠ 为什么要有「没卡」那个：筛到空态需要「这一组里一张卡都不剩」，而用户机器上
+  //    任何真实组都可能恰好都有卡 —— 那样空态就永远走不到，断言形同虚设。
+  const GRP_VIS = 'uitest-可见组'
+  const GRP_EMPTY = 'uitest-空组'
+  const NAME_VIS = 'uitest-vis'
+  const NAME_DRY = 'uitest-dry'
+
+  await exec(footerClick('设置'))
+  await sleep(700)
+  await addCustom(NAME_VIS, 'https://uitest-vis.example.com/v1', 'sk-uitest-vis')
+  await addCustom(NAME_DRY, 'https://uitest-dry.example.com/v1', '')
+  const fixtureRaw = String(
+    await exec(
+      `window.api.listProviders().then(p=>JSON.stringify(p.providers.filter(x=>x.name==='${NAME_VIS}'||x.name==='${NAME_DRY}').map(x=>({id:x.id,name:x.name}))))`
+    )
+  )
+  const fixture = JSON.parse(fixtureRaw) as { id: string; name: string }[]
+  const visId = fixture.find((x) => x.name === NAME_VIS)?.id ?? ''
+  const dryId = fixture.find((x) => x.name === NAME_DRY)?.id ?? ''
+  if (!visId || !dryId) {
+    r.grpSetup = `fail:vis=${visId} dry=${dryId}`
+    for (const k of [
+      'grpSelect',
+      'grpOptions',
+      'grpSentinelDistinct',
+      'grpGroupTag',
+      'grpFilterStored',
+      'grpFilterCards',
+      'grpFilterTrayStable',
+      'grpFilterNoRecollect',
+      'grpEmptyState',
+      'grpEmptyRestore',
+      'grpEmptyFilterCleared',
+      'grpFixtureCard'
+    ]) {
+      r[k] = 'skip:no-fixture'
+    }
+  } else {
+    r.grpSetup = 'ok'
+    // 归组：写真相源（注册表里的 groupId）。走 IPC 而非输入框 —— 断言的是**行为**，
+    // 输入框本身由 J17 之外的静态门与设置页的 e2e 覆盖，这里要的是「分组能生效」。
+    await exec(`window.api.setInstanceGroup(${JSON.stringify(visId)},${JSON.stringify(GRP_VIS)})`)
+    await exec(`window.api.setInstanceGroup(${JSON.stringify(dryId)},${JSON.stringify(GRP_EMPTY)})`)
+    await sleep(400)
+
+    await backToCards()
+    await sleep(600)
+    // ⚠ 必须**主动触发**一轮采集再等，不能只等后台轮询（周期 60s，断言等不起）
+    await forceCollect()
+    // ⚠ 卡片基线必须在**夹具建好并采集完**之后取：`uitest-vis` 有 key → 失败也是一张卡
+    //   （status=error，CardView 只过滤 nodata）。拿加夹具之前的列表当基线，恢复断言必红。
+    const visCardReady = await waitFor(`!!document.querySelector('[data-card-id="${visId}"]')`)
+    r.grpFixtureCard = visCardReady ? 'ok' : 'fail:vis-card-never-appeared'
+    const cardsBase = (await cardsNow()).join(',')
+
+    // ① 下拉存在，选项与注册表去重结果一致（期望值在页面里现算，不复制 read-model）
+    r.grpSelect = (await exec("!!document.querySelector('.grp-select')")) ? 'ok' : 'fail:no-select'
+    const grpOptions = String(
+      await exec("JSON.stringify([...document.querySelectorAll('.grp-select option')].map(o=>o.textContent))")
+    )
+    const grpExpected = String(
+      await exec(`window.api.listProviders().then(p=>{
+        const us='未分组'
+        const s=new Set(p.providers.map(x=>x.groupId||us))
+        const rest=[...s].filter(x=>x!==us).sort()
+        return JSON.stringify(['全部', ...rest, ...(s.has(us)?[us]:[])])
+      })`)
+    )
+    r.grpOptions = grpOptions === grpExpected ? 'ok' : `fail:${grpOptions}!=${grpExpected}`
+    // 哨兵 value 必须**不与任何真实组名相等**，否则用户自建同名组就会与「全部」撞名
+    r.grpSentinelDistinct =
+      (await exec(`(()=>{const os=[...document.querySelectorAll('.grp-select option')]
+        const all=os[0]?.value
+        return os.length>1 && !!all && !os.slice(1).some(o=>o.value===all)})()`)) === true
+        ? 'ok'
+        : 'fail:sentinel-collision'
+
+    // ② 卡片上显示所属组名（AC 5 / design.md D5b）；未分组的显示「未分组」
+    const tagProbe = String(
+      await exec(`(()=>{
+        const c=document.querySelector('[data-card-id="${visId}"]')
+        const u=[...document.querySelectorAll('[data-card-id]')].find(x=>!x.querySelector('.pcard-group'))
         return JSON.stringify({
-          hidden: await window.api.getExtras(['ui:groupHidden']).then(e=>{try{return JSON.parse(e['ui:groupHidden']||'[]')}catch{return null}}),
-          cards: [...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId)
+          vis: c?.querySelector('.pcard-group')?.textContent ?? null,
+          hasTag: !!c?.querySelector('.pcard-group'),
+          // 没有标签的那张必须**不在注册表里**（查不到实例 → 不渲染，而不是谎称「未分组」）
+          unknown: u ? u.dataset.cardId : null
         })
       })()`)
     )
-  // 期望留在列表里的 id：由**注册表**现算（不复制 read-model 的实现，否则是假护栏）
-  const expectedFor = async (group: string): Promise<string> =>
-    String(
-      await exec(`window.api.listProviders().then(p=>{
-        const us='未分组'
-        return JSON.stringify(p.providers.filter(x=>(x.groupId||us)===${JSON.stringify(group)}).map(x=>x.id))
-      })`)
+    const tag = JSON.parse(tagProbe) as { vis: string | null; hasTag: boolean; unknown: string | null }
+    // 注册表里的全部实例 id。**下面两条断言都要靠它区分「属于另一组」与「我们不知道它属于哪组」** ——
+    // 后者是 `debugPush` 注入的快照（cached/local/error 三段留下的 fake-provider），
+    // 它不在注册表里，而我们无从断言它被哪个组筛掉了。
+    const knownIds = new Set(
+      (JSON.parse(
+        String(await exec("window.api.listProviders().then(p=>JSON.stringify(p.providers.map(x=>x.id)))"))
+      ) as string[]) ?? []
     )
-  const parsePick = (raw: string): { hidden: string[] | null; cards: string[] } =>
-    raw.startsWith('skip:') ? { hidden: null, cards: [] } : (JSON.parse(raw) as { hidden: string[] | null; cards: string[] })
-  // 只留第一个真实组可见：把其余每一组各点一遍（第 0 项是「显示全部分组」，不是真组）
-  const realGroups = (JSON.parse(grpOptions) as string[]).slice(1)
-  const keep = realGroups[0]
-  const members = new Set<string>(keep ? (JSON.parse(await expectedFor(keep)) as string[]) : [])
-  const beforeList = cardsBefore === '' ? [] : cardsBefore.split(',')
-  // 留用的那一组在注册表里有成员、但一个都没配置（全是 nodata）→ 留不下任何卡，
-  // 这时候「只剩 keep 可见」与「一张卡都不剩」是同一件事，断言无从判起 → 跳过而不是误报红
-  const keepCards = beforeList.filter((x) => members.has(x))
-  if (cardsBefore === '' || realGroups.length < 2 || keepCards.length === 0) {
-    const skip =
-      cardsBefore === '' ? 'skip:no-cards-before' : realGroups.length < 2 ? 'skip:only-one-group' : 'skip:keep-group-empty'
-    r.grpHideCards = skip
-    r.grpHideTrayStable = skip
-    r.grpHiddenAreGroups = skip
-    r.grpRestore = skip
-    r.grpHiddenCleared = skip
-    r.grpEmptyState = skip
-    r.grpEmptyRestore = skip
-  } else {
-    const toHide = realGroups.slice(1)
-    const first = parsePick(await pickGroups(toHide))
-    const hideable = beforeList.filter((x) => !members.has(x)).length
-    const left = first.cards
-    // 每张留下的卡都必须属于 keep；且确实少了一些（keep 里没有可配置的卡时自动跳过长度比较，
-    // 否则会因为「本来就没东西可藏」而误报红）
-    r.grpHideCards =
-      left.length > 0 && left.every((x) => members.has(x)) && (hideable === 0 || left.length < beforeList.length)
+    r.grpGroupTag =
+      tag.hasTag && tag.vis === GRP_VIS && (tag.unknown === null || !knownIds.has(tag.unknown))
         ? 'ok'
-        : `fail:期望仅[${[...members].join(',')}]实际[${left.join(',')}]隐藏前[${cardsBefore}]`
-    // 隐藏只影响列表。托盘仍取**全局**排序第一位（tray-text.ts 的既有契约），
-    // 所以标题必须与隐藏前逐字相同 —— 这正是 D6 要求在设置页写明的那句话的另一半。
-    const trayAfterHide = String(await exec('window.api.debugTrayTitle()'))
-    r.grpHideTrayStable = trayAfterHide === trayBeforeHide ? 'ok' : `fail:${trayBeforeHide}->${trayAfterHide}`
-    // 黑名单里存的是**组 id**、且恰好是刚点过的那几组（不是实例 id —— 那是 D1 的核心）
-    r.grpHiddenAreGroups =
-      first.hidden && JSON.stringify([...first.hidden].sort()) === JSON.stringify([...toHide].sort())
-        ? 'ok'
-        : `fail:hidden=${JSON.stringify(first.hidden)} 期望组 id ${JSON.stringify(toHide)}`
+        : `fail:${tagProbe}`
 
-    // 每一组都藏起来 → 空态（而不是空白网格）。
-    // 每轮先点「显示全部分组」再点目标组：否则最后一步会撞上受控 select 的自钉（值没变，
-    // React 吞掉 change），于是**最后那一组永远藏不掉**，空态也就永远走不到。
-    const allHidden = parsePick(await pickGroups(realGroups, true))
+    {
+      // ③ 选中某一组 → 只显示该组成员，**且仍在被采集**（托盘标题不变，D6）
+      //
+      // ⚠ 先把采集周期挪到 5 分钟：`grpFilterNoRecollect` 的测量窗口有 ~1s 宽，而后台
+      //   调度每 60s 就会自己跑一轮 —— 落进窗口里就报一条**假红**，且它与被测行为无关。
+      //   写 `refreshInterval`（非 `ui:` 前缀）会触发一次 recollect，所以先写、**等它落定**
+      //   再取基线；读完 lastSyncAfter 立刻还原（本段之后不再依赖它）。
+      await exec("window.api.setExtras({refreshInterval:'300'})")
+      await sleep(2500)
+      const trayBefore = String(await exec('window.api.debugTrayTitle()'))
+      const lastSyncBefore = String(await exec('window.api.getState().then(s=>s.lastSync)'))
+      await pickGroup(GRP_VIS)
+      await sleep(700)
+      const left = await cardsNow()
+      const expectedVis = await exec(`window.api.listProviders().then(p=>JSON.stringify(
+        p.providers.filter(x=>(x.groupId||'未分组')===${JSON.stringify(GRP_VIS)}).map(x=>x.id)))`)
+      const expIds = new Set(JSON.parse(String(expectedVis ?? '[]')) as string[])
+      // 「不显示别的组」= **没有一张注册表里的卡**属于别的组。注册表里查不到的 id
+      // （debugPush 注入的快照）不在判据内 —— 我们不知道它属于哪组，替它断言同样是撒谎。
+      r.grpFilterCards =
+        left.length > 0 &&
+        left.every((x) => expIds.has(x) || !knownIds.has(x)) &&
+        !left.includes(dryId)
+          ? 'ok'
+          : `fail:期望[${[...expIds].join(',')}]或非注册表 实际[${left.join(',')}]`
+      // 存储里就是**这一个组名**（单选，不是 id 列表、也不是取反）
+      r.grpFilterStored = (await storedFilter()) === GRP_VIS ? 'ok' : `fail:${await storedFilter()}`
+      // 托盘取**全局**排序第一位（tray-text.ts 的既有契约），筛选不改变它
+      const trayAfter = String(await exec('window.api.debugTrayTitle()'))
+      r.grpFilterTrayStable = trayAfter === trayBefore ? 'ok' : `fail:${trayBefore}->${trayAfter}`
+      // ⚠ 筛选**不重发采集请求**：ui: 前缀 → extras:set 不触发 refreshNow（ipc.ts）。
+      //   判据用 lastSync 而不是「有没有在扫描」—— 后者只是时序巧合。
+      const lastSyncAfter = String(await exec('window.api.getState().then(s=>s.lastSync)'))
+      r.grpFilterNoRecollect = lastSyncAfter === lastSyncBefore ? 'ok' : `fail:${lastSyncBefore}->${lastSyncAfter}`
+      await exec("window.api.setExtras({refreshInterval:'60'})")
+    }
+
+    // ④ 筛到**一个可显示的卡都不剩**的组 → 空态必须说清是筛选，且给出**真能回来**的按钮
+    //   （design.md D1b：空态不许对「本来就没卡片」谎报）
+    await pickGroup(GRP_EMPTY)
+    await sleep(700)
+    const dryCards = await cardsNow()
+    const title = String(await exec("document.querySelector('.empty-title')?.textContent ?? ''"))
+    const cta = String(await exec("document.querySelector('.empty-cta')?.textContent ?? ''"))
     r.grpEmptyState =
-      allHidden.cards.length === 0 &&
-      Array.isArray(allHidden.hidden) &&
-      allHidden.hidden.length === realGroups.length &&
-      (await exec(
-        "!!document.querySelector('.empty-title') && document.querySelector('.empty-title').textContent.includes('分组已全部隐藏')"
-      )) === true
+      dryCards.length === 0 && title.includes('分组已全部隐藏') && cta.includes('显示全部分组')
         ? 'ok'
-        : `fail:cards=${JSON.stringify(allHidden.cards)} hidden=${JSON.stringify(allHidden.hidden)}`
-
-    // 还原：点空态里的「显示全部分组」按钮（它必须一次清空整份黑名单 —— 见 CardView 的说明：
-    // 逐组 toggle 的话每次都从**同一份**闭包里的 hiddenGroups 出发，只有最后一组会真的被放开）
+        : `fail:cards=${JSON.stringify(dryCards)} title=${title} cta=${cta}`
+    // 还原：点空态里的按钮 → 一次写 ALL_GROUPS，卡片立刻回来
     await exec("(document.querySelector('.empty-cta')?.textContent||'').includes('显示全部分组') && document.querySelector('.empty-cta').click()")
     await sleep(900)
-    const restored = await cardIds()
-    r.grpEmptyRestore = restored === cardsBefore ? 'ok' : `fail:${cardsBefore}->${restored}`
-    r.grpRestore = r.grpEmptyRestore
-    r.grpHiddenCleared =
-      (await exec(
-        "window.api.getExtras(['ui:groupHidden']).then(e=>{try{return JSON.parse(e['ui:groupHidden']||'[]').length===0}catch{return false}})"
-      )) === true
-        ? 'ok'
-        : 'fail:not-cleared'
+    const restored = (await cardsNow()).join(',')
+    r.grpEmptyRestore = restored === cardsBase ? 'ok' : `fail:${cardsBase}->${restored}`
+    r.grpEmptyFilterCleared = (await storedFilter()) === '' ? 'ok' : `fail:${await storedFilter()}`
   }
 
-  // ③ 同名两账号的卡片名带不同后缀（D5）
+  // ── ③ 同名两账号的卡片名带不同后缀（D5）────────────────────────────────────
   //
   // 必须造两个**同名、不同 host** 的自定义实例 —— 只有一个同名时后缀本来就不该加
   // （不造「(2)」这类假区分），那种情况下断言的是「两张卡名字一样」这种恒真事实。
@@ -2324,20 +2431,7 @@ export async function runUiTest(
   await sleep(700)
   const dupIds: string[] = []
   for (let i = 0; i < 2; i++) {
-    await exec("[...document.querySelectorAll('.add-btn')].find(b=>b.textContent.includes('自定义'))?.click()")
-    await sleep(400)
-    await exec(`(()=>{
-      const form=document.querySelector('.custom-form')
-      if(!form) return
-      const inputs=[...form.querySelectorAll('input[type=text]')]
-      const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set
-      // inputs[0]=名称，inputs[1]=API 地址（协议是 select，Key 是 password）
-      setter.call(inputs[0],'uitest-dup'); inputs[0].dispatchEvent(new Event('input',{bubbles:true}))
-      if(inputs[1]){ setter.call(inputs[1],'https://uitest-${'ab'[i]}.example.com/v1'); inputs[1].dispatchEvent(new Event('input',{bubbles:true})) }
-    })()`)
-    await sleep(200)
-    await exec("[...document.querySelectorAll('.custom-form .btn-primary')].find(b=>b.textContent.includes('添加'))?.click()")
-    await sleep(1100)
+    await addCustom('uitest-dup', `https://uitest-${'ab'[i]}.example.com/v1`, `sk-uitest-dup-${i}`)
   }
   const dupAdded = String(
     await exec(
@@ -2350,8 +2444,17 @@ export async function runUiTest(
   // （host 取不出来 = 整条区分链路在第一步就断了，而界面层看不出来）
   r.grpDupHost =
     dupList.length === 2 && dupList[0].host !== '' && dupList[0].host !== dupList[1].host ? 'ok' : `fail:${dupAdded}`
+  // ⚠ 必须等两张卡真的**采集完**再断言，而且得**主动触发**一轮采集：两个实例是先后加的，
+  //   第二次 `addCustom` 返回时第一轮 collect 可能还在路上，而自然轮询要等最多 60s。
+  //   2026-10-01 实机：只 `sleep(600)` 的话界面上稳定只出现**一张** uitest-dup 的卡，
+  //   `grpDupHost` 绿而 `grpDupCardName` 红 —— 探针的时序假设比被测行为还不确定。
   await backToCards()
   await sleep(600)
+  await forceCollect()
+  const dupReady = await waitFor(`(()=>{
+    const n=[...document.querySelectorAll('[data-card-id]')].filter(c=>c.querySelector('.pcard-name')?.textContent.includes('uitest-dup'))
+    return n.length===2 ? true : false
+  })()`)
   const dupCardNames = String(
     await exec(
       "[...document.querySelectorAll('[data-card-id]')].filter(c=>c.querySelector('.pcard-name')?.textContent.includes('uitest-dup')).map(c=>c.querySelector('.pcard-name').textContent).join('|')"
@@ -2359,25 +2462,33 @@ export async function runUiTest(
   )
   const dupParts = dupCardNames ? dupCardNames.split('|') : []
   r.grpDupCardName =
-    dupParts.length === 2 && dupParts[0] !== dupParts[1] && dupParts.some((x) => x.includes('uitest-a.example.com'))
+    dupReady && dupParts.length === 2 && dupParts[0] !== dupParts[1] && dupParts.some((x) => x.includes('uitest-a.example.com'))
       ? 'ok'
-      : `fail:${dupCardNames}`
+      : `fail:ready=${dupReady} names=${dupCardNames}`
+  // 同名两账号**同组**时：后缀与组名标签同时出现，两者回答不同问题（D5b）。
+  // 期望值从注册表现算（不把 read-model 的判定复制进断言）。
+  const dupExpGroup = String(
+    await exec(
+      "window.api.listProviders().then(p=>{const d=p.providers.find(x=>x.name==='uitest-dup'); return d?(d.groupId||'未分组'):''})"
+    )
+  )
+  const dupTag = String(
+    await exec(
+      `(()=>{const c=[...document.querySelectorAll('[data-card-id]')].filter(x=>x.querySelector('.pcard-name')?.textContent.includes('uitest-dup'))[0]; return c?.querySelector('.pcard-group')?.textContent ?? ''})()`
+    )
+  )
+  r.grpDupGroupTag = dupExpGroup !== '' && dupTag === dupExpGroup ? 'ok' : `fail:标签=${dupTag} 期望=${dupExpGroup}`
 
   // 清理：测试实例必须删掉，否则反复跑会越堆越多（同名的还会干扰分组断言）
   await exec(footerClick('设置'))
   await sleep(700)
-  for (const id of dupIds) {
-    await exec(
-      `(()=>{const row=document.querySelector('[data-provider-id="${id}"]'); if(row) row.querySelector('.mini-btn.danger')?.click()})()`
-    )
-    await sleep(300)
-    await exec(
-      `(()=>{const row=document.querySelector('[data-provider-id="${id}"]'); if(row) row.querySelector('.mini-btn.danger')?.click()})()`
-    )
-    await sleep(800)
+  for (const id of [...dupIds, ...(visId ? [visId] : []), ...(dryId ? [dryId] : [])]) {
+    await removeProvider(id)
   }
   r.grpDupCleanup =
-    (await exec("window.api.listProviders().then(p=>!p.providers.some(x=>x.name==='uitest-dup'))")) === true
+    (await exec(
+      "window.api.listProviders().then(p=>!p.providers.some(x=>x.name==='uitest-dup'||x.name==='uitest-vis'||x.name==='uitest-dry'))"
+    )) === true
       ? 'ok'
       : 'fail:not-cleaned'
   await backToCards()

@@ -157,7 +157,8 @@ Full key inventory:
 | `ui:petState` | `encodePetState` (`shared/pet.ts`) | versioned, migrates legacy ids |
 | `ui:pet` / `ui:alwaysOnTop` | `'1'` / `'0'` | `ui:petRing` 已随用量环开关下线、`ui:voiceOn` 已随播报迁移下线（两者都**只读不写**） |
 | `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:423`) |
-| `ui:groupHidden` | `JSON.stringify(string[])` | **隐藏的组 id**（不是实例 id，2026-10-01 P1-4）。黑名单，缺省空 = 全部显示。语义照 `ui:voiceMuted`：**只不展示，采集照跑** —— 刻意不复用 `enabled: false`（那是停止采集：切回要等一轮，历史还会断档）。判定规则在 `renderer/src/read-model.ts`（`groupNames` / `visibleIds` / `orderForDisplay`，已被 `test-read-model.mjs` 覆盖） |
+| `ui:groupFilter` | 裸字符串（组 id，或 `''` = 全部） | **当前分组筛选值**（2026-10-01 P1-4）。**单选**语义：选中某组 = 只显示该组；空串 = 显示所有组。语义是「只不展示，采集照跑」—— 刻意不复用 `enabled: false`（那是停止采集：切回要等一轮，历史还会断档）。判定规则在 `renderer/src/read-model.ts`（`groupNames` / `visibleIds` / `orderForDisplay`，已被 `test-read-model.mjs` 覆盖）。⚠ 判「键缺失」用 `\|\| ALL_GROUPS` 而**不是** `== null`（`extras:get` 对未写过的键返回 `''`）。⚠ 筛选值指向**已不存在的组**时**读侧**回落「全部」且不回写（组会随最后一个成员被删而消失，`CardView` 的 `effFilter`） |
+| ~~`ui:groupHidden`~~ | — | **已退役**（2026-10-01，黑名单 → 单选筛选器）。**不再读也不再写**；已写入的残留值留在 extras 里不动（照 `ui:voiceGender` 的处置先例）。读侧完全忽略它 —— 它的 JSON 数组字符串不可能等于任何真实组名，若被当成筛选值会让列表变成空白 |
 | `ui:voiceGender` | — | **已下线**（2026-09-29，`09-29-voice-settings-refactor`）。系统语音性别改由 `petGender(pet.id)` 每轮现算，不再读也不再写；旧值留在 extras 里不动。它是「谁替我说话」的第二个开关，与选助理问的是同一件事 |
 | `ui:hideBalance` | **`'1'` / `''`** | differs from every other boolean — don't copy |
 | `ui:ttsOn` | `'1'` / `'0'` | replaces the retired `ui:voiceOn` (read on load for migration) |
@@ -206,10 +207,15 @@ re-validates the interval against a whitelist.
   were written in `App.tsx` and both silently never fired: the `ui:ttsPreset` default left
   every fresh install in the custom-service branch (no URL → no broadcasts at all), and the
   `ui:voiceOn` → `ui:ttsOn` migration was dead code, so users who had broadcasting enabled
-  lost it on upgrade.
+  lost it on upgrade. The `ui:groupFilter` read side hits the same trap (it is
+  `e['ui:groupFilter'] || ALL_GROUPS`, not `== null`).
 - Do not let a *stored* value double as the "unset" sentinel. The custom-service option uses
   `value="custom"`, not `value=""` — with `''` a user who picks a custom endpoint is
-  indistinguishable from one who never chose, and gets flipped back on restart.
+  indistinguishable from one who never chose, and gets flipped back on restart. **The group
+  filter is a deliberate exception**: its *only* meaning for `''` is "show all", so no second
+  user choice can collide with it — but the `<select>` still uses a control-character sentinel
+  (`ALL_GROUPS_VALUE`) because `<option value="">` reads back identically to "no option
+  matched", which would make every dropdown assertion vacuous.
 - A controlled `<select>` falls back to the **first option** when no option matches its value,
   so asserting `select.value` cannot detect this class of bug. Assert the branch that rendered.
 

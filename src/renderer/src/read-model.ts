@@ -132,16 +132,29 @@ export function displayName(name: string, suffix?: string): string {
 //
 // 为什么放在这里而不是 App.tsx：这个仓库没有 React 测试基础设施（quality-guidelines
 // 记着这条），组件里的任何东西都测不到。本文件已被 scripts/test-read-model.mjs 加载，
-// 所以分组的判定规则从今天起有契约 —— 而「隐藏的是组 id 还是实例 id」「组序从哪来」
+// 所以分组的判定规则从今天起有契约 —— 而「筛的是组 id 还是实例 id」「组序从哪来」
 // 这两件事正是最容易被后人手滑改错的。
 //
-// 语义边界（design.md D1）：隐藏**只是不展示**，采集照跑（照抄 ui:voiceMuted 的
-// 黑名单范式）。为什么不复用 `enabled: false` —— 那是停止采集，切回要等一轮，
-// 而且这段时间的历史会断掉，P1-1 的趋势图会出现空档。
+// 语义边界（design.md D1）：筛选**只是不展示**，采集照跑。为什么不复用
+// `enabled: false` —— 那是停止采集，切回要等一轮，而且这段时间的历史会断掉，
+// P1-1 的趋势图会出现空档。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** 未分组实例的显示名。渲染与存储都不能让用户看到空字符串当组名 */
 export const UNGROUPED = '未分组'
+
+/**
+ * 「全部」的哨兵值 —— **空串**，不是 `'ALL'`。
+ *
+ * 为什么不另造一个字面量：存储（`ui:groupFilter`）与这个值是同一个字符串，
+ * `extras:get` 对从未写过的键返回的也是空串，于是「没筛过」与「存的就是空串」
+ * 是同一件事，不需要第二个状态。`setExtra` 遇空串直接删键（store.ts），
+ * 读回来还是空串 —— 天然幂等。
+ *
+ * ⚠ 组名永远不可能等于空串（`sanitizeGroupId` 先 trim，空串 = 未分组），
+ *   所以这个哨兵**不会**与用户数据撞名。
+ */
+export const ALL_GROUPS = ''
 
 /**
  * 实例所属的分组 id —— 空串/缺省归一化成 `UNGROUPED`。
@@ -171,16 +184,20 @@ export function groupNames(info: ProviderInfo[]): string[] {
 }
 
 /**
- * 可见实例 id（黑名单：不在 hidden 列表里的）。
+ * 可见实例 id —— **单选筛选器**语义：选中某一组时**只显示该组**（2026-10-01 用户决策）。
  *
- * ⚠ `hidden` 存的是**组 id**，不是实例 id —— 隐藏整个组才是需求。
- * 隐藏列表里出现已不存在的组 id 是常态（组被删空了），读侧**忽略**它而不是清理：
- * 清理是写侧的事，在读侧改用户的存储是副作用。
+ * ⚠ `group` 传的是**组 id**，不是实例 id；`ALL_GROUPS`（空串）时返回全部。
+ *
+ * ⚠️ **单选筛选器无法表达「同时藏起 A 和 B、但要看 C」** —— 这是用户明确选择的
+ *   心智模型（产品原话：「点组 = 只看它」），不是实现偷懒。真要藏起多组得逐个切过去。
+ *
+ * 筛选值指向一个**已不存在的组**时返回空集（而不是全部）：组会随最后一个成员被删而
+ * 自然消失（design.md D2），此时「回落全部」是**渲染层**的判断 —— 它手里还有下拉的
+ * 选项列表能证明那个组确实没了，而纯函数只回答「这个组里有哪些成员」。
  */
-export function visibleIds(info: ProviderInfo[], hiddenGroupIds: readonly string[] = []): Set<string> {
-  const hidden = new Set(hiddenGroupIds)
+export function visibleIds(info: ProviderInfo[], group: string = ALL_GROUPS): Set<string> {
   const out = new Set<string>()
-  for (const p of info) if (!hidden.has(groupOf(p))) out.add(p.id)
+  for (const p of info) if (!group || groupOf(p) === group) out.add(p.id)
   return out
 }
 
@@ -194,10 +211,10 @@ export function visibleIds(info: ProviderInfo[], hiddenGroupIds: readonly string
  *
  * 代价（钉在测试第 5 条）：某组最后一个成员被移走后，组的位置按剩下的成员重算。
  *
- * 返回的是**实例 id 列表**，被隐藏的组不出现 —— 渲染层据此直接少渲染几张卡。
+ * 返回的是**实例 id 列表**，被筛掉的组不出现 —— 渲染层据此直接少渲染几张卡。
  */
-export function orderForDisplay(info: ProviderInfo[], hiddenGroupIds: readonly string[] = []): string[] {
-  const shown = visibleIds(info, hiddenGroupIds)
+export function orderForDisplay(info: ProviderInfo[], group: string = ALL_GROUPS): string[] {
+  const shown = visibleIds(info, group)
   // 每个可见组的「组首下标」= 该组第一个可见成员在数组里的位置（组序的唯一定义）
   const firstAt = new Map<string, number>()
   for (let i = 0; i < info.length; i++) {

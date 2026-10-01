@@ -499,6 +499,26 @@ textarea {
   text-overflow: ellipsis;
 }
 
+/* 所属组名（design.md D5b）：与名称**后缀**是两件不同的事 ——
+   后缀区分「同名供应商的不同实例」（`Claude 公司`），本标签表达「它属于哪一组」。
+   刻意做成比名称更弱的一层：不抢视觉层级，长组名截断而不是把名称挤没
+   （`.pcard-name` 有 flex: 1 1 auto，组名用 flex: 0 1 auto + max-width 让位给它）。 */
+.pcard-group {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 76px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--fg-faint);
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dot {
   width: 7px;
   height: 7px;

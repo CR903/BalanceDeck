@@ -18,7 +18,7 @@ import {
 } from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
-import { groupNames, speakableSnapshots } from './read-model'
+import { ALL_GROUPS, groupNames, speakableSnapshots } from './read-model'
 import {
   DEFAULT_TTS_CONFIG,
   PROBE_IDLE,
@@ -121,14 +121,16 @@ export default function App(): React.JSX.Element {
 
   // ─── 多账户分组（P1-4）────────────────────────────────────────────────────
   /**
-   * 已隐藏的**分组 id**（ui:groupHidden）—— 黑名单，缺省空 = 全部显示。
+   * 当前筛选的**分组 id**（ui:groupFilter）—— 单选筛选器，缺省 `ALL_GROUPS` = 全部。
    *
-   * 语义是「只不展示」，不是 `enabled: false` 的停止采集：切回零延迟，且隐藏期间
-   * 采集与历史采样照常（趋势图不会因此缺一段）。语义照抄 ui:voiceMuted。
+   * 语义是「只显示选中那一组」，不是 `enabled: false` 的停止采集：切回零延迟，且
+   * 筛选期间采集与历史采样照常（趋势图不会因此缺一段）。
    *
-   * ⚠ 存的是**组 id**（隐藏整个组才是需求），不是实例 id。
+   * ⚠ 存的是**组 id**（筛的是整个组），不是实例 id。
+   * ⚠ 旧的 `ui:groupHidden`（黑名单形态）**不再读也不再写**：残留值留在 extras 里
+   *   不动（照 `ui:voiceGender` 的处置先例 —— 它已下线，旧值留着无害）。
    */
-  const [hiddenGroups, setHiddenGroups] = useState<string[]>([])
+  const [groupFilter, setGroupFilter] = useState(ALL_GROUPS)
   /** 实例身份（providers:list）：分组归属与同名区分都只能从这里取 —— 见 design.md D5 */
   const [instanceInfo, setInstanceInfo] = useState<ProviderInfo[]>([])
 
@@ -530,7 +532,7 @@ export default function App(): React.JSX.Element {
   }
   useEffect(() => {
     void window.api.getExtras([
-      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:groupHidden'
+      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:groupFilter'
     ]).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
@@ -542,17 +544,12 @@ export default function App(): React.JSX.Element {
       } catch {
         setVoiceMuted([])
       }
-      // 分组黑名单：同一套「黑名单 id 列表」范式（读侧复验 + 损坏回落默认全开）。
-      // ⚠ 判「键缺失」用 `||` 而不是 `== null`：extras:get 对未写过的键返回 `''`
-      //   而不是 undefined，`== null` 永远为假（这坑本文件里已经踩过两次）。
-      try {
-        const hidden = JSON.parse(e['ui:groupHidden'] || '[]') as unknown
-        setHiddenGroups(
-          Array.isArray(hidden) ? hidden.filter((x): x is string => typeof x === 'string') : []
-        )
-      } catch {
-        setHiddenGroups([])
-      }
+      // 分组筛选值：裸字符串（组 id 或空串 = 全部）。
+      // ⚠ 判「键缺失」用 `|| ALL_GROUPS` 而不是 `== null`：extras:get 对未写过的键返回
+      //   `''` 而不是 undefined，`== null` 永远为假（这坑本文件里已经踩过两次）。
+      //   这里空串**就是**「全部」，所以不需要 JSON.parse 与类型守卫 ——
+      //   单选筛选器存的是个组名，不是 id 列表。
+      setGroupFilter(e['ui:groupFilter'] || ALL_GROUPS)
       // ⚠ 这里**不再读** ui:voiceGender：性别改由 petGender(pet.id) 现算（FR3）。
       //   旧键留在 extras 里不动 —— 读过再用它改写用户选的助理，就是「覆盖用户显式偏好」
       //   （上一轮集成复核因此还原过一次），而它本来也只是「谁播报」的另一种问法。
@@ -574,7 +571,7 @@ export default function App(): React.JSX.Element {
     void window.api.setExtras({ 'ui:hideBalance': next ? '1' : '' })
   }
 
-  // ─── 多账户分组：实例列表 + 切换可见分组 ───────────────────────────────────
+  // ─── 多账户分组：实例列表 + 切换筛选 ───────────────────────────────────────
   //
   // 分组归属的唯一真相源是注册表里的 groupId，而**归组动作发生在设置页**（那才是列实例的
   // 地方）。所以刷新时机绑定在「回到卡片页」上 —— 只在挂载时读一次的话，用户在设置页改了
@@ -589,28 +586,17 @@ export default function App(): React.JSX.Element {
       .catch(() => setInstanceInfo([]))
   }, [view])
 
-  /** 切换分组的可见性：黑名单语义（空 = 全部显示） */
-  const toggleGroup = (group: string): void => {
-    const next = hiddenGroups.includes(group)
-      ? hiddenGroups.filter((g) => g !== group)
-      : [...hiddenGroups, group]
-    setHiddenGroups(next)
-    // ui: 前缀 → 不触发 refreshNow()（隐藏只是显示层的事，出网一次都没必要）
-    void window.api.setExtras({ 'ui:groupHidden': JSON.stringify(next) })
-  }
-
   /**
-   * 「显示全部分组」：**清空**黑名单，而不是 toggle 一个哨兵组。
+   * 切到某一组（`ALL_GROUPS` = 看全部）。
    *
-   * ⚠ 哨兵不能进存储：`ui:groupHidden` 里只该有真实组 id（`visibleIds` 拿它去查分组，
-   *   查不到就是噪声，而噪声会在「隐藏了组之后又删掉所有成员」这类编辑后越积越多）。
-   *   更实际的原因是可用性：toggle 哨兵的话，点「全部」是**空操作** ——
-   *   用户点了列表纹丝不动，而唯一能回来的路是把每一组挨个点回去。
+   * ⚠ 「无变化不写」：`setExtra` 是**无条件整文件重写**（store.ts），而受控 `<select>`
+   *   触发 change 未必意味着值真的变了。
+   * ⚠ ui: 前缀 → 不触发 `refreshNow()`：筛选只是显示层的事，出网一次都没必要。
    */
-  const showAllGroups = (): void => {
-    if (!hiddenGroups.length) return
-    setHiddenGroups([])
-    void window.api.setExtras({ 'ui:groupHidden': '[]' })
+  const applyGroupFilter = (group: string): void => {
+    if (group === groupFilter) return
+    setGroupFilter(group)
+    void window.api.setExtras({ 'ui:groupFilter': group })
   }
 
   // ⚠ 必须 memo：不 memo 的话每次渲染都是新数组引用，CardView 里依赖它的 useMemo
@@ -1245,10 +1231,9 @@ export default function App(): React.JSX.Element {
             onSettings={() => setView('settings')}
             onCollapse={doCollapse}
             instanceInfo={instanceInfo}
-            hiddenGroups={hiddenGroups}
+            groupFilter={groupFilter}
             groups={groups}
-            onToggleGroup={toggleGroup}
-            onShowAllGroups={showAllGroups}
+            onSetGroupFilter={applyGroupFilter}
           />
         )}
       </div>
