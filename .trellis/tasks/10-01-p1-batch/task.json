@@ -1,0 +1,31 @@
+{
+  "id": "p1-batch",
+  "name": "p1-batch",
+  "title": "P1 批次：趋势图 / 托盘配色 / 账户分组 / JSON 导出",
+  "description": "竞品报告 P1 档的四项优化：历史趋势图、托盘颜色阈值、多账户分组管理、CLI/JSON 快照导出。四项并行开发，各自独立可验收。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "zhou",
+  "assignee": "zhou",
+  "createdAt": "2026-10-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-01-p1-trend-chart",
+    "10-01-p1-tray-color",
+    "10-01-p1-account-groups",
+    "10-01-p1-cli-export"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,0 +1,6 @@
+{"file": "./prd.md", "reason": "需求与验收标准"}
+{"file": "../../spec/frontend/index.md", "reason": "前端规范入口"}
+{"file": "../../spec/frontend/directory-structure.md", "reason": "分层约定（解释为何 CLI 契约放 main/cli 而非 shared）"}
+{"file": "../../spec/frontend/state-management.md", "reason": "extras store（为何导出必须走独立文件）"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定 + QA 运行模式（argv 分流的既有先例）"}
+{"file": "./research/p1-6-cli-export-research.md", "reason": "CLI 导出调研：三条数据来源取舍、隐私泄漏点、argv 实测"}
