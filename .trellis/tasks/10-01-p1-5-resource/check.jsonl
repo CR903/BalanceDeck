@@ -1,0 +1,10 @@
+{"file": "./prd.md", "reason": "需求与 14 条验收标准"}
+{"file": "./research/00-summary.md", "reason": "主报告：四个卖点的真伪判定 + 实测基线表"}
+{"file": "./research/02-optimization-candidates.md", "reason": "候选 #1（159MB 死重）与 #2（three 动态 import）的细节与注意事项"}
+{"file": "./research/01-baseline-measurements.md", "reason": "基线复现步骤与原始输出索引"}
+{"file": "../../spec/frontend/hook-guidelines.md", "reason": "effect 清理与 dynamic import 纪律（PetBall 改动态 import 的依据）"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（loadTs + 静态守卫需前置断言的纪律）"}
+{"file": "../../spec/frontend/directory-structure.md", "reason": "资源目录与配置归属（resources/ 是否 gitignored、配置该改哪）"}
+{"file": "./design.md", "reason": "技术设计与决策依据（D1-D7）"}
+{"file": "./implement.md", "reason": "分阶段清单与 Review Gates"}
+{"file": "./research/04-open-questions.md", "reason": "8 个待用户拍板问题（已由用户决策）"}
