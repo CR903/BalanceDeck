@@ -1,0 +1,133 @@
+vite v7.3.6 building ssr environment for production...
+transforming...
+✓ 50 modules transformed.
+
+(!) outDir /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/main is not inside project root and will not be emptied.
+Use --emptyOutDir to override.
+
+rendering chunks...
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/overlay.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/qa/ballshot.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/index.ts, /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/ballshot.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/modes.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/uitest.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode-console-api.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode-cookie.ts, /Users/zhouri/project/BalanceDeck/src/main/opencode-auth.ts, /Users/zhouri/project/BalanceDeck/src/main/opencode-details.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode-cookie.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, /Users/zhouri/project/BalanceDeck/src/main/ipc.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/providers.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/index.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/keystore.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/overlay.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/modes.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/index.ts, /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, /Users/zhouri/project/BalanceDeck/src/main/scheduler.ts, /Users/zhouri/project/BalanceDeck/src/main/skins.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/skins.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/qa/ballshot.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/shots.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/zhouri/project/BalanceDeck/src/main/opencode-auth.ts is dynamically imported by /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts, /Users/zhouri/project/BalanceDeck/src/main/adapters/opencode.ts, /Users/zhouri/project/BalanceDeck/src/main/qa/modes.ts but also statically imported by /Users/zhouri/project/BalanceDeck/src/main/ipc.ts, dynamic import will not move module into another chunk.
+
+../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/main/opencode-details-sypSrjVB.js    6.02 kB │ map:  15.80 kB
+../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/main/index.js                       12.93 kB │ map:  42.24 kB
+../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/main/qa-BBWtI_ne.js                251.94 kB │ map: 638.23 kB
+✓ built in 1.04s
+vite v7.3.6 building ssr environment for production...
+transforming...
+✓ 1 modules transformed.
+
+(!) outDir /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/preload is not inside project root and will not be emptied.
+Use --emptyOutDir to override.
+
+rendering chunks...
+../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/preload/index.js  8.93 kB
+✓ built in 28ms
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 70 modules transformed.
+rendering chunks...
+../../../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/index.html                     1.39 kB
+../../../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets/index-gJteAiOs.css     83.21 kB
+../../../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets/voice-CCQ2qdzT.js       2.79 kB │ map:     8.33 kB
+../../../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets/pet3d-CZ0RtmYH.js      36.98 kB │ map:   105.77 kB
+../../../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets/index-Dq0ygv6D.js     486.02 kB │ map:   936.41 kB
+../../../../../../private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets/three-DGAWYAdk.js   1,298.57 kB │ map: 3,064.35 kB
+✓ built in 3.70s
+/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/main:
+total 1912
+drwxr-xr-x  8 zhouri  staff     256 10  1 17:20 .
+drwxr-xr-x  5 zhouri  staff     160 10  1 17:20 ..
+-rw-r--r--  1 zhouri  staff   12925 10  1 17:25 index.js
+-rw-r--r--  1 zhouri  staff   42238 10  1 17:25 index.js.map
+-rw-r--r--  1 zhouri  staff    6021 10  1 17:25 opencode-details-sypSrjVB.js
+-rw-r--r--  1 zhouri  staff   15796 10  1 17:25 opencode-details-sypSrjVB.js.map
+-rw-r--r--  1 zhouri  staff  251940 10  1 17:25 qa-BBWtI_ne.js
+-rw-r--r--  1 zhouri  staff  638232 10  1 17:25 qa-BBWtI_ne.js.map
+
+/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets:
+total 12984
+drwxr-xr-x  11 zhouri  staff      352 10  1 17:20 .
+drwxr-xr-x   4 zhouri  staff      128 10  1 17:20 ..
+-rw-r--r--   1 zhouri  staff   486015 10  1 17:25 index-Dq0ygv6D.js
+-rw-r--r--   1 zhouri  staff   936407 10  1 17:25 index-Dq0ygv6D.js.map
+-rw-r--r--   1 zhouri  staff    83209 10  1 17:25 index-gJteAiOs.css
+-rw-r--r--   1 zhouri  staff    36981 10  1 17:25 pet3d-CZ0RtmYH.js
+-rw-r--r--   1 zhouri  staff   105766 10  1 17:25 pet3d-CZ0RtmYH.js.map
+-rw-r--r--   1 zhouri  staff  1298574 10  1 17:25 three-DGAWYAdk.js
+-rw-r--r--   1 zhouri  staff  3064345 10  1 17:25 three-DGAWYAdk.js.map
+-rw-r--r--   1 zhouri  staff     2790 10  1 17:25 voice-CCQ2qdzT.js
+-rw-r--r--   1 zhouri  staff     8326 10  1 17:25 voice-CCQ2qdzT.js.map
+/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/split-out/renderer/assets/index-Dq0ygv6D.js.map
+  decoded bytes ≈ 257939
+
+    137463   53.3%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react-dom/cjs/react-dom.production.min.js
+     15819    6.1%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/App.tsx
+     13541    5.2%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/SettingsView.tsx
+     13025    5.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/PetBall.tsx
+     12349    4.8%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/CardView.tsx
+     11657    4.5%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/VoiceReminderSection.tsx
+      6883    2.7%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/DetailView.tsx
+      5983    2.3%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react/cjs/react.production.min.js
+      5066    2.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/speechOut.ts
+      4085    1.6%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/scheduler/cjs/scheduler.production.min.js
+      3656    1.4%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/components.tsx
+      3004    1.2%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/smartBroadcast.ts
+      2409    0.9%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/systemNotify.ts
+      2326    0.9%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/alertOrchestrate.ts
+      2208    0.9%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/TrendChart.tsx
+      2161    0.8%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/usagePredict.ts
+      2157    0.8%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/read-model.ts
+      2085    0.8%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/PetSection.tsx
+      1569    0.6%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/usageHistory.ts
+      1400    0.5%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/format.ts
+      1397    0.5%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/tray-text.ts
+      1248    0.5%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/tts-preset.ts
+      1233    0.5%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/ProviderMark.tsx
+      1084    0.4%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/pet.ts
+      1037    0.4%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/provider-icons.ts
+       979    0.4%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/history.ts
+       528    0.2%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react/cjs/react-jsx-runtime.production.min.js
+       445    0.2%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/usage-predict.ts
+       400    0.2%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/percent.ts
+       213    0.1%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/quality.ts
+       172    0.1%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react-dom/index.js
+        99    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared/levels.ts
+        78    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/main.tsx
+        63    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react-dom/client.js
+        36    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react/index.js
+        36    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/scheduler/index.js
+        35    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/node_modules/react/jsx-runtime.js
+        10    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/assets/icon.png?inline
+
+  --- 按目录聚合 ---
+    137463   53.3%  cjs/react-dom.production.min.js
+    104642   40.6%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src
+      5983    2.3%  cjs/react.production.min.js
+      4886    1.9%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/shared
+      4085    1.6%  cjs/scheduler.production.min.js
+       528    0.2%  cjs/react-jsx-runtime.production.min.js
+       172    0.1%  react-dom/index.js
+        63    0.0%  react-dom/client.js
+        36    0.0%  react/index.js
+        36    0.0%  scheduler/index.js
+        35    0.0%  react/jsx-runtime.js
+        10    0.0%  ../../../../../../../../../../Users/zhouri/project/BalanceDeck/src/renderer/src/assets

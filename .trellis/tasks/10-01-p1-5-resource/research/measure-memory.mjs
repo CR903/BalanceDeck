@@ -32,6 +32,9 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '../../../..')
 const MODE = process.argv[2] ?? 'ball'
 const WAIT_SEC = Number(process.argv[3] ?? 30)
+// 第 4 个参数：collapsed（默认 1）。收起态才会起两条 90ms 轮询（主进程光标轮询
+// overlay.ts:433 + 渲染层命中区上报 PetBall.tsx:332），展开态不起 —— 量 CPU 时要分开。
+const COLLAPSED = (process.argv[4] ?? '1') !== '0'
 const PET = MODE === 'figure' ? '1' : '0'
 const TMP = '/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode'
 const UD = join(TMP, `bd-mem-${MODE}`)
@@ -47,7 +50,16 @@ rmSync(UD, { recursive: true, force: true })
 rmSync(NETLOG, { force: true })
 mkdirSync(UD, { recursive: true })
 writeFileSync(join(UD, 'secrets.bin'), `{"version":1,"items":{},"extras":{"ui:pet":"${PET}"}}`)
-writeFileSync(join(UD, 'state.json'), '{"collapsed":true}')
+writeFileSync(join(UD, 'state.json'), JSON.stringify(COLLAPSED ? { collapsed: true } : {}))
+
+/** ps 的 time 字段（macOS 上形如 `MM:SS.ss`，累计 CPU 时间）→ 秒 */
+function cpuSec(s) {
+  s = s.trim()
+  let days = 0
+  if (s.includes('-')) { const p = s.split('-'); days = Number(p[0]); s = p[1] }
+  const t = s.split(':').map(Number)
+  return days * 86400 + (t.length === 3 ? t[0] * 3600 + t[1] * 60 + t[2] : t[0] * 60 + t[1])
+}
 
 console.log('═══════════════════════════════════════════════════════════════════')
 console.log(`  mode = ${MODE}   (secrets.bin extras: 'ui:pet' = '${PET}')`)
@@ -117,8 +129,31 @@ function physFP(pids) {
   return { sum, per }
 }
 
+/** 各进程累计 CPU 时间（秒） */
+function cpuTable(rootPid) {
+  let out = ''
+  try { out = execFileSync('ps', ['-Ao', 'pid,ppid,time,args'], { encoding: 'utf8', maxBuffer: 1 << 26 }) } catch { return [] }
+  const rows = []
+  for (const line of out.split('\n').slice(1)) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+([\d:\-.]+)\s+(.*)$/)
+    if (!m || !/Electron/.test(m[4])) continue
+    rows.push({ pid: +m[1], ppid: +m[2], cpu: cpuSec(m[3]), args: m[4] })
+  }
+  const byPpid = new Map()
+  for (const r of rows) { if (!byPpid.has(r.ppid)) byPpid.set(r.ppid, []); byPpid.get(r.ppid).push(r) }
+  const self = rows.find((r) => r.pid === rootPid)
+  const out2 = self ? [self] : []
+  const seen = new Set()
+  const walk = (pid) => { if (seen.has(pid)) return; seen.add(pid); for (const c of byPpid.get(pid) ?? []) { out2.push(c); walk(c.pid) } }
+  walk(rootPid)
+  const label = (a) => a.includes('--type=renderer') ? 'renderer' : a.includes('--type=gpu-process') ? 'gpu'
+    : a.includes('--type=utility') ? 'utility' : a.includes('crashpad') ? 'crashpad' : 'main'
+  return out2.map((r) => ({ type: label(r.args), cpu: r.cpu }))
+}
+
 const raw = []
 const fpPoints = []
+const cpuPoints = []
 let running = true
 const t0 = Date.now()
 const child = spawn(ELECTRON, ['.', '--smoke'], {
@@ -128,7 +163,9 @@ const child = spawn(ELECTRON, ['.', '--smoke'], {
 })
 const ROOT_PID = child.pid
 
-const FP_AT = [8, Math.round(WAIT_SEC * 0.55), WAIT_SEC - 4].filter((v) => v > 1)
+// 5 个点采 phys_footprint，最后 3 个的中位数作为「常驻口径」（footprint 会短暂挂起进程，
+// 单点读数有抖动，取中位数更稳）
+const FP_AT = [10, 20, Math.round(WAIT_SEC * 0.6), WAIT_SEC - 12, WAIT_SEC - 4].filter((v) => v > 1)
 let fpIdx = 0
 
 const ticker = setInterval(() => {
@@ -138,6 +175,7 @@ const ticker = setInterval(() => {
   for (const p of subtree(ROOT_PID)) raw.push({ t, ...p })
   if (fpIdx < FP_AT.length && sec >= FP_AT[fpIdx]) {
     fpPoints.push({ t: sec, ...physFP(subtree(ROOT_PID).map((p) => p.pid)) })
+    cpuPoints.push({ t: sec, table: cpuTable(ROOT_PID) })
     fpIdx++
   }
 }, 250)
@@ -151,6 +189,32 @@ clearInterval(ticker)
 const wall = (Date.now() - t0) / 1000
 
 console.log(`electron exit=${rc}  wall=${wall.toFixed(1)}s  采样条数=${raw.length}`)
+console.log(`collapsed=${COLLAPSED}（收起态才起两条 90ms 轮询：overlay.ts:433 + PetBall.tsx:332）`)
+console.log('')
+
+// ── CPU 累计时间 ────────────────────────────────────────────────────────────
+console.log('─── A0. 累计 CPU 时间（ps time；等于「定时器唤醒」的总账）──────────────')
+for (const p of cpuPoints) {
+  const tot = p.table.reduce((a, b) => a + b.cpu, 0)
+  console.log(`   t=+${String(p.t).padStart(3)}s  合计 ${tot.toFixed(1).padStart(6)}s CPU  (${p.table.map((x) => `${x.type} ${x.cpu.toFixed(1)}`).join('  ')})`)
+}
+if (cpuPoints.length >= 2) {
+  const a = cpuPoints[0]
+  const b = cpuPoints[cpuPoints.length - 1]
+  const dt = b.t - a.t
+  const sum = (t) => t.reduce((m, x) => { m[x.type] = (m[x.type] ?? 0) + x.cpu; return m }, {})
+  const ca = sum(a.table)
+  const cb2 = sum(b.table)
+  const types = [...new Set([...Object.keys(ca), ...Object.keys(cb2)])]
+  console.log(`   ── 稳定段 t=+${a.t}s → +${b.t}s（${dt}s）内的 CPU 增量 ──`)
+  let grand = 0
+  for (const ty of types) {
+    const d = (cb2[ty] ?? 0) - (ca[ty] ?? 0)
+    grand += d
+    console.log(`      ${ty.padEnd(9)} +${d.toFixed(1).padStart(6)}s   = ${(100 * d / dt).toFixed(1)}% of one core`)
+  }
+  console.log(`      ${'合计'.padEnd(9)} +${grand.toFixed(1).padStart(6)}s   = ${(100 * grand / dt).toFixed(1)}% of one core`)
+}
 console.log('')
 
 // ── 分桶（250ms）────────────────────────────────────────────────────────────
@@ -181,8 +245,10 @@ for (const p of fpPoints) {
   console.log(`t=+${String(p.t).padStart(3)}s  合计 ${p.sum.toFixed(1).padStart(7)} MB   [${p.per.map(([pid, v]) => `${pid}:${v}`).join('  ')}]`)
 }
 if (fpPoints.length) {
-  const lastFp = fpPoints[fpPoints.length - 1].sum
-  console.log(`→ 常驻口径取最后一次采样：${lastFp.toFixed(1)} MB`)
+  const last3 = fpPoints.slice(-3).map((p) => p.sum)
+  const last2 = fpPoints.slice(-2).map((p) => p.sum)
+  console.log(`→ 全程峰值 footprint: ${Math.max(...fpPoints.map((p) => p.sum)).toFixed(1)} MB`)
+  console.log(`→ 常驻口径（末 3 点中位）: ${med(last3).toFixed(1)} MB    末 2 点: ${last2.map((v) => v.toFixed(1)).join(' / ')} MB`)
 }
 console.log('')
 

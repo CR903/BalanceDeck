@@ -1,0 +1,228 @@
+═══════════════════════════════════════════════════════════════════
+  mode = ball   (secrets.bin extras: 'ui:pet' = '0')
+  SMOKE_WAIT_MS = 160000
+  BD_USER_DATA = /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-mem-ball
+  date = 2026-10-01T09:21:48.546Z
+  host = macOS 12.7.6 x86_64
+  electron = 37.10.3   node = v22.23.2
+═══════════════════════════════════════════════════════════════════
+electron exit=0  wall=161.9s  采样条数=2506
+collapsed=true（收起态才起两条 90ms 轮询：overlay.ts:433 + PetBall.tsx:332）
+
+─── A0. 累计 CPU 时间（ps time；等于「定时器唤醒」的总账）──────────────
+   t=+ 10s  合计    3.8s CPU  (main 2.4  gpu 0.6  utility 0.2  renderer 0.6)
+   t=+ 20s  合计    4.3s CPU  (main 2.5  gpu 0.8  utility 0.2  renderer 0.8)
+   t=+ 96s  合计    6.6s CPU  (main 3.9  gpu 1.1  utility 0.2  renderer 1.3)
+   t=+148s  合计    8.2s CPU  (main 5.0  gpu 1.4  utility 0.2  renderer 1.6)
+   t=+156s  合计    8.3s CPU  (main 5.0  gpu 1.4  utility 0.2  renderer 1.6)
+   ── 稳定段 t=+10s → +156s（146s）内的 CPU 增量 ──
+      main      +   2.6s   = 1.8% of one core
+      gpu       +   0.8s   = 0.6% of one core
+      utility   +   0.0s   = 0.0% of one core
+      renderer  +   1.0s   = 0.7% of one core
+      合计        +   4.5s   = 3.1% of one core
+
+─── A. sum-of-RSS（ps 口径；会重复计入各进程共享的 Electron Framework）──────────
+进程数  峰值 4 · 稳态中位 4 · 收尾 1
+全树 RSS  稳态中位 566.9 MB   p90 613.8 MB   全程峰值 640.6 MB
+末桶分进程:
+   main        426.4 MB
+
+─── B. phys_footprint（footprint -p；共享页按比例摊开，诚实口径）────────────
+t=+ 10s  合计   371.0 MB   [9902:282  9963:36  9964:10  10005:43]
+t=+ 20s  合计   378.0 MB   [9902:282  9963:40  9964:10  10005:46]
+t=+ 96s  合计   444.0 MB   [9902:353  9963:40  9964:10  10005:41]
+t=+148s  合计   447.0 MB   [9902:354  9963:40  9964:10  10005:43]
+t=+156s  合计   447.0 MB   [9902:354  9963:40  9964:10  10005:43]
+→ 全程峰值 footprint: 447.0 MB
+→ 常驻口径（末 3 点中位）: 447.0 MB    末 2 点: 447.0 / 447.0 MB
+
+─── C. 时间线（每 ~1s 一行）─────────────────────────────────────────────
+  t=+  0.3s  main=  18.8  rend=   0.0  gpu=   0.0  util=   0.0  ΣRSS=  18.8  n=1
+  t=+  1.3s  main=  89.4  rend=   0.0  gpu=  25.1  util=  26.9  ΣRSS= 141.4  n=3
+  t=+  2.3s  main= 302.5  rend=  32.1  gpu=  33.3  util=  27.0  ΣRSS= 394.9  n=4
+  t=+  3.3s  main= 357.8  rend=  87.2  gpu=  37.7  util=  30.1  ΣRSS= 512.8  n=4
+  t=+  4.3s  main= 357.1  rend=  96.1  gpu=  48.0  util=  30.1  ΣRSS= 531.2  n=4
+  t=+  5.3s  main= 358.0  rend=  98.3  gpu=  50.3  util=  30.1  ΣRSS= 536.6  n=4
+  t=+  6.3s  main= 358.0  rend=  98.3  gpu=  50.3  util=  30.1  ΣRSS= 536.7  n=4
+  t=+  7.3s  main= 358.0  rend=  98.3  gpu=  50.3  util=  30.1  ΣRSS= 536.7  n=4
+  t=+  8.3s  main= 358.0  rend=  98.3  gpu=  50.3  util=  30.0  ΣRSS= 536.7  n=4
+  t=+  9.3s  main= 358.0  rend=  98.4  gpu=  50.3  util=  30.0  ΣRSS= 536.7  n=4
+  t=+ 11.0s  main= 358.1  rend= 100.2  gpu=  50.9  util=  30.0  ΣRSS= 539.2  n=4
+  t=+ 12.0s  main= 358.1  rend= 100.6  gpu=  51.0  util=  30.0  ΣRSS= 539.8  n=4
+  t=+ 13.0s  main= 358.1  rend= 100.6  gpu=  51.0  util=  30.0  ΣRSS= 539.8  n=4
+  t=+ 14.0s  main= 358.1  rend= 100.6  gpu=  51.0  util=  30.1  ΣRSS= 539.9  n=4
+  t=+ 15.0s  main= 358.1  rend= 100.7  gpu=  51.0  util=  30.1  ΣRSS= 539.9  n=4
+  t=+ 16.0s  main= 358.1  rend= 100.7  gpu=  51.0  util=  30.1  ΣRSS= 539.9  n=4
+  t=+ 17.0s  main= 358.1  rend= 100.7  gpu=  51.0  util=  30.1  ΣRSS= 539.9  n=4
+  t=+ 18.0s  main= 358.2  rend= 101.5  gpu=  51.2  util=  30.1  ΣRSS= 540.9  n=4
+  t=+ 19.0s  main= 358.2  rend= 101.8  gpu=  51.4  util=  30.1  ΣRSS= 541.5  n=4
+  t=+ 20.0s  main= 358.2  rend= 101.8  gpu=  51.4  util=  30.1  ΣRSS= 541.5  n=4
+  t=+ 21.5s  main= 358.2  rend= 101.8  gpu=  51.4  util=  30.1  ΣRSS= 541.5  n=4
+  t=+ 22.5s  main= 358.2  rend= 101.8  gpu=  51.4  util=  30.1  ΣRSS= 541.5  n=4
+  t=+ 23.5s  main= 358.2  rend= 101.8  gpu=  51.4  util=  30.1  ΣRSS= 541.5  n=4
+  t=+ 24.5s  main= 358.1  rend= 101.8  gpu=  51.4  util=  30.1  ΣRSS= 541.4  n=4
+  t=+ 25.5s  main= 358.1  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 26.5s  main= 358.1  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 27.5s  main= 358.1  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 28.5s  main= 358.2  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 29.5s  main= 358.2  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 30.5s  main= 358.2  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 31.5s  main= 358.2  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.3  n=4
+  t=+ 32.5s  main= 358.2  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.3  n=4
+  t=+ 33.5s  main= 358.2  rend= 102.7  gpu=  51.8  util=  30.1  ΣRSS= 542.8  n=4
+  t=+ 34.5s  main= 358.3  rend= 101.8  gpu=  51.8  util=  30.1  ΣRSS= 542.0  n=4
+  t=+ 35.5s  main= 358.3  rend= 101.8  gpu=  51.8  util=  30.1  ΣRSS= 542.0  n=4
+  t=+ 36.5s  main= 358.3  rend= 101.8  gpu=  51.8  util=  30.1  ΣRSS= 542.0  n=4
+  t=+ 37.5s  main= 358.3  rend= 101.8  gpu=  51.8  util=  30.1  ΣRSS= 542.0  n=4
+  t=+ 38.5s  main= 358.3  rend= 101.9  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 39.5s  main= 358.3  rend= 101.9  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 40.5s  main= 358.3  rend= 101.9  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 41.5s  main= 358.3  rend= 102.0  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 42.5s  main= 358.3  rend= 102.0  gpu=  51.8  util=  30.1  ΣRSS= 542.2  n=4
+  t=+ 43.5s  main= 358.4  rend= 102.0  gpu=  51.8  util=  30.1  ΣRSS= 542.3  n=4
+  t=+ 44.5s  main= 358.4  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.5  n=4
+  t=+ 45.5s  main= 358.4  rend= 102.1  gpu=  51.8  util=  30.1  ΣRSS= 542.5  n=4
+  t=+ 46.5s  main= 358.4  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.5  n=4
+  t=+ 47.5s  main= 358.4  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.5  n=4
+  t=+ 48.5s  main= 358.4  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.5  n=4
+  t=+ 49.5s  main= 358.4  rend= 102.2  gpu=  51.8  util=  30.1  ΣRSS= 542.6  n=4
+  t=+ 50.5s  main= 358.4  rend= 102.4  gpu=  51.9  util=  30.1  ΣRSS= 542.8  n=4
+  t=+ 51.5s  main= 358.5  rend= 102.4  gpu=  51.8  util=  30.1  ΣRSS= 542.8  n=4
+  t=+ 52.5s  main= 358.5  rend= 102.4  gpu=  51.8  util=  30.1  ΣRSS= 542.8  n=4
+  t=+ 53.5s  main= 358.5  rend= 102.4  gpu=  51.8  util=  30.1  ΣRSS= 542.8  n=4
+  t=+ 54.5s  main= 358.5  rend= 102.4  gpu=  51.8  util=  30.1  ΣRSS= 542.9  n=4
+  t=+ 55.5s  main= 358.5  rend= 102.4  gpu=  51.8  util=  30.1  ΣRSS= 542.9  n=4
+  t=+ 56.5s  main= 358.5  rend= 102.6  gpu=  51.9  util=  30.1  ΣRSS= 543.1  n=4
+  t=+ 57.5s  main= 358.5  rend= 102.6  gpu=  51.8  util=  30.1  ΣRSS= 543.1  n=4
+  t=+ 58.5s  main= 358.5  rend= 102.6  gpu=  51.8  util=  30.1  ΣRSS= 543.1  n=4
+  t=+ 59.5s  main= 358.5  rend= 102.7  gpu=  51.8  util=  30.1  ΣRSS= 543.1  n=4
+  t=+ 60.5s  main= 358.5  rend= 102.7  gpu=  51.8  util=  30.1  ΣRSS= 543.2  n=4
+  t=+ 61.5s  main= 358.6  rend= 102.7  gpu=  51.9  util=  30.1  ΣRSS= 543.2  n=4
+  t=+ 62.5s  main= 358.6  rend= 103.3  gpu=  52.2  util=  30.1  ΣRSS= 544.2  n=4
+  t=+ 63.5s  main= 358.6  rend= 103.3  gpu=  52.2  util=  30.1  ΣRSS= 544.2  n=4
+  t=+ 64.5s  main= 358.6  rend= 103.3  gpu=  52.2  util=  30.1  ΣRSS= 544.1  n=4
+  t=+ 65.5s  main= 434.9  rend= 103.3  gpu=  52.2  util=  30.1  ΣRSS= 620.5  n=4
+  t=+ 66.5s  main= 435.0  rend= 103.3  gpu=  52.2  util=  30.1  ΣRSS= 620.6  n=4
+  t=+ 67.5s  main= 428.6  rend= 103.4  gpu=  49.7  util=  30.1  ΣRSS= 611.9  n=4
+  t=+ 68.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 69.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 70.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 71.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 72.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 73.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 74.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 75.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 76.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 77.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 78.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 79.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 80.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 81.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 82.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 83.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 84.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 85.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 86.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 87.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 88.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 89.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.8  n=4
+  t=+ 90.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 91.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 92.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 93.5s  main= 428.6  rend= 105.1  gpu=  50.1  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 94.5s  main= 428.6  rend= 105.1  gpu=  50.0  util=  30.1  ΣRSS= 613.9  n=4
+  t=+ 95.5s  main= 425.9  rend= 100.8  gpu=  41.5  util=  19.8  ΣRSS= 588.1  n=4
+  t=+ 97.0s  main= 420.9  rend=  99.2  gpu=  41.4  util=  19.8  ΣRSS= 581.5  n=4
+  t=+ 98.0s  main= 420.9  rend=  99.2  gpu=  41.5  util=  19.8  ΣRSS= 581.5  n=4
+  t=+ 99.0s  main= 420.9  rend=  99.3  gpu=  41.5  util=  19.8  ΣRSS= 581.5  n=4
+  t=+100.0s  main= 420.9  rend=  99.3  gpu=  41.5  util=  19.8  ΣRSS= 581.6  n=4
+  t=+101.0s  main= 421.0  rend=  99.3  gpu=  41.5  util=  19.8  ΣRSS= 581.6  n=4
+  t=+102.0s  main= 421.0  rend=  99.3  gpu=  41.5  util=  19.8  ΣRSS= 581.6  n=4
+  t=+103.0s  main= 421.0  rend=  99.3  gpu=  41.5  util=  19.8  ΣRSS= 581.6  n=4
+  t=+104.0s  main= 417.4  rend=  99.3  gpu=  41.5  util=  19.8  ΣRSS= 578.0  n=4
+  t=+105.0s  main= 414.4  rend=  79.9  gpu=  39.3  util=  19.5  ΣRSS= 553.2  n=4
+  t=+106.0s  main= 414.4  rend=  80.0  gpu=  39.3  util=  19.5  ΣRSS= 553.3  n=4
+  t=+107.0s  main= 414.4  rend=  80.0  gpu=  39.3  util=  19.5  ΣRSS= 553.3  n=4
+  t=+108.0s  main= 414.4  rend=  80.0  gpu=  39.3  util=  19.5  ΣRSS= 553.3  n=4
+  t=+109.0s  main= 414.4  rend=  80.1  gpu=  39.3  util=  19.5  ΣRSS= 553.3  n=4
+  t=+110.0s  main= 414.4  rend=  80.1  gpu=  39.3  util=  19.5  ΣRSS= 553.3  n=4
+  t=+111.0s  main= 414.4  rend=  80.1  gpu=  39.3  util=  19.5  ΣRSS= 553.4  n=4
+  t=+112.0s  main= 414.4  rend=  80.1  gpu=  39.3  util=  19.5  ΣRSS= 553.3  n=4
+  t=+113.0s  main= 414.4  rend=  80.5  gpu=  39.5  util=  19.5  ΣRSS= 554.0  n=4
+  t=+114.0s  main= 414.4  rend=  80.6  gpu=  39.6  util=  19.5  ΣRSS= 554.2  n=4
+  t=+115.0s  main= 414.4  rend=  80.6  gpu=  39.6  util=  19.5  ΣRSS= 554.1  n=4
+  t=+116.0s  main= 414.4  rend=  80.6  gpu=  39.6  util=  19.5  ΣRSS= 554.1  n=4
+  t=+117.0s  main= 414.4  rend=  80.6  gpu=  39.6  util=  19.5  ΣRSS= 554.1  n=4
+  t=+118.0s  main= 414.4  rend=  80.6  gpu=  39.6  util=  19.5  ΣRSS= 554.1  n=4
+  t=+119.0s  main= 414.4  rend=  81.3  gpu=  39.7  util=  19.5  ΣRSS= 555.0  n=4
+  t=+120.0s  main= 414.4  rend=  81.3  gpu=  39.7  util=  19.5  ΣRSS= 555.0  n=4
+  t=+121.0s  main= 414.5  rend=  81.3  gpu=  40.1  util=  19.5  ΣRSS= 555.5  n=4
+  t=+122.0s  main= 414.5  rend=  81.3  gpu=  40.1  util=  19.5  ΣRSS= 555.5  n=4
+  t=+123.0s  main= 414.5  rend=  81.3  gpu=  40.1  util=  19.5  ΣRSS= 555.5  n=4
+  t=+124.3s  main= 414.5  rend=  81.3  gpu=  40.1  util=  19.5  ΣRSS= 555.5  n=4
+  t=+125.3s  main= 414.5  rend=  81.3  gpu=  40.1  util=  19.5  ΣRSS= 555.5  n=4
+  t=+126.3s  main= 414.5  rend=  81.4  gpu=  40.2  util=  19.5  ΣRSS= 555.6  n=4
+  t=+127.3s  main= 451.9  rend=  81.4  gpu=  40.1  util=  19.5  ΣRSS= 593.0  n=4
+  t=+128.3s  main= 425.2  rend=  81.4  gpu=  40.1  util=  19.5  ΣRSS= 566.3  n=4
+  t=+129.3s  main= 425.2  rend=  81.4  gpu=  40.1  util=  19.5  ΣRSS= 566.4  n=4
+  t=+130.3s  main= 425.4  rend=  81.6  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+131.3s  main= 425.4  rend=  81.6  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+132.3s  main= 425.4  rend=  81.7  gpu=  40.2  util=  19.5  ΣRSS= 566.8  n=4
+  t=+133.3s  main= 425.4  rend=  81.6  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+134.3s  main= 425.5  rend=  81.6  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+135.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+136.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+137.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+138.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+139.3s  main= 425.5  rend=  81.7  gpu=  40.2  util=  19.5  ΣRSS= 566.9  n=4
+  t=+140.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+141.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+142.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+143.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+144.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.8  n=4
+  t=+145.3s  main= 425.5  rend=  81.7  gpu=  40.2  util=  19.5  ΣRSS= 566.9  n=4
+  t=+146.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+147.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+148.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+149.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+150.3s  main= 425.5  rend=  81.7  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+151.3s  main= 425.5  rend=  81.8  gpu=  40.2  util=  19.5  ΣRSS= 566.9  n=4
+  t=+152.3s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+153.3s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+154.3s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+155.3s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 566.9  n=4
+  t=+157.0s  main= 425.5  rend=  81.8  gpu=  40.2  util=  19.5  ΣRSS= 567.0  n=4
+  t=+158.0s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 567.0  n=4
+  t=+159.0s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 567.0  n=4
+  t=+160.0s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 567.0  n=4
+  t=+161.0s  main= 425.5  rend=  81.8  gpu=  40.1  util=  19.5  ΣRSS= 567.0  n=4
+  t=+161.8s  main= 426.4  rend=   0.0  gpu=   0.0  util=   0.0  ΣRSS= 426.4  n=1
+
+─── D. 运行时证据的取法 ─────────────────────────────────────
+   本次不带 --log-net-log（实测 file:// 不进 netlog，人物形态还会崩 network service）
+   「默认形态有没有加载 three.js / 3D 素材」由 probe-renderer.mjs 用 CDP 取：
+     performance.getEntriesByType("resource")  → 渲染层真请求过哪些 chunk / bd-asset
+     window.__bd_ball()                        → 3D 场景是否创建（petReady）
+     Performance.getMetrics                    → JSHeapUsedSize（量化 three.js 代码代价）
+
+─── E. electron stdout 尾部 ─────────────────────────────────────────────
+windows": [],
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "kind": "coding",
+        "builtin": true,
+        "mark": "copilot",
+        "dataAt": "2026-10-01T09:23:55.482Z",
+        "updatedAt": "2026-10-01T09:23:55.482Z",
+        "detail": "HTTP 404",
+        "failureReason": "HTTP 404"
+      }
+    ],
+    "lastSync": "2026-10-01T09:23:55.482Z",
+    "scanning": false,
+    "offline": false
+  }
+}
+
+临时 userData 已清理: /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-mem-ball（netlog 保留在 /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-mem-ball-netlog.json 供复核）

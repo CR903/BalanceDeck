@@ -1,0 +1,44 @@
+═══════════════════════════════════════════════════════════════════
+  probe mode = figure   (ui:pet='1')   SMOKE_WAIT_MS=70000
+  date = 2026-10-01T09:02:23.601Z
+═══════════════════════════════════════════════════════════════════
+DevTools 端口 = 65401
+CDP page target : file:///Users/zhouri/project/BalanceDeck/out/renderer/index.html
+CDP browser端点 : ws://127.0.0.1:65401/devtools/browser/4cb45c95-d797-4955-a45a-9ee8759a9267
+
+① 首屏（生产启动后，**未** reload）
+   <script> 标签          : [{"type":"module","src":"file:///Users/zhouri/project/BalanceDeck/out/renderer/assets/index-CnTfnHRm.js"}]
+   <canvas> 数            : 1
+   .pet3d-canvas         : [213,293,213,293]
+   .petball data-figure   : 1
+   window.__bd_ball 类型  : function
+   __bd_ball()            : {"petReady":true,"rect":{"x":26.880806326334206,"y":39.53742447368828,"width":159.23838734733158,"height":212.83465409088166},"clipParseMs":367,"dumpLen":3}
+   Runtime.getHeapUsage   : usedSize=16.4 MB  totalSize=60.9 MB
+
+② Page.reload 冷加载 —— Network.requestWillBeSent 全量（只列渲染层相关）
+   assets/index-CnTfnHRm.js
+   assets/index-gJteAiOs.css
+   assets/voice-CCQ2qdzT.js
+   index.html
+   总请求数 8，其中渲染层相关 4
+
+   判定:
+      入口 chunk index-*.js  : true
+      human-*.js（FBX/骨骼/材质，**动态** import）: false
+      voice-*.js（speechOut **动态** import）      : true
+      bd-asset:// 3D 素材                        : false
+
+③ reload 后
+   <canvas> 数=0  .pet3d-canvas=null
+   __bd_ball()          : null
+   Runtime.getHeapUsage : usedSize=5.9 MB  totalSize=6.9 MB
+
+④ SystemInfo.getProcessInfo（browser 端点）
+   type=browser pid=69437 cpuTime=2.360653
+   type=renderer pid=69440 cpuTime=2.23765
+   type=GPU pid=69438 cpuTime=1.988564
+   type=network.mojom.NetworkService pid=69439 cpuTime=0.193815
+
+electron exit=0
+临时 userData 已清理: /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-probe-figure
+原始结果: /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-probe-figure.json

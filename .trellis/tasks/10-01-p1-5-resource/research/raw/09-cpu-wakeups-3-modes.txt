@@ -1,0 +1,92 @@
+### [1] ball + collapsed=1
+─── A0. 累计 CPU 时间（ps time；等于「定时器唤醒」的总账）──────────────
+   t=+ 10s  合计    3.4s CPU  (main 2.1  gpu 0.5  utility 0.2  renderer 0.5)
+   t=+ 20s  合计    3.8s CPU  (main 2.2  gpu 0.7  utility 0.2  renderer 0.7)
+   t=+ 36s  合计    4.1s CPU  (main 2.3  gpu 0.8  utility 0.2  renderer 0.8)
+   t=+ 48s  合计    4.3s CPU  (main 2.4  gpu 0.8  utility 0.2  renderer 0.9)
+   t=+ 56s  合计    4.4s CPU  (main 2.5  gpu 0.8  utility 0.2  renderer 0.9)
+   ── 稳定段 t=+10s → +56s（46s）内的 CPU 增量 ──
+      main      +   0.3s   = 0.7% of one core
+      gpu       +   0.3s   = 0.6% of one core
+      utility   +   0.0s   = 0.0% of one core
+      renderer  +   0.4s   = 0.8% of one core
+      合计        +   1.0s   = 2.2% of one core
+
+─── A. sum-of-RSS（ps 口径；会重复计入各进程共享的 Electron Framework）──────────
+进程数  峰值 4 · 稳态中位 4 · 收尾 1
+全树 RSS  稳态中位 516.2 MB   p90 516.8 MB   全程峰值 516.9 MB
+末桶分进程:
+   main        137.2 MB
+
+─── B. phys_footprint（footprint -p；共享页按比例摊开，诚实口径）────────────
+t=+ 10s  合计   330.0 MB   [23687:242  23728:35  23729:10  23750:43]
+t=+ 20s  合计   338.0 MB   [23687:242  23728:40  23729:10  23750:46]
+t=+ 36s  合计   336.0 MB   [23687:242  23728:39  23729:10  23750:45]
+t=+ 48s  合计   336.0 MB   [23687:243  23728:39  23729:10  23750:44]
+t=+ 56s  合计   335.0 MB   [23687:242  23728:39  23729:10  23750:44]
+→ 全程峰值 footprint: 338.0 MB
+→ 常驻口径（末 3 点中位）: 336.0 MB    末 2 点: 336.0 / 335.0 MB
+
+─── C. 时间线（每 ~1s 一行）─────────────────────────────────────────────
+
+### [2] ball + collapsed=0
+─── A0. 累计 CPU 时间（ps time；等于「定时器唤醒」的总账）──────────────
+   t=+ 10s  合计    4.1s CPU  (main 2.1  gpu 1.1  utility 0.2  renderer 0.7)
+   t=+ 20s  合计    4.2s CPU  (main 2.1  gpu 1.1  utility 0.2  renderer 0.7)
+   t=+ 36s  合计    4.3s CPU  (main 2.1  gpu 1.2  utility 0.2  renderer 0.7)
+   t=+ 48s  合计    4.3s CPU  (main 2.1  gpu 1.2  utility 0.2  renderer 0.8)
+   t=+ 56s  合计    4.3s CPU  (main 2.1  gpu 1.2  utility 0.2  renderer 0.8)
+   ── 稳定段 t=+10s → +56s（46s）内的 CPU 增量 ──
+      main      +   0.0s   = 0.0% of one core
+      gpu       +   0.1s   = 0.2% of one core
+      utility   +   0.0s   = 0.0% of one core
+      renderer  +   0.1s   = 0.1% of one core
+      合计        +   0.2s   = 0.3% of one core
+
+─── A. sum-of-RSS（ps 口径；会重复计入各进程共享的 Electron Framework）──────────
+进程数  峰值 4 · 稳态中位 4 · 收尾 1
+全树 RSS  稳态中位 570.7 MB   p90 570.8 MB   全程峰值 571.6 MB
+末桶分进程:
+   main        373.2 MB
+
+─── B. phys_footprint（footprint -p；共享页按比例摊开，诚实口径）────────────
+t=+ 10s  合计   393.0 MB   [29004:282  29027:46  29028:11  29049:54]
+t=+ 20s  合计   393.0 MB   [29004:282  29027:46  29028:11  29049:54]
+t=+ 36s  合计   389.0 MB   [29004:282  29027:45  29028:11  29049:51]
+t=+ 48s  合计   390.0 MB   [29004:282  29027:46  29028:11  29049:51]
+t=+ 56s  合计   389.0 MB   [29004:282  29027:45  29028:11  29049:51]
+→ 全程峰值 footprint: 393.0 MB
+→ 常驻口径（末 3 点中位）: 389.0 MB    末 2 点: 390.0 / 389.0 MB
+
+─── C. 时间线（每 ~1s 一行）─────────────────────────────────────────────
+
+### [3] figure + collapsed=1
+─── A0. 累计 CPU 时间（ps time；等于「定时器唤醒」的总账）──────────────
+   t=+ 10s  合计    8.3s CPU  (main 2.3  gpu 3.1  utility 0.2  renderer 2.6)
+   t=+ 20s  合计   10.8s CPU  (main 2.3  gpu 4.7  utility 0.2  renderer 3.6)
+   t=+ 36s  合计   14.9s CPU  (main 2.4  gpu 7.1  utility 0.2  renderer 5.2)
+   t=+ 48s  合计   17.8s CPU  (main 2.5  gpu 8.8  utility 0.2  renderer 6.2)
+   t=+ 56s  合计   19.8s CPU  (main 2.6  gpu 10.0  utility 0.2  renderer 7.0)
+   ── 稳定段 t=+10s → +56s（46s）内的 CPU 增量 ──
+      main      +   0.3s   = 0.7% of one core
+      gpu       +   6.9s   = 14.9% of one core
+      utility   +   0.0s   = 0.0% of one core
+      renderer  +   4.3s   = 9.4% of one core
+      合计        +  11.5s   = 25.0% of one core
+
+─── A. sum-of-RSS（ps 口径；会重复计入各进程共享的 Electron Framework）──────────
+进程数  峰值 4 · 稳态中位 4 · 收尾 1
+全树 RSS  稳态中位 803.3 MB   p90 803.9 MB   全程峰值 858.6 MB
+末桶分进程:
+   main        223.0 MB
+
+─── B. phys_footprint（footprint -p；共享页按比例摊开，诚实口径）────────────
+t=+ 10s  合计   544.0 MB   [34393:304  34426:100  34431:10  34436:130]
+t=+ 20s  合计   545.0 MB   [34393:304  34426:100  34431:10  34436:131]
+t=+ 36s  合计   486.0 MB   [34393:304  34426:95  34431:10  34436:77]
+t=+ 48s  合计   485.0 MB   [34393:304  34426:96  34431:10  34436:75]
+t=+ 56s  合计   486.0 MB   [34393:304  34426:95  34431:10  34436:77]
+→ 全程峰值 footprint: 545.0 MB
+→ 常驻口径（末 3 点中位）: 486.0 MB    末 2 点: 485.0 / 486.0 MB
+
+─── C. 时间线（每 ~1s 一行）─────────────────────────────────────────────

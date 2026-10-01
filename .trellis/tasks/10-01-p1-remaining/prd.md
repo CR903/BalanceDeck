@@ -69,7 +69,18 @@
   MIT 允许把代码抄进闭源产品，但**必须保留版权声明**。
   **决策：参考「解析思路」并自己重写实现**，不逐行复制他人代码；
   若确实复用了代码片段，则必须在该文件头附上版权与许可声明。
-  这条边界由 `test-structure.mjs` 的静态断言守门（各家协议文件头必须声明来源与许可）。
+  ⚠ **这条边界目前没有任何自动化守卫**（`test-structure.mjs` 里零许可相关断言；
+  本 PRD 此前误写「由 test-structure.mjs 守门」，已更正）。四家调研结论一致：
+  **预计可复用的只有接口事实**（URL、字段名、公开的 OAuth client id），实现均自行重写，
+  实际复制量应为 0；即便如此仍在文件头附一行来源与许可声明（零成本）。
+- **测试段落字母已分配，防并行覆盖**：`scripts/test-adapters.mjs` 现有段占用
+  `A–N R S T`（O/P/Q/U/V/W/X/Y/Z 空闲）。**四家各锁一个、互不重叠** ——
+  撞字母会让两段互相覆盖，而这种覆盖在测试里表现为「某段没跑到」而不是报错。
+  分配：Gemini `V` · Cursor `W` · Antigravity `X` · OpenAI（升级 `codex.ts`）`Y`。
+- **三家共同硬前置**：`10-01-seam-post-body`（采集接缝支持 POST body）。
+  `CollectRequest` 与 `request.ts` 目前只能发 GET、无 body；`protocol-adapter.ts:68-72`
+  的协议工厂也写死 GET + 两个固定头、无 body 扩展点，所以**即使接缝合入，仍不能走
+  `protocols.ts` 声明表** —— 四家都写独立适配器。
 - **共享文件冲突面**：`src/main/adapters/protocols.ts` 是四家共用的解析层 ——
   各自只追加自己的段落，**不重排既有内容**。
 - **不做数据迁移**：新增适配器不涉及既有存储格式变更。

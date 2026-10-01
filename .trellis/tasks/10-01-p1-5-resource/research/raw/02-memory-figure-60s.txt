@@ -1,0 +1,114 @@
+═══════════════════════════════════════════════════════════════════
+  mode = figure   (secrets.bin extras: 'ui:pet' = '1')
+  SMOKE_WAIT_MS = 60000
+  BD_USER_DATA = /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-mem-figure
+  date = 2026-10-01T09:08:19.141Z
+  host = macOS 12.7.6 x86_64
+  electron = 37.10.3   node = v22.23.2
+═══════════════════════════════════════════════════════════════════
+electron exit=0  wall=62.3s  采样条数=891
+
+─── A. sum-of-RSS（ps 口径；会重复计入各进程共享的 Electron Framework）──────────
+进程数  峰值 4 · 稳态中位 4 · 收尾 1
+全树 RSS  稳态中位 858.5 MB   p90 900.2 MB   全程峰值 900.3 MB
+末桶分进程:
+   main        409.7 MB
+
+─── B. phys_footprint（footprint -p；共享页按比例摊开，诚实口径）────────────
+t=+ 10s  合计   549.0 MB   [80290:303  80362:100  80363:10  80386:136]
+t=+ 20s  合计   598.0 MB   [80290:307  80362:100  80363:10  80386:181]
+t=+ 36s  合计   575.0 MB   [80290:311  80362:96  80363:10  80386:158]
+t=+ 48s  合计   537.0 MB   [80290:315  80362:95  80363:10  80386:117]
+t=+ 56s  合计   532.0 MB   [80290:318  80362:95  80363:10  80386:109]
+→ 全程峰值 footprint: 598.0 MB
+→ 常驻口径（末 3 点中位）: 537.0 MB    末 2 点: 537.0 / 532.0 MB
+
+─── C. 时间线（每 ~1s 一行）─────────────────────────────────────────────
+  t=+  0.3s  main=   1.1  rend=   0.0  gpu=   0.0  util=   0.0  ΣRSS=   1.1  n=1
+  t=+  1.3s  main=  50.2  rend=   0.0  gpu=   0.0  util=   0.0  ΣRSS=  50.2  n=1
+  t=+  2.5s  main= 120.8  rend=  32.1  gpu=  33.1  util=  26.9  ΣRSS= 213.0  n=4
+  t=+  3.5s  main= 259.0  rend=  32.1  gpu=  33.1  util=  27.0  ΣRSS= 351.4  n=4
+  t=+  4.5s  main= 320.3  rend=  32.1  gpu=  33.2  util=  27.0  ΣRSS= 412.6  n=4
+  t=+  5.5s  main= 356.6  rend=  57.9  gpu=  37.5  util=  29.4  ΣRSS= 481.4  n=4
+  t=+  6.5s  main= 371.8  rend= 109.4  gpu=  62.8  util=  30.1  ΣRSS= 574.1  n=4
+  t=+  7.5s  main= 394.4  rend= 252.8  gpu=  66.5  util=  30.1  ΣRSS= 743.7  n=4
+  t=+  8.5s  main= 394.4  rend= 273.2  gpu= 131.0  util=  30.1  ΣRSS= 828.7  n=4
+  t=+  9.5s  main= 394.4  rend= 273.7  gpu= 132.3  util=  30.1  ΣRSS= 830.6  n=4
+  t=+ 11.3s  main= 394.4  rend= 274.4  gpu= 132.7  util=  30.1  ΣRSS= 831.6  n=4
+  t=+ 12.3s  main= 394.4  rend= 274.6  gpu= 132.8  util=  30.1  ΣRSS= 831.9  n=4
+  t=+ 13.3s  main= 394.4  rend= 274.9  gpu= 133.0  util=  30.1  ΣRSS= 832.4  n=4
+  t=+ 14.3s  main= 394.4  rend= 275.5  gpu= 133.2  util=  30.1  ΣRSS= 833.2  n=4
+  t=+ 15.3s  main= 398.6  rend= 293.2  gpu= 133.3  util=  30.1  ΣRSS= 855.2  n=4
+  t=+ 16.3s  main= 398.6  rend= 316.9  gpu= 133.4  util=  30.2  ΣRSS= 879.0  n=4
+  t=+ 17.3s  main= 398.6  rend= 318.2  gpu= 133.4  util=  30.2  ΣRSS= 880.3  n=4
+  t=+ 18.3s  main= 398.6  rend= 319.2  gpu= 133.4  util=  30.2  ΣRSS= 881.3  n=4
+  t=+ 19.3s  main= 398.6  rend= 320.2  gpu= 133.4  util=  30.2  ΣRSS= 882.4  n=4
+  t=+ 21.0s  main= 398.6  rend= 322.2  gpu= 133.5  util=  30.2  ΣRSS= 884.5  n=4
+  t=+ 22.0s  main= 398.6  rend= 323.3  gpu= 133.5  util=  30.2  ΣRSS= 885.6  n=4
+  t=+ 23.0s  main= 398.6  rend= 324.4  gpu= 133.5  util=  30.2  ΣRSS= 886.6  n=4
+  t=+ 24.0s  main= 398.6  rend= 327.6  gpu= 133.5  util=  30.2  ΣRSS= 889.9  n=4
+  t=+ 25.0s  main= 398.6  rend= 327.7  gpu= 133.5  util=  30.2  ΣRSS= 889.9  n=4
+  t=+ 26.0s  main= 398.6  rend= 327.7  gpu= 133.5  util=  30.2  ΣRSS= 890.0  n=4
+  t=+ 27.0s  main= 398.6  rend= 327.8  gpu= 133.6  util=  30.2  ΣRSS= 890.2  n=4
+  t=+ 28.0s  main= 398.6  rend= 327.9  gpu= 133.7  util=  30.2  ΣRSS= 890.2  n=4
+  t=+ 29.0s  main= 398.6  rend= 327.9  gpu= 133.6  util=  30.2  ΣRSS= 890.2  n=4
+  t=+ 30.0s  main= 398.6  rend= 327.9  gpu= 133.6  util=  30.2  ΣRSS= 890.3  n=4
+  t=+ 31.0s  main= 402.9  rend= 333.4  gpu= 133.6  util=  30.2  ΣRSS= 900.1  n=4
+  t=+ 32.0s  main= 402.9  rend= 333.4  gpu= 133.6  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 33.0s  main= 402.9  rend= 333.4  gpu= 133.6  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 34.0s  main= 402.9  rend= 333.4  gpu= 133.6  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 35.0s  main= 402.9  rend= 333.4  gpu= 133.6  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 36.0s  main= 402.9  rend= 333.5  gpu= 133.7  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 37.3s  main= 403.0  rend= 333.5  gpu= 133.7  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 38.3s  main= 403.0  rend= 333.5  gpu= 133.7  util=  30.2  ΣRSS= 900.2  n=4
+  t=+ 39.3s  main= 403.0  rend= 259.9  gpu= 133.7  util=  30.2  ΣRSS= 826.7  n=4
+  t=+ 40.3s  main= 403.0  rend= 261.3  gpu= 133.7  util=  30.2  ΣRSS= 828.1  n=4
+  t=+ 41.3s  main= 403.0  rend= 262.3  gpu= 133.7  util=  30.2  ΣRSS= 829.1  n=4
+  t=+ 42.3s  main= 403.0  rend= 262.7  gpu= 133.7  util=  30.2  ΣRSS= 829.5  n=4
+  t=+ 43.3s  main= 403.0  rend= 263.2  gpu= 133.7  util=  30.2  ΣRSS= 830.0  n=4
+  t=+ 44.3s  main= 403.0  rend= 263.2  gpu= 133.7  util=  30.2  ΣRSS= 830.0  n=4
+  t=+ 45.3s  main= 406.1  rend= 273.6  gpu= 133.7  util=  30.2  ΣRSS= 843.5  n=4
+  t=+ 46.3s  main= 406.1  rend= 288.5  gpu= 133.7  util=  30.2  ΣRSS= 858.4  n=4
+  t=+ 47.3s  main= 406.1  rend= 288.5  gpu= 133.7  util=  30.2  ΣRSS= 858.4  n=4
+  t=+ 48.3s  main= 406.1  rend= 288.5  gpu= 133.7  util=  30.2  ΣRSS= 858.4  n=4
+  t=+ 49.3s  main= 406.1  rend= 288.6  gpu= 133.7  util=  30.2  ΣRSS= 858.5  n=4
+  t=+ 50.3s  main= 406.1  rend= 288.6  gpu= 133.7  util=  30.2  ΣRSS= 858.5  n=4
+  t=+ 51.5s  main= 406.1  rend= 288.6  gpu= 133.7  util=  30.2  ΣRSS= 858.5  n=4
+  t=+ 52.5s  main= 406.1  rend= 288.7  gpu= 133.7  util=  30.2  ΣRSS= 858.6  n=4
+  t=+ 53.5s  main= 406.1  rend= 288.7  gpu= 133.7  util=  30.2  ΣRSS= 858.7  n=4
+  t=+ 54.5s  main= 406.1  rend= 287.3  gpu= 133.7  util=  30.2  ΣRSS= 857.2  n=4
+  t=+ 55.5s  main= 406.1  rend= 287.3  gpu= 133.7  util=  30.2  ΣRSS= 857.2  n=4
+  t=+ 57.5s  main= 409.4  rend= 296.9  gpu= 133.7  util=  30.2  ΣRSS= 870.2  n=4
+  t=+ 58.5s  main= 409.4  rend= 296.9  gpu= 133.7  util=  30.2  ΣRSS= 870.2  n=4
+  t=+ 59.5s  main= 409.4  rend= 296.9  gpu= 133.7  util=  30.2  ΣRSS= 870.2  n=4
+  t=+ 60.5s  main= 409.4  rend= 296.9  gpu= 133.7  util=  30.2  ΣRSS= 870.2  n=4
+  t=+ 61.5s  main= 409.4  rend= 297.0  gpu= 133.7  util=  30.2  ΣRSS= 870.2  n=4
+  t=+ 62.3s  main= 409.7  rend=   0.0  gpu=   0.0  util=   0.0  ΣRSS= 409.7  n=1
+
+─── D. 运行时证据的取法 ─────────────────────────────────────
+   本次不带 --log-net-log（实测 file:// 不进 netlog，人物形态还会崩 network service）
+   「默认形态有没有加载 three.js / 3D 素材」由 probe-renderer.mjs 用 CDP 取：
+     performance.getEntriesByType("resource")  → 渲染层真请求过哪些 chunk / bd-asset
+     window.__bd_ball()                        → 3D 场景是否创建（petReady）
+     Performance.getMetrics                    → JSHeapUsedSize（量化 three.js 代码代价）
+
+─── E. electron stdout 尾部 ─────────────────────────────────────────────
+windows": [],
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "kind": "coding",
+        "builtin": true,
+        "mark": "copilot",
+        "dataAt": "2026-10-01T09:08:21.340Z",
+        "updatedAt": "2026-10-01T09:08:21.340Z",
+        "detail": "HTTP 404",
+        "failureReason": "HTTP 404"
+      }
+    ],
+    "lastSync": "2026-10-01T09:08:21.340Z",
+    "scanning": false,
+    "offline": false
+  }
+}
+
+临时 userData 已清理: /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-mem-figure（netlog 保留在 /private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/bd-mem-figure-netlog.json 供复核）

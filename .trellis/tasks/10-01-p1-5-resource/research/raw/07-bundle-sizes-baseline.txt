@@ -1,0 +1,7 @@
+total 3736
+drwxr-xr-x  6 zhouri  _analyticsusers      192 10  1 17:10 .
+drwxr-xr-x  4 zhouri  _analyticsusers      128 10  1 17:10 ..
+-rw-r--r--  1 zhouri  _analyticsusers   120740 10  1 17:10 human-EpA39Kp9.js
+-rw-r--r--  1 zhouri  _analyticsusers  1699669 10  1 17:10 index-CnTfnHRm.js
+-rw-r--r--  1 zhouri  _analyticsusers    83209 10  1 17:10 index-gJteAiOs.css
+-rw-r--r--  1 zhouri  _analyticsusers     2747 10  1 17:10 voice-CCQ2qdzT.js

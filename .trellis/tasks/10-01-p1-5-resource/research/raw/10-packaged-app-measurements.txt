@@ -1,0 +1,51 @@
+=== electron-builder --mac --dir 完整输出 ===
+  • electron-builder  version=26.15.3 os=21.6.0
+  • loaded configuration  file=/Users/zhouri/project/BalanceDeck/electron-builder.yml
+  • executing @electron/rebuild  electronVersion=37.10.3 arch=x64 buildFromSource=false workspaceRoot=/Users/zhouri/project/BalanceDeck projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=x64 electron=37.10.3 appOutDir=dist/mac
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/zhouri/project/BalanceDeck/dist/mac
+  • searching for node modules  pm=npm searchDir=/Users/zhouri/project/BalanceDeck
+  • duplicate dependency references  dependencies=["react@18.3.1","loose-envify@1.4.0","loose-envify@1.4.0"]
+  • skipped macOS code signing  reason=identity explicitly is set to null
+
+=== .app 总体积 ===
+520M	dist/mac/BalanceDeck.app
+
+=== Contents 顶层 ===
+262M	dist/mac/BalanceDeck.app/Contents/Frameworks
+258M	dist/mac/BalanceDeck.app/Contents/Resources
+ 20K	dist/mac/BalanceDeck.app/Contents/MacOS
+4.0K	dist/mac/BalanceDeck.app/Contents/PkgInfo
+4.0K	dist/mac/BalanceDeck.app/Contents/Info.plist
+
+=== Resources 内 human-pets / app.asar / build ===
+237M	dist/mac/BalanceDeck.app/Contents/Resources/human-pets
+ 20M	dist/mac/BalanceDeck.app/Contents/Resources/app.asar
+372K	dist/mac/BalanceDeck.app/Contents/Resources/build
+
+=== human-pets 按扩展名（真实字节）===
+  fbx       49.9 MB  (24 个)
+  tga      128.0 MB  (10 个)
+  png       12.2 MB  (12 个)
+  glb       30.9 MB  (1 个)
+  json       0.0 MB  (2 个)
+
+=== app.asar 内 node_modules 构成（asar extract 后）===
+ 12K	/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/asar-x/node_modules/js-tokens
+ 28K	/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/asar-x/node_modules/loose-envify
+364K	/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/asar-x/node_modules/react
+4.4M	/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/asar-x/node_modules/react-dom
+140K	/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/asar-x/node_modules/scheduler
+ 14M	/private/var/folders/f7/l6wj46ps3p74mm412hdknnqh0000gn/T/opencode/asar-x/node_modules/three
+
+  three 文件数: 714
+
+=== 主进程实际 require 的模块 ===
+require("crypto")
+require("electron")
+require("fs")
+require("os")
+require("path")

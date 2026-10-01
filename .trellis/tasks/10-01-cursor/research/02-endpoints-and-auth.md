@@ -42,6 +42,14 @@ Content-Type: application/json
 Connect-Protocol-Version: 1
 ```
 
+> **接缝侧已定**（`.trellis/tasks/10-01-seam-post-body/`，design.md 于 2026-10-01 提交，commit `6c81361`）：
+> `CollectRequest` 将扩出可选的 `method?: 'GET'|'POST'` 与 `body?: string`；
+> **有 body 且调用方未自带 `Content-Type` 时接缝自动补 `application/json`**。
+> ⇒ 适配器只需传 `method:'POST'` + `body:'{}'`；
+> **`Connect-Protocol-Version: 1` 仍必须适配器自己写进 `headers`**（接缝不管这个）。
+> ⚠ 该接缝**代码尚未实现**（工作区 `types.ts` / `request.ts` 仍只有 url/headers/timeoutMs），
+> Cursor 开工前需确认 `10-01-seam-post-body` 已合入。
+
 真实响应（2026-08-12 官方论坛用户贴出，已脱敏；检索 2026-10-01）：
 ```json
 {
