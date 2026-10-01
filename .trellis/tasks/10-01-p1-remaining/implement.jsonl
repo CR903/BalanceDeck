@@ -1,0 +1,6 @@
+{"file": "./prd.md", "reason": "P1 剩余的需求集、任务图、许可边界与跨子任务验收标准"}
+{"file": "../archive/2026-09/09-30-similar-projects-research/research/report.md", "reason": "竞品报告 P1 档原文（P1-2 供应商覆盖、P1-5 资源占用的依据）"}
+{"file": "../../spec/adapters/index.md", "reason": "适配器层的可执行契约（四家适配器都要遵守）"}
+{"file": "../../spec/frontend/index.md", "reason": "前端规范入口"}
+{"file": "../../spec/frontend/state-management.md", "reason": "extras store 与 items/extras 双命名空间纪律（凭据不得进 extras）"}
+{"file": "../../spec/frontend/type-safety.md", "reason": "类型安全与数据诚实（降级路径必须走 DataQuality）"}
