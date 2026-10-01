@@ -157,6 +157,7 @@ Full key inventory:
 | `ui:petState` | `encodePetState` (`shared/pet.ts`) | versioned, migrates legacy ids |
 | `ui:pet` / `ui:alwaysOnTop` | `'1'` / `'0'` | `ui:petRing` 已随用量环开关下线、`ui:voiceOn` 已随播报迁移下线（两者都**只读不写**） |
 | `ui:voiceMuted` | `JSON.stringify(next)` | re-parsed with a type guard on load (`App.tsx:423`) |
+| `ui:groupHidden` | `JSON.stringify(string[])` | **隐藏的组 id**（不是实例 id，2026-10-01 P1-4）。黑名单，缺省空 = 全部显示。语义照 `ui:voiceMuted`：**只不展示，采集照跑** —— 刻意不复用 `enabled: false`（那是停止采集：切回要等一轮，历史还会断档）。判定规则在 `renderer/src/read-model.ts`（`groupNames` / `visibleIds` / `orderForDisplay`，已被 `test-read-model.mjs` 覆盖） |
 | `ui:voiceGender` | — | **已下线**（2026-09-29，`09-29-voice-settings-refactor`）。系统语音性别改由 `petGender(pet.id)` 每轮现算，不再读也不再写；旧值留在 extras 里不动。它是「谁替我说话」的第二个开关，与选助理问的是同一件事 |
 | `ui:hideBalance` | **`'1'` / `''`** | differs from every other boolean — don't copy |
 | `ui:ttsOn` | `'1'` / `'0'` | replaces the retired `ui:voiceOn` (read on load for migration) |

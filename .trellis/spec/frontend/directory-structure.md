@@ -14,8 +14,9 @@ src/
 ├── shared/              # compiled into BOTH tsconfig projects — the only cross-process code
 │   ├── types.ts         # cross-process contract (ProviderSnapshot, ProviderWindow, DataQuality…)
 │   ├── percent.ts       # one percentage implementation, shared by tray/card/detail/ball
+│   ├── levels.ts        # one severity threshold implementation (85/60), shared by all four + tray
 │   ├── quality.ts       # cache policy + staleness + network-error classification
-│   ├── tray-text.ts     # every tray string lives here (main-only consumer, unit-tested)
+│   ├── tray-text.ts     # every tray string lives here (both processes, unit-tested)
 │   ├── pet.ts           # assistant identity model + encode/decode/migration
 │   └── pet-view.ts      # the ONLY source of window dimensions for both forms
 ├── main/                # main process — see layering rules below
@@ -23,6 +24,7 @@ src/
 │   ├── ipc.ts           # every ipcMain.handle / .on
 │   ├── overlay.ts       # the floating window (expanded 384×600, or collapsed per pet-view)
 │   ├── tray.ts · skins.ts · autostart.ts · human-assets.ts
+│   ├── tray-badge.ts    # tray icon status dot: level → shape, plus the BGRA alpha painter
 │   ├── store.ts         # pure credential store (no electron) — filePath + crypto injected
 │   ├── keystore.ts      # production assembly of store.ts using safeStorage
 │   ├── net.ts           # reachability accounting (2-strike offline threshold)
@@ -144,6 +146,72 @@ Enforced boundaries (all in `test-structure.mjs`):
 
 ---
 
+## `src/main/cli/` — the second entry shape (P1-6, 2026-10-01)
+
+`src/main/cli/` holds the **`export` subcommand** (`BalanceDeck export --json`), for tmux /
+iStat / prompt scripts. Three files, and the split is the whole point:
+
+| File | Role |
+|---|---|
+| `export-snapshot.ts` | the **contract**: `AppState → ExportSnapshot`. No electron, no fs |
+| `export-command.ts` | the **channel**: `argv → file → stdout`. No electron, no keystore |
+| `export-writer.ts` | the **resident side**: deduped periodic write. No electron |
+
+This is the `store.ts` + `keystore.ts` + `usageStore.ts` + `usage-history.ts` seam again, and
+`test-structure.mjs`'s C2 guard does not even see the directory: it filters `src/main`'s
+top-level `*.ts` only, so `cli/` is exempt without a new assertion.
+
+### The two facts that decide the whole design
+
+**1. There is no single-instance lock, so two Electron processes share nothing.**
+`grep -rn 'requestSingleInstanceLock' src/` → zero hits. `scheduler.currentState()` is
+module-level memory (`scheduler.ts:33-38`), so a second process cannot see it. There is no
+socket, no pipe, no `MessagePort`. **A CLI process can only read what the resident process
+persisted** — hence the export *file*, written by the resident side.
+
+**2. A second process that collects will destroy the first one's history.**
+`usageStore.ts:99` keeps one in-memory cache per process and `:121` rewrites the whole file.
+A CLI run of `collect()` would overwrite the resident app's accumulated samples, putting
+random gaps into the P1-1 trend chart — and `usagePredict`'s rate regression reads a gap as
+「用量停了」. It would also rewrite `secrets.bin` through the `setKey` that
+`scheduler.ts:74` injects for cookie self-healing. **CLI commands here must be pure readers.**
+
+### argv: `process.argv`, sliced by `isPackaged`
+
+```ts
+const cliArgv = process.argv.slice(app.isPackaged ? 1 : 2)
+```
+
+Measured on Electron 37.10.3: dev argv is `[electronBin, '.', 'export', '--json']` while
+packaged argv is `[exe, 'export', '--json']` — the offsets differ, so a positional subcommand
+**must** be sliced. The five existing QA flags get away with `process.argv.includes(...)`
+because `includes` does not depend on the offset.
+
+⚠ **`app.argv` is `undefined` in this Electron build** (measured; the probe printed
+`app.argv=undefined typeof=undefined`). The Electron docs describe it and it type-checks, so
+`app.argv.slice(…)` compiles and then dies with a `TypeError` at launch. Use `process.argv`.
+
+**Also measured:** `app.getPath('userData')` **does** work before `app.whenReady()`. The
+comments in `keystore.ts` / `usage-history.ts` say the real constraint is *import order*
+(static imports evaluate before the module body, which is why `BD_USER_DATA`'s `setPath` would
+lose), **not** ready timing. Dispatch still sits inside `whenReady` — as the **first**
+statement, before `primePrefs()` and any window/tray/scheduler work — because moving it earlier
+does not pay for wrapping the whole composition root in an `if/else`.
+
+### Never serialize a whole `ProviderSnapshot` out
+
+`source` is free text assembled per adapter, and `opencode.ts`'s `keyTag` splices the **last 4
+characters of the API key** into it (`账号1(…9dFe)`), which reaches `ProviderSnapshot.source`.
+`detail` / `failureReason` can carry a response-body preview (`engine.ts` slices 200 chars) or a
+GitHub username (`copilot.ts`). stdout lands in tmux config, shell history, logs and
+screenshots — a far larger blast radius than the screen. So the export contract omits
+`source` / `detail` / `failureReason` / `degradedReason` / `models` / `modelsByWindow` /
+`mark` / `plan` **at the contract level**, not "not yet". Adding one back requires a fresh
+privacy review. `scripts/test-cli-export.mjs` §C pins this with a fixture carrying all of them;
+the negative assertions were measured to go red when `source` is re-added.
+
+---
+
 ## Module Organization
 
 **One screen per file; the renderer is a flat list, not a feature tree.** There is no
@@ -162,6 +230,27 @@ so Node tests can drive it directly; `rig.ts` is the single source of camera/for
 **`src/shared/` is in both tsconfig projects** (`tsconfig.node.json:15` and
 `tsconfig.web.json:15`) — that is *how* one file type-checks in both processes. Every import
 across it is relative; the declared `@shared/*` path alias is **unused**.
+
+### Constraints that are **not** repository law
+
+Three comments used to read "文件所有权不许新增 shared 文件" (`ipc.ts` above,
+`renderer/systemNotify.ts:30`, `speechOut.ts:409`). Those record **one task's** file
+ownership at the time (P0-1 was not allowed to touch `src/shared/`, so `NOTIFY_LEVELS` is
+written on both sides and pinned by a static comparison in `test-system-notify.mjs`). They
+are not a standing rule, and quoting them as one is how a known defect survives.
+
+Concretely, `10-01-p1-tray-color` was blocked by exactly that reading: the tray needed the
+85/60 severity threshold, the threshold lived in `renderer/src/format.ts` (unreachable from
+the main process), and the alternatives were a second copy in the tray or a contradiction —
+**at 62% the card renders orange while the tray renders green, on the same screen**, with no
+layer of code able to see both. The fix was to move `levelOfPercent` into
+`src/shared/levels.ts` and leave `format.ts` as a re-export, so the renderer call sites
+(`CardView.tsx`, `DetailView.tsx`, `read-model.ts`, `components.tsx`) changed not one line.
+
+**The test for adding a shared module is "will two copies disagree?", not "who created the
+directory first."** `scripts/test-structure.mjs` §G now pins the single source: the `85` / `60`
+literals may appear in exactly one file, and renderer consumers must keep importing through
+`format.ts` rather than bypassing the re-export.
 
 ---
 
@@ -204,6 +293,12 @@ There is **no** channel-name constant module, so channel strings live twice by n
   seam in the repo.
 - **`src/shared/percent.ts`** (32 lines) — one implementation, four consumers, no branching on
   caller. Its header states why: the tray, card, detail and ball must not disagree.
+- **`src/shared/levels.ts`** (61 lines) — the same pattern one layer up, and the clearest
+  statement of the rule above: the severity threshold moved here so the tray could use it, and
+  the renderer kept its imports by re-exporting rather than by being edited. Note which ANSI
+  codes it uses are the ones `NSString+ANSI.mm` **implements**, not the ones the ANSI standard
+  offers — `90` is absent from that switch, so gray is `1;30`; a "reasonable-looking" code
+  renders as *no color at all*, silently.
 - **`src/renderer/src/read-model.ts`** (99 lines) — "one place that answers *which window
   matters and how severe*". Created because the same concept had four implementations.
 - **`src/main/adapters/opencode-console-api.ts`** (159 lines) — a constants module with

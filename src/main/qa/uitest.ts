@@ -704,15 +704,22 @@ export async function runUiTest(
   //   它对标题长什么样几乎没有约束，换成任何一档都照样绿。所以改成按 level 判 ——
   //   自己推夹具（用量落在档位内部），读回标题里的 ANSI 包裹码与图标等级。
   //
-  // 判据的形状：`ANSI_RESET` 之后不许再有色（否则颜色会漏到 ⚠ 前缀或分隔符上）。
-  const readTray = async (): Promise<{ title: string; level: string; shape: string }> => ({
+  // ⚠ 必须连 `iconKey` 一起读：**level/shape 报的是意图，iconKey 报的是实际落盘的那一份**。
+  //   `updateTray` 先写 `currentBadge` 再 `applyTrayIcon`，所以去重把新图标吃掉时
+  //   level/shape 已经是新值、断言照样绿 —— 只有 `#形状` 后缀不变才暴露真相。
+  //   （去重键漏掉形状是本任务最容易静默失效的一处：不抛不红，点永远停在旧等级。）
+  const readTray = async (): Promise<{
+    title: string
+    level: string
+    shape: string
+    iconKey: string
+  }> => ({
     title: String(await exec('window.api.debugTrayTitle()')),
-    ...(await exec('window.api.debugTrayImage().then(b=>({level:b.level,shape:b.shape}))') as {
-      level: string
-      shape: string
-    })
+    ...(await exec(
+      'window.api.debugTrayImage().then(b=>({level:b.level,shape:b.shape,iconKey:b.iconKey}))'
+    ) as { level: string; shape: string; iconKey: string })
   })
-  /** 某档的完整判据：标题里的包裹码 + 剥掉转义后的文案 + 图标等级/形状 */
+  /** 某档的完整判据：标题包裹码 + 剥转义后的文案 + 图标等级/形状 + **实际落盘的键** */
   const trayCase = async (
     label: string,
     fix: unknown[],
@@ -722,9 +729,13 @@ export async function runUiTest(
     const got = await readTray()
     const stripped = got.title.replace(/\x1b\[[0-9;]*m/g, '')
     const esc = got.title.includes(want.esc) || (want.esc === '' && !got.title.includes('\x1b['))
-    const why = `esc=${esc ? 'y' : 'n'} plain=${stripped} lvl=${got.level} shape=${got.shape}`
-    if (esc && stripped === want.plain && got.level === want.level && got.shape === want.shape) return `ok(${why})`
-    return `fail(${why} 期望 esc=${JSON.stringify(want.esc)}/${want.plain}/${want.level}/${want.shape})`
+    // 键必须带 `#形状` —— 少这一段就说明去重把换级后的图标吞了（意图是新、实际是旧）
+    const keyed = got.iconKey.endsWith(`#${want.shape}`)
+    const why = `esc=${esc ? 'y' : 'n'} plain=${stripped} lvl=${got.level} shape=${got.shape} key=${got.iconKey}`
+    if (esc && stripped === want.plain && got.level === want.level && got.shape === want.shape && keyed) {
+      return `ok(${why})`
+    }
+    return `fail(${why} 期望 esc=${JSON.stringify(want.esc)}/${want.plain}/${want.level}/${want.shape}/key#${want.shape})`
   }
   // ⚠ ok 档判的是「**一个转义都没有**」：加色不许让正常用量的用户看到任何变化。
   r.trayTitleOk = await trayCase('ok', FIX_TRAY_OK, { esc: '', plain: 'W 10%', level: 'ok', shape: 'none' })
@@ -750,13 +761,22 @@ export async function runUiTest(
   })
   // 图标等级的独立键（不依赖标题那条）：`debug:tray-image` 是本任务新增的观测点，
   // 少了它「图标分层」就只剩逻辑测试，界面层无人能验（macOS 模板图标根本没有颜色可看）。
+  // ⚠ 判据里必须带 `iconKey`：**换级时它必须跟着变**，不变就说明去重把新图标吞了
+  //   （level/shape 报的是意图，会先于实际落盘更新，单看它们永远绿）。
   {
     await pushFix(FIX_TRAY_DANGER)
-    const img = (await readTray()) as { level: string; shape: string }
-    r.trayBadge = img.level === 'danger' && img.shape === 'solid-large' ? 'ok' : `fail:${JSON.stringify(img)}`
+    const img = await readTray()
+    r.trayBadge =
+      img.level === 'danger' && img.shape === 'solid-large' && img.iconKey.endsWith('#solid-large')
+        ? `ok(${img.iconKey})`
+        : `fail:${JSON.stringify(img)}`
     await pushFix(FIX_TRAY_OK)
-    const img2 = (await readTray()) as { level: string; shape: string }
-    r.trayBadgeNone = img2.level === 'ok' && img2.shape === 'none' ? 'ok' : `fail:${JSON.stringify(img2)}`
+    const img2 = await readTray()
+    // 必须与上一档**不同**：同一个 mark 只换等级，键就该换 —— 这正是去重键含形状的意义
+    r.trayBadgeNone =
+      img2.level === 'ok' && img2.shape === 'none' && img2.iconKey.endsWith('#none') && img2.iconKey !== img.iconKey
+        ? `ok(${img.iconKey} → ${img2.iconKey})`
+        : `fail:${JSON.stringify([img, img2])}`
   }
   // 把真实快照推回去：下面的断言（余额卡 / 套餐卡 / 窗口胶囊）都依赖真实数据
   await pushFix(savedSnapshots)

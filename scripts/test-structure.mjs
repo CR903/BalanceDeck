@@ -571,5 +571,115 @@ ok(
   `F6b 渲染层不自己拼认证头（收口在主进程 tts:speak；越界文件：${headerHits.join(', ') || '无'}）`
 )
 
+// ─── G. 跨进程分级的单一出处（10-01-p1-tray-color）──────────────────────────
+//
+// 85/60 是全 UI 唯一的百分比分级阈值。托盘要上色就得复用它，而主进程够不到
+// renderer/format.ts —— 于是判据搬进了 src/shared/levels.ts，format.ts 变成转发口。
+//
+// 下面两条守的是**搬完之后**的两条边界，都是「改坏了不抛、界面看着也正常」的失败形态：
+//   · 阈值被复制回第二处 → 同屏出现两套判断（用量 62% 时卡片橙、托盘绿）
+//   · levels.ts 引入 electron / DOM → 纯 node 套件加载不了，测试全红但产品无恙
+//     （反过来更糟：为了让纯函数能加载而把 electron 摘掉，模块在主进程里反而不能用了）
+console.log('\nG. 跨进程分级的单一出处')
+
+const stripTsComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const levelsPath = 'src/shared/levels.ts'
+/** 逐字比对两个数组（与 ok 分开：这类断言的失败信息必须带出实际值） */
+function eq2(actual, expected, label) {
+  const a = JSON.stringify(actual)
+  const e = JSON.stringify(expected)
+  if (a === e) {
+    pass++
+    console.log(`  ✓ ${label}`)
+  } else {
+    fail++
+    console.log(`  ✗ ${label}\n      实际: ${a}\n      期望: ${e}`)
+  }
+}
+ok(existsSync(resolve(ROOT, levelsPath)), `G0 ${levelsPath} 存在（下面的断言有对象）`)
+const levelsBody = stripTsComments(read(levelsPath))
+ok(levelsBody.length > 0, 'G0b 剥注释后非空（负向断言不能空洞通过）')
+ok(!/\belectron\b|\bdocument\.|window\.|navigator\./.test(levelsBody), 'G1 levels.ts 是纯模块（无 electron / DOM）')
+ok(
+  !/from '.*\/(main|renderer)\//.test(levelsBody),
+  'G1b levels.ts 不 import 主进程 / 渲染层（src/shared/ 是单向的跨进程层）'
+)
+
+// 阈值字面量只允许出现在 levels.ts 一处。判据扫全仓的**生效代码**（先剥注释）——
+// 注释里写「≥85% 危险」是文档，裸 grep 会把它算成第二处。
+const sharedFiles = readdirSync(resolve(ROOT, 'src/shared')).filter((f) => f.endsWith('.ts'))
+const rendererTs = readdirSync(resolve(ROOT, 'src/renderer/src')).filter(
+  (f) => f.endsWith('.ts') || f.endsWith('.tsx')
+)
+const mainTs = readdirSync(resolve(ROOT, 'src/main')).filter((f) => f.endsWith('.ts'))
+const preloadTs = readdirSync(resolve(ROOT, 'src/preload')).filter((f) => f.endsWith('.ts'))
+const scanned = [
+  ...sharedFiles.map((f) => `src/shared/${f}`),
+  ...rendererTs.map((f) => `src/renderer/src/${f}`),
+  ...mainTs.map((f) => `src/main/${f}`),
+  ...preloadTs.map((f) => `src/preload/${f}`)
+]
+ok(scanned.length > 0, `G2a 前置：扫到了源文件（${scanned.length} 个；一个都没扫到时负向断言会空洞通过）`)
+const dupThreshold = scanned.filter((f) => {
+  const code = stripTsComments(read(f))
+  return /pct\s*>=\s*85\b/.test(code) || /pct\s*>=\s*60\b/.test(code)
+})
+eq2(dupThreshold, [levelsPath], 'G2 85 / 60 阈值只在 shared/levels.ts 一处（卡片与托盘不许同屏打架）')
+
+// 渲染层的消费者必须继续经 format.ts 转发口取等级。format.ts 自己豁免（它就是那道口）。
+const rendererConsumers = rendererTs.filter((f) =>
+  /\blevelOfPercent\b/.test(read(`src/renderer/src/${f}`))
+)
+ok(rendererConsumers.length > 0, `G3a 前置：渲染层确实在用 levelOfPercent（${rendererConsumers.length} 个文件）`)
+const bypass = rendererConsumers.filter(
+  (f) => f !== 'format.ts' && /from '.*shared\/levels'/.test(read(`src/renderer/src/${f}`))
+)
+eq2(bypass, [], 'G3 渲染层消费者仍经 format.ts 取等级（绕过转发口就会出现两条会分叉的 import 路径）')
+
+// ─── H. 托盘 debug 通道的生产隔离 ─────────────────────────────────────────────
+//
+// P1-3 加了 `debug:tray-image`（回传图标等级 / 形状 / 实际落盘键）。它是**注入能力**：
+// 生产运行时不暴露，否则渲染层就能推夹具改掉菜单栏显示。
+// 判据是注册语句必须落在 `--uitest / --shots / --ballshot` 那个 if 之内 ——
+// 「channel 名出现在文件里」不等于「它在门里」。
+// ⚠ 剥注释后再判：ipc.ts 的注释里就写着 `debug:tray-image` 这行字。
+// ⚠ 匹配串**不带右括号**：源码是 `ipcMain.handle('x', () => …)`，引号后跟的是逗号。
+//   写成 `handle('x')` 一条都匹配不上 —— 「门内没有」于是恒真、「门内都有」于是恒假，
+//   两条同时变成废门（第一版就是这么写的，靠 H1 对照物才发现）。
+console.log('\nH. 托盘 debug 通道的生产隔离')
+
+const ipcCode = stripTsComments(read('src/main/ipc.ts'))
+const debugTrayChannels = [...ipcCode.matchAll(/ipcMain\.handle\('(debug:tray-[a-z]+)'/g)].map(
+  (m) => m[1]
+)
+ok(debugTrayChannels.length > 0, `H0 前置：ipc.ts 里有托盘 debug 通道（${debugTrayChannels.join(', ')}）`)
+// 门 = 最后一个 `process.argv.includes('--uitest')` 起的区间。lastIndexOf 是刻意的：
+// 这几个 flag 在本仓别处也出现过（index.ts 的分派），只有最后一个才是注册门。
+const gateAt = ipcCode.lastIndexOf("process.argv.includes('--uitest')")
+ok(gateAt >= 0, 'H0b 前置：找得到 QA flag 门（找不到时下面两条会空洞通过）')
+const insideGate = ipcCode.slice(gateAt)
+const outsideGate = ipcCode.slice(0, gateAt)
+const isReg = (c) => `ipcMain.handle('${c}'`
+// 对照物：门内本来就该找得到这些通道。少了它，上面两条在匹配串写错时照样「全绿」。
+eq2(
+  debugTrayChannels.filter((c) => insideGate.includes(isReg(c))),
+  debugTrayChannels,
+  'H1 对照：托盘 debug 通道都在 QA 门内（证明匹配串写对了，不是空洞通过）'
+)
+eq2(
+  debugTrayChannels.filter((c) => outsideGate.includes(isReg(c))),
+  [],
+  'H2 门之外没有第二处注册（生产运行时不暴露注入能力）'
+)
+// preload 暴露了通道但主进程没注册 → 渲染层调用 reject。两侧必须一起变。
+const preloadCode = stripTsComments(read('src/preload/index.ts'))
+const preloadTray = [...preloadCode.matchAll(/invoke\('(debug:tray-[a-z]+)'/g)].map((m) => m[1])
+ok(preloadTray.length > 0, `H3a 前置：preload 暴露了托盘 debug 通道（${preloadTray.join(', ')}）`)
+eq2(
+  preloadTray.filter((c) => !debugTrayChannels.includes(c)),
+  [],
+  'H3 preload 暴露的托盘 debug 通道都有主进程 handler（否则渲染层 await 会 reject）'
+)
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

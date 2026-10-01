@@ -52,16 +52,9 @@ export function humanDur(ms: number): string {
   return `${d}天${h % 24}小时`
 }
 
-export type Level = 'ok' | 'warn' | 'danger' | 'muted'
-
-/** 阈值分级：≥85% 危险，≥60% 警告 */
-export function levelOfPercent(pct: number | null, status: string): Level {
-  if (status !== 'ok') return 'muted'
-  if (pct == null) return 'muted'
-  if (pct >= 85) return 'danger'
-  if (pct >= 60) return 'warn'
-  return 'ok'
-}
+// 阈值判据搬到 shared/levels.ts（主进程托盘也要用同一份），这里只做转发 ——
+// 调用点（CardView / DetailView / read-model / components）一行都不用改。
+export { levelOfPercent, type Level } from '../../shared/levels'
 
 export function timeAgo(iso: string | undefined, now: number): string {
   if (!iso) return ''

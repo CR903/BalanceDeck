@@ -2,18 +2,60 @@
 
 ## Goal
 
-详情页在每模型用量表上方展示 7/30 天用量趋势（轻量 SVG，不引图表库）。数据来自 P0-2 已落盘的本机快照。
+详情页在「每模型用量表」上方展示 **7 / 30 天用量趋势图**，把「用量」从瞬时值变成趋势，
+帮助用户规划额度。数据来自 P0-2 已落盘的本机快照。
+
+竞品依据：Claude-God（sparkline 7/14/30 天）、TokenTracker（activity heatmap）、
+dsh-cost-meter（Codex 风格热力图）、token-monitor（历史使用）。
 
 ## Requirements
 
-- TBD
+1. **轻量 SVG，不引入图表库**（竞品报告原话）。
+2. **每根柱 = 那天末值**（该天最后一个**已知**采样值）。与卡片当前显示的数字**同一口径** ——
+   用户能自己核对，不需要理解「峰值/均值」是什么。
+3. **只画主窗口 + 窗口切换控件**。不做三窗口叠画：5H 窗口在 7 天内**重置 33 次**，
+   叠画出来是锯齿，用户看不出「哪条线是本月用量」。
+4. **7 / 30 天共用一次 IPC**，切换纯前端（快照每 15 分钟才动，切换不该发请求）。
+5. **余额类不画**：实测余额窗口的 `pct` 恒 `null`（`'账户余额'`）或恒 `0`（`'账户额度'`）——
+   前者画不出来，后者画出来是贴底平线，**比 null 更危险**（看起来像有数据）。
+   且磁盘上没有余额金额历史（`UsagePoint` 只有 `pct`，采样时金额已被丢弃）。
+6. **不受 `predictOn` 管**：`predictOn` 的语义是「预计耗尽」，只该管那行文案。
+   现状 `usePredictions` 在关闭时**根本不请求**，若复用会让趋势图一起消失。
+7. **数据诚实**：缺样本的日子**留空**，不补 0 —— 缺口可见 = 用户知道那天应用没跑。
+
+## Constraints
+
+- **不加新 IPC**：复用已有的 `window.api.usagePredict(id, days, now)`，
+  它返回的已经是 `loadRecent` 的**原始历史**。「只在套餐类请求」是 `DetailView.tsx` 的选择，
+  不是通道限制。
+- **按天分桶放渲染层**：`usageStore` 的 `load()` 有 cache 短路，额外 IO 为零；
+  后端零改动（不碰 `usageStore` / `ipc.ts` / `preload` / shared 契约）。
+- **本地日历日分桶**，非 UTC —— 跨时区用 UTC 日会在每天早上把最近 8 小时归到「昨天」。
+- **纵轴固定 0..100**，不随数据缩放 —— 否则「上周 90%、本周 20%」两张图形状一样。
+- 聚合纯函数放**新文件** `src/renderer/src/usageHistory.ts`（不混进 `usagePredict.ts`：
+  趋势图不需要预测的任何东西）。
+- 取数 hook 的依赖数组**不含 `now`**（30s 倒计时钟每圈重发 IPC 是纯浪费）。
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] 详情页「每模型用量表」上方出现 `.trend-chart`，柱数 = 可见天数
+- [ ] 每根柱 = 该天**最后一个已知** `pct`；末尾是 `null` 时取前一个已知值
+- [ ] 缺样本的天**不补 0**，图上留空；全 `null` 的天**不产生柱**
+- [ ] 纵轴固定 0..100：输入 5% 与 95% 的 y 差 ≈ 高度 × 90%（用相对差断言，不用绝对像素）
+- [ ] 默认画主窗口（`primaryWindow`），有窗口切换控件；切换**不重发 IPC**
+- [ ] 7 / 30 天切换共用一次 IPC（取 30 天）
+- [ ] 余额类供应商详情页**没有** `.trend-chart`，且**不发** IPC 请求
+- [ ] 趋势图**不受 `predictOn` 影响**（关掉预计耗尽，趋势图仍在）
+- [ ] 历史为空 / IPC 返回 `{}` → `TrendChart` 返回 `null`（界面什么都不显示，不是「加载失败」）
+- [ ] 纯函数**不修改入参**（深比较断言）；无 `Date.now` / `window.` / `document.`
+- [ ] 新增 `scripts/test-usage-history.mjs` 并接入 `npm test`
+- [ ] `npm test` 与 `npm run typecheck` 通过
+- [ ] 两个反验实测有效：末值改成「取数组最后一个」→ 红；缺样本补 0 → 红
+- [ ] `--uitest` 断言：详情页渲染出 `.trend-chart` 且柱数正确；余额类**没有**它
 
 ## Notes
 
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+- **用户拍板的三个语义**：① 每根柱 = 每天末值（与卡片同一口径）；② 趋势图不受 `predictOn` 管；
+  ③ 只画主窗口 + 切换控件。
+- **调研结论（已核实）**：不需要新增 IPC；余额类实测不能画；分桶放渲染层（后端零改动）。
+- 设计推导见 `design.md` 的 D1–D5，执行清单见 `implement.md`。
