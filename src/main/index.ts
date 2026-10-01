@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { join } from 'path'
 import { registerIpc } from './ipc'
 import { keystoreStore } from './keystore'
 import { configureProviders } from './providers'
@@ -7,6 +8,9 @@ import { createTray, updateTray, currentTrayTitle, trayImageInfo } from './tray'
 import { syncAutostart } from './autostart'
 import { startScheduler, refreshNow, currentState, stopScheduler } from './scheduler'
 import { registerHumanAssetScheme, setupHumanAssetProtocol } from './human-assets'
+import { runExportCommand } from './cli/export-command'
+import { createExportWriter } from './cli/export-writer'
+import { EXPORT_FILE_NAME } from './cli/export-snapshot'
 import type { AppState } from '../shared/types'
 
 // QA 工具（--shots / --uitest）不参与产品运行，见 ./qa —— 入口只负责分派
@@ -20,6 +24,16 @@ const uitest = process.argv.includes('--uitest')
 const shots = process.argv.includes('--shots')
 // --details-test：控制台每模型明细抓取自检（一次性抓取并打印，用于排障）
 const detailsTest = process.argv.includes('--details-test')
+
+// ── `export` 子命令（`BalancedDeck export --json`，供 tmux 等外部脚本消费）─────
+//
+// 位置敏感，所以必须显式切片而不是像上面几个 flag 那样用 `includes`：
+// **实测**开发态 `process.argv` = `[electronBin, '.', 'export', '--json']`，
+// 打包态 = `[exe, 'export', '--json']` —— 偏移量不同。
+// ⚠ 用 `process.argv` 而**不是** `app.argv`：本机 Electron 37.10.3 实测
+//   `app.argv === undefined`，照官方文档写会直接 TypeError。
+const cliArgv = process.argv.slice(app.isPackaged ? 1 : 2)
+const exportMode = cliArgv[0] === 'export'
 
 // 受限环境下跑自检：某些沙箱里 Chromium 的 GPU 进程起不来（表现为启动即 SIGTRAP）。
 // BD_SANDBOX_OFF=1 会关掉进程沙箱并允许软件 WebGL —— **仅用于开发/CI 自检**，
@@ -72,9 +86,38 @@ function pushState(s: AppState): void {
   // ⚠️ 必须显式发给悬浮窗：控制台明细抓取会临时创建一个隐藏窗口，
   // 若用 BrowserWindow.getAllWindows()[0] 可能把状态推给隐藏窗口 → 界面永远停在骨架屏。
   getOverlay()?.webContents.send('state:snapshot', s)
+  // 导出快照落盘（P1-6）。挂在这里而不是 scheduler 的 collect 里：
+  // pushState 本来就是每次状态推送都会走的路径，既不用改 scheduler.ts，
+  // 又天然与采集同步。写盘按内容哈希去重，常驻应用 60s 一轮也不会变成每天 1440 次写盘。
+  exportWriter.maybeWrite(s, Date.now())
 }
 
+// 导出快照写盘器（惰性拿 userData：与 usage-history.ts 同一形状）
+const exportWriter = createExportWriter({
+  filePath: () => join(app.getPath('userData'), EXPORT_FILE_NAME)
+})
+
 app.whenReady().then(async () => {
+  // ── `export` 子命令：只读一份快照，不开窗、不建托盘、不起调度器 ──────────────
+  //
+  // 放在最前面是有意的：它后面的 primePrefs() 会读凭据，createOverlay/createTray/
+  // startScheduler 都是「正常启动」路径，一样都不该在 CLI 档发生。
+  //
+  // ⚠ 退出用 `app.exit(code)` 而不是 `app.quit()`：CLI 的产物是**退出码**（脚本要判），
+  //   而 quit() 会走 before-quit → stopScheduler 且不保证退出码；
+  //   `window-all-closed` 也不保证触发（没建窗口）→ 必须自己 exit。
+  if (exportMode) {
+    const r = runExportCommand({
+      argv: cliArgv.slice(1),
+      filePath: () => join(app.getPath('userData'), EXPORT_FILE_NAME),
+      now: Date.now()
+    })
+    if (r.out) process.stdout.write(r.out)
+    if (r.err) process.stderr.write(`${r.err}\n`)
+    app.exit(r.code)
+    return
+  }
+
   // Windows Toast 的归属 id（P0-1 系统通知）。没有它，Electron 在 Windows 上弹出的
   // 通知会被算到宿主可执行文件（electron.exe）名下，**在部分系统上直接不出现** ——
   // 不抛不红，只是「通知永远不来」，而 macOS 上完全看不出问题（那边忽略这个 id）。
