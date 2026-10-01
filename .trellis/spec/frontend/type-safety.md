@@ -452,6 +452,35 @@ Same shape as the read-side re-validation rule below: **the store is not the sou
 about identity, the id carried alongside it is.** Guarded by `test-usage-predict.mjs` / the
 DetailView section of `test-usage-store.mjs` H-series.
 
+### A quota the window cannot express: balance windows have no usable `pct`
+
+**Measured 2026-10-01** (P1-1 trend chart, via `loadTs` on the real `shared/percent.ts`):
+
+| Window name | Input | `windowPercent` |
+|---|---|---|
+| `账户余额` (`adapters/types.ts`) | `{ name:'账户余额', used:1288.5, unit:'cny' }` | **`null`** — no `limit`, so no ratio exists |
+| `账户额度` (`protocols.ts`) | `{ name:'账户额度', used:0, limit:120, unit:'usd' }` | **`0`** — `limit` exists but is never filled |
+
+So the balance classes are **not** plottable, and the two failure modes differ in kind:
+
+- **`null`** cannot be drawn at all — every day is a gap.
+- **`0`** draws *perfectly*: 30 identical bars pinned to the floor. This is the more dangerous
+  one, because it looks like data. A user reading it concludes "I used nothing this month",
+  when in fact the ratio was never computed.
+
+They **are** still sampled and written to disk (`scheduler.ts` filters on `status !== 'ok'`,
+not on `kind`), so the snapshot contains them — but `UsagePoint` carries only `t` + `pct`;
+`w.used` (the amount) is dropped at sampling time, so there is **no balance-amount history on
+disk**. Making a balance trend would require extending the cross-process `UsagePoint` and the
+sampler. Out of scope for P1-1.
+
+**Rule:** gate on `isPlan(s)` and **don't request at all** — the shape returns nothing useful
+and a plausible-looking 0 is worse than absent. If someone later wants it, the prerequisite is
+a contract change, not a renderer change.
+
+Pinned by `DetailView.tsx`'s `useUsageHistory` (early `return` before the IPC call) and
+`scripts/test-usage-history.mjs` (the pure-function side).
+
 ## Known inconsistencies (state, don't silently "fix")
 1. `DataQuality` vs `string` — `quality.ts:59,64` widen `dataQuality` to `string` while the
    same file imports the strict union and uses it strictly at `:35`.

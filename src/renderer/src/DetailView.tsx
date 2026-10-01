@@ -9,6 +9,8 @@ import {
   type PredictConfig
 } from './usagePredict'
 import { isPlan } from '../../shared/quality'
+import { TREND_MAX_DAYS } from './usageHistory'
+import { TrendPanel } from './TrendChart'
 import { Ring, Icon, IconButton, Bar, StatusDot } from './components'
 import { ProviderMark } from './ProviderMark'
 import {
@@ -93,6 +95,61 @@ function usePredictions(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [s, points, now, cfg.windowDays, cfg.retentionDays]
   )
+}
+
+/**
+ * 取这家供应商的**原始**用量历史（`Record<窗口名, UsagePoint[]>`，未做任何加工）。
+ *
+ * ⚠⚠ **与 `usePredictions` 并列，不是它的子集**（design.md D3）：
+ *   `usePredictions` 在 `!on` 时**根本不请求**（上面第 67 行的 `if (!providerId || !on …) return`），
+ *   而 `predictOn` 的语义是「预计耗尽」这一行文案 —— 用户关掉的是一句话，不是趋势本身。
+ *   复用同一个 hook 会让「关掉预计耗尽」连带让趋势图一起消失。所以两个 hook 各自请求、
+ *   各自消费；代价是各自发一次 IPC，**接受**（一次多传几 KB 本地数组，换开关语义互不牵连）。
+ *
+ * ⚠ **一次取 `TREND_MAX_DAYS`(30) 天**：7 / 30 天两个视图共用同一份数组，切换纯前端。
+ *   快照文件每 15 分钟才动一次，而切换会频繁发生（design.md D4）。
+ *
+ * ⚠ 非套餐类（余额）**不请求**：`windowPercent` 对余额窗口实测**恒 null**（'账户余额'）
+ *   或**恒 0**（'账户额度'）—— 前者画不出来，后者画出来是贴底平线，比 null 更危险
+ *   （看起来像有数据）。且 `UsagePoint` 只有 `pct`，采样时金额已被丢弃，磁盘上没有余额历史。
+ *
+ * ⚠ `on` 是 `planish`（有没有这家且是套餐类），**不是 `predictOn`** —— 见上。
+ * ⚠ 依赖数组里**不含 `now`**：30s 倒计时钟每圈重发一次 IPC 是纯浪费（快照每 15 分钟才动一次），
+ *   与 `usePredictions` 同一条纪律。`s` 只在 effect body 里读、不进依赖，
+ *   换供应商由 `providerId` 触发重取。
+ */
+function useUsageHistory(
+  s: ProviderSnapshot | undefined,
+  on: boolean
+): Record<string, UsagePoint[]> {
+  const [loaded, setLoaded] = useState<{ id: string; points: Record<string, UsagePoint[]> }>({
+    id: '',
+    points: {}
+  })
+  const providerId = s?.id
+
+  useEffect(() => {
+    if (!providerId || !on || !s || !isPlan(s)) return
+    let live = true
+    void window.api
+      .usagePredict(providerId, TREND_MAX_DAYS, Date.now())
+      .then((r) => {
+        if (live && r && typeof r === 'object') setLoaded({ id: providerId, points: r })
+      })
+      .catch(() => {
+        /* 读失败 → 归空态：不显示趋势图，而不是「趋势图加载失败」（与 usePredictions 同一纪律）。
+           ⚠ 必须**清空**而不是「保持原状」：换供应商后继续显示上一家的历史，
+           见 usePredictions 上面对错配的说明。 */
+        if (live) setLoaded({ id: providerId, points: {} })
+      })
+    return () => {
+      live = false
+    }
+    // ⚠ 刻意不挂 `now` / `on`（见上面注释）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerId, on])
+
+  return loaded.id === providerId ? loaded.points : EMPTY_POINTS
 }
 
 /** 数据可信度提示条：缓存 / 本机估算时必须显式告知，并可一键重试 */
@@ -244,6 +301,9 @@ export function DetailView({
   // 而发一次 IPC 换回一个必然为空的结果只是白费一次往返。
   const planish = !!s && isPlan(s)
   const predictions = usePredictions(s, planish ? now : 0, predictOn, predictConfig)
+  // ⚠ 趋势图与 predictOn **无关**（design.md D3）：`on` 传的是「有没有这家且是套餐类」，
+  //   不是 `predictOn`。余额类在这里**不发** IPC（实测画不出来，见 hook 上的注释）。
+  const history = useUsageHistory(s, planish)
 
   if (!s) {
     return (
@@ -350,6 +410,16 @@ export function DetailView({
                   ))}
                 </div>
               </section>
+            )}
+
+            {/* ── 历史趋势图（P1-1）──────────────────────────────────────────
+                位置：「每模型用量表」**上方**（PRD 指定）。它答的是「这 30 天是怎么涨到
+                卡片上那个数的」，与上方 hero / 预计耗尽 / 用量窗口同一批问题，所以挨着放。
+                ⚠ 刻意**并列**而不是塞进 `{hasModels && …}` 里：趋势图不需要 `s.models`
+                存在，而塞进模型明细会让「这家没有模型数据」连带让趋势图消失。
+                没有历史时 TrendPanel 返回 null —— 界面什么都不显示（不是「加载失败」）。 */}
+            {plan && (
+              <TrendPanel pointsByWindow={history} primaryWindowName={hero?.name} now={now} />
             )}
 
             {hasModels && (

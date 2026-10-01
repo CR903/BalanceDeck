@@ -955,6 +955,85 @@ textarea {
   transform: rotate(0deg);
 }
 
+/* 历史趋势图（P1-1）。卡片外壳沿用 .dwin 的形状：它回答的是与「用量窗口」同一批问题
+   （这个窗口用了多少），形状不同会让用户以为它属于别的模块。
+   ⚠ 只用既有 token（--surface / --border / --track / --fg-faint / --ok/warn/danger），
+     不写新的颜色字面量 —— 外部皮肤（ext:*）只吃得到这里的 var()，写字面量等于把它排除在外。 */
+.trend-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.trend-switch-group {
+  display: inline-flex;
+  gap: 3px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+.trend-chip {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--fg-faint);
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.trend-chip:hover {
+  color: var(--fg);
+}
+.trend-chip.on {
+  color: var(--fg);
+  background: var(--surface-strong);
+  font-weight: 600;
+}
+.trend {
+  padding: 11px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.trend-chart {
+  display: block;
+  width: 100%;
+  height: 76px;
+  overflow: visible;
+}
+/* preserveAspectRatio=none 会把 stroke 拉扁，所以参考线用矢量特效关掉描边 */
+.trend-grid {
+  stroke: var(--track);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.trend-bar {
+  fill: var(--ok);
+}
+.trend-bar.lvl-warn {
+  fill: var(--warn);
+}
+.trend-bar.lvl-danger {
+  fill: var(--danger);
+}
+.trend-bar.lvl-muted {
+  fill: var(--fg-faint);
+}
+.trend-axis {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.trend-scale {
+  flex: 1 1 auto;
+  text-align: center;
+  color: var(--fg-faint);
+}
+
 .wmodels {
   margin-top: 7px;
   display: flex;
