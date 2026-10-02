@@ -1,0 +1,14 @@
+{"file": "./prd.md", "reason": "需求与 28 条验收标准（方案A：升级codex.ts）"}
+{"file": "./design.md", "reason": "技术设计与决策依据（D1-D8）"}
+{"file": "./implement.md", "reason": "分阶段清单 + 20套件断言数基线 + Review Gates"}
+{"file": "./research/02-endpoints-and-auth.md", "reason": "wham端点/双头/响应形状/凭据来源（推翻cookie前提）"}
+{"file": "./research/05-design-decisions.md", "reason": "kind/mark取值、Q7扩展vs新增、fixture断言清单V1-V12"}
+{"file": "./research/04-credential-security-and-degradation.md", "reason": "items/extras边界、渲染层红线、降级矩阵"}
+{"file": "./research/01-current-state-openai-billing.md", "reason": "openai-billing现状与不动它的理由"}
+{"file": "./research/06-pitfalls-and-graceful-degradation.md", "reason": "429先例、改版频率、header要求、风险登记"}
+{"file": "./research/07-open-questions.md", "reason": "Q1-Q7待确认问题（本规划已逐条定论）"}
+{"file": "./research/03-competitors-and-licenses.md", "reason": "许可结论：MIT可读/未验证只读结论/AGPL边界"}
+{"file": "../../spec/adapters/index.md", "reason": "适配器契约：CollectRequest接缝、快照铸造器纪律"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（静态守卫需前置断言、loadTs用法）"}
+{"file": "./design.md", "reason": "D2优先级链是本次最关键的门（401可见vs回退撒谎）"}
+{"file": "./research/02-endpoints-and-auth.md", "reason": "核对Account-Id缺失降级的保守性"}
