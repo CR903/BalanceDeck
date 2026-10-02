@@ -274,9 +274,9 @@ if (legacyCall != null) {
 ok(/req\.method\s*\?\?\s*'GET'/.test(adaptersCode), 'S7d 富投影把「不传 method」记成 GET（适配器断言 POST 时不必关心显式与否）')
 ok(/req\.body\s*\?\?\s*null/.test(adaptersCode), 'S7e 富投影把「不传 body」记成 null（而不是 undefined 键）')
 
-// S7f/S7g：makeRichRequest 目前**还没有消费者**（留给 Gemini / Antigravity /
-// Codex 升级三家的 V/W/Y 段）。未使用的代码最容易悄悄腐烂 —— 三个月后没人知道
-// 它记的是哪一版投影、路由还按不按 URL 匹配。所以这两条是它的防锈条款：
+// S7f/S7g：makeRichRequest 已有消费者（Gemini V 段是第一个；Antigravity /
+// Codex 升级三家的 X/Y 段随后也用它）。投影记法与路由匹配是它的两条不变量 ——
+// 三个月后没人记得它记的是哪一版投影、路由还按不按 URL 匹配。所以这两条是它的防锈条款：
 // 若哪天决定删掉它，把这两条一并删掉即可（别留着一条永远绿的假护栏）。
 const richReq = /function makeRichRequest\(([^)]*)\)\s*\{([\s\S]*?)\n\}/.exec(adaptersCode)
 // ⚠ 前置里的长度上限不是随手加的：`[\s\S]*?\n\}` 这个切片靠「函数体收尾的 `}`

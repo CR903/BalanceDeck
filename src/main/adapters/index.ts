@@ -6,6 +6,7 @@ import { minimaxAdapter } from './minimax'
 import { claudeAdapter } from './claude'
 import { codexAdapter } from './codex'
 import { copilotAdapter } from './copilot'
+import { geminiAdapter } from './gemini'
 import { qwenAdapter } from './qwen'
 import { volcAdapter } from './volc'
 import { PROTOCOLS, protocolById } from './protocols'
@@ -26,6 +27,7 @@ export const CODE_ADAPTERS: Record<string, ProviderAdapter> = {
   'claude-code': claudeAdapter,
   codex: codexAdapter,
   copilot: copilotAdapter,
+  gemini: geminiAdapter,
   minimax: minimaxAdapter,
   'qwen-bss': qwenAdapter,
   'volc-billing': volcAdapter

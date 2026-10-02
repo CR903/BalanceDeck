@@ -97,9 +97,14 @@ export async function readJson(
   ctx: CollectContext,
   url: string,
   headers: Record<string, string>,
-  timeoutMs = 12000
+  timeoutMs = 12000,
+  // POST 类适配器（Gemini 三个端点全是 POST）透传 method/body。
+  // 可选：第 5 参不传时与改动前逐字相同（既有 7 个调用点一行不改）。
+  // ⚠ 这里不做任何序列化：form-encoded 与 JSON 的编码分歧由调用方决定
+  //（见 types.ts CollectRequest.body 的注释；request.ts 同样不序列化）。
+  opts?: { method?: 'GET' | 'POST'; body?: string }
 ): Promise<{ status: number; body: unknown }> {
-  const res = await ctx.request({ url, headers, timeoutMs })
+  const res = await ctx.request({ url, headers, timeoutMs, ...opts })
   const text = res.text
   let body: unknown = null
   try {

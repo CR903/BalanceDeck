@@ -92,6 +92,15 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     singleton: true
   },
   {
+    id: 'gemini',
+    name: 'Gemini Code Assist',
+    kind: 'coding',
+    protocol: 'gemini',
+    defaultBaseUrl: 'https://cloudcode-pa.googleapis.com',
+    localCredential: true,
+    singleton: true
+  },
+  {
     id: 'deepseek',
     name: 'DeepSeek',
     kind: 'balance',

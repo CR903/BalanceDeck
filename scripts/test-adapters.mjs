@@ -144,9 +144,8 @@ function callProjectRich(req) {
  * 与 makeRequest 行为**完全相同**（同 URL 精确匹配、未覆盖即抛），只是 list 里记的是富投影。
  * ⚠️ 路由仍**只按 url 匹配**：匹配逻辑一旦引入 body，既有段会因桩行为变化而变红。
  *
- * ⚠️ **本函数目前还没有消费者** —— 它是给三家 POST 类适配器预留的：
- * Gemini（V 段）/ Antigravity（X 段）/ Codex 升级（Y 段）各自在拼
- * CollectContext 时用它，而不是复制一遍这段桩。
+ * ⚠️ **本函数已有消费者**：Gemini（V 段）是第一个使用者；Antigravity（X 段）/
+ * Codex 升级（Y 段）各自在拼 CollectContext 时也用它，而不是复制一遍这段桩。
  * 未使用的代码会腐烂，所以 `scripts/test-seam.mjs` 的 S7f/S7g 钉住了它的两条
  * 不变量（记的是富投影 / 路由仍只按 URL 匹配）。**若将来决定删掉它，
  * 把那两条一并删掉** —— 别留一条永远绿的假护栏。
@@ -1265,6 +1264,538 @@ eq(
   'U13 内置实例的未配置提示点名环境变量'
 )
 eq(project(b6).detail, '未配置 API Key（在设置中编辑该供应商）', 'U14 自定义实例给编辑指引')
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V. Gemini Code Assist（代码适配器 · src/main/adapters/gemini.ts）
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nV. Gemini Code Assist（代码适配器）')
+
+// ── V 段夹具 ─────────────────────────────────────────────────────────────────
+// 来源：字段名与类型逐字取自 google-gemini/gemini-cli（Apache-2.0）
+//   packages/core/src/code_assist/types.ts 的 BucketInfo / LoadCodeAssistResponse
+// 单桶样本取自 gemini-cli issue #27363 的真实返回（100% 时 remainingAmount 被省略）
+// ⚠️ 「quota」作为数组键的写法来自第三方实现（hermes-quota-plugin, MIT），
+//    与官方类型定义矛盾 —— 作为宽容回落的兼容夹具，非官方契约。
+// ⚠️ 凭据字面量红线（keystore.ts:6）：下面全是明显假的占位，不得换成真值。
+
+const { geminiAdapter, geminiHome } = await loadTs('src/main/adapters/gemini.ts')
+
+const GEMINI_HOST = 'https://cloudcode-pa.googleapis.com'
+const GEMINI_LOAD = `${GEMINI_HOST}/v1internal:loadCodeAssist`
+const GEMINI_QUOTA = `${GEMINI_HOST}/v1internal:retrieveUserQuota`
+const GEMINI_TOKEN = 'https://oauth2.googleapis.com/token'
+const GEMINI_PROJECT = 'gen-lang-client-abc123' // 形状仿 cloudaicompanionProject
+const GEMINI_FAKE_AT = 'ya29.fake-access-token-for-tests'
+const GEMINI_FAKE_RT = 'fake-refresh-token-for-tests'
+const GEMINI_FAKE_CREDS = {
+  access_token: GEMINI_FAKE_AT,
+  refresh_token: GEMINI_FAKE_RT,
+  expiry_date: Date.now() + 3600_000,
+  client_id: 'fake-client-id-for-tests',
+  client_secret: 'fake-client-secret-for-tests'
+}
+const GEMINI_REFRESHED_AT = 'ya29.refreshed-access-token-for-tests'
+
+const GEMINI_LOAD_BODY = JSON.stringify({
+  metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
+})
+const GEMINI_QUOTA_BODY = JSON.stringify({ project: GEMINI_PROJECT })
+const GEMINI_AUTH = `Bearer ${GEMINI_FAKE_AT}`
+const V_LOAD_CALL = {
+  url: GEMINI_LOAD,
+  auth: GEMINI_AUTH,
+  accept: 'application/json',
+  method: 'POST',
+  contentType: 'application/json',
+  body: GEMINI_LOAD_BODY
+}
+const V_QUOTA_CALL = {
+  url: GEMINI_QUOTA,
+  auth: GEMINI_AUTH,
+  accept: 'application/json',
+  method: 'POST',
+  contentType: 'application/json',
+  body: GEMINI_QUOTA_BODY
+}
+
+/** loadCodeAssist：Standard 档 + 已绑定配额项目（happy path） */
+const GEMINI_LOAD_OK = {
+  currentTier: { id: 'standard-tier', name: 'Standard', isDefault: true, hasOnboardedPreviously: true },
+  allowedTiers: [{ id: 'standard-tier', name: 'Standard', isDefault: true }],
+  ineligibleTiers: null,
+  cloudaicompanionProject: GEMINI_PROJECT
+}
+
+/** retrieveUserQuota：真实样本（100%，remainingAmount 缺失） */
+const GEMINI_BUCKET_FULL = {
+  resetTime: '2026-05-23T02:48:06Z',
+  tokenType: 'REQUESTS',
+  modelId: 'gemini-3.1-pro-preview',
+  remainingFraction: 1
+}
+const gBucket = (modelId, frac, resetTime) => ({ resetTime, tokenType: 'REQUESTS', modelId, remainingFraction: frac })
+const V_WIN_FULL = {
+  name: 'gemini-3.1-pro-preview',
+  used: 0,
+  percent: 0,
+  unit: 'percent',
+  resetAt: '2026-05-23T02:48:06Z',
+  note: '官方配额接口'
+}
+
+// 代码适配器自己声明 kind，但不声明 mark（实例绑定层补，见 N 节）
+const gemOk = (body = {}) => ok({ kind: 'coding', mark: null, ...body })
+const gemErr = (detail) => ({ ...err(detail), kind: 'coding' })
+const gemNodata = (detail) => ({ ...nodata(detail), kind: 'coding' })
+
+/** V 段专用的检查器：走 makeRichRequest（富投影，断言得了 method / body） */
+async function checkRich(label, { adapter, routes, expect }) {
+  const inst = makeRichRequest(routes)
+  const snap = await adapter.collect(makeCtx({ request: inst.request }))
+  eq(project(snap), expect.snap, label)
+  if (expect.call) eq(inst.list, [expect.call], `${label} · 请求`)
+  if (expect.calls) eq(inst.list, expect.calls, `${label} · 请求序列`)
+  return { snap, list: inst.list }
+}
+
+/**
+ * V 段的布尔断言。本文件已有的 `ok` 是快照构造器（`ok(body)`），不是断言 ——
+ * 直接拿它当断言会静默构造一个快照对象然后丢掉（不断言、不计数、不打印）。
+ * 所以这里另起 `vok`（与 test-seam.mjs 的 ok 同形）。
+ */
+function vok(cond, label) {
+  if (cond) {
+    pass++
+    console.log(`  ✓ ${label}`)
+  } else {
+    fail++
+    console.log(`  ✗ ${label}`)
+  }
+}
+
+// 凭据注入：GEMINI_CLI_HOME 指向临时目录（与 CLAUDE_CONFIG_DIR / CODEX_HOME 同一惯例）。
+// HOME 一并指向临时目录，否则 ~/.config/gcloud 的 ADC 真文件会污染「无凭据」断言。
+// V 段是文件最后一段，改 env 不影响任何既有段；段末恢复原值。
+const GEMINI_TMP = mkdtempSync(joinPath(tmpdir(), 'bd-gemini-'))
+const GEMINI_EMPTY = mkdtempSync(joinPath(tmpdir(), 'bd-gemini-empty-'))
+writeFileSync(joinPath(GEMINI_TMP, 'oauth_creds.json'), JSON.stringify(GEMINI_FAKE_CREDS))
+const savedGeminiHome = process.env.GEMINI_CLI_HOME
+const savedHome = process.env.HOME
+const savedGac = process.env.GOOGLE_APPLICATION_CREDENTIALS
+process.env.GEMINI_CLI_HOME = GEMINI_TMP
+process.env.HOME = GEMINI_TMP
+delete process.env.GOOGLE_APPLICATION_CREDENTIALS
+
+eq(geminiHome(), GEMINI_TMP, 'V0 GEMINI_CLI_HOME 被识别（与 CLAUDE_CONFIG_DIR / CODEX_HOME 同一惯例）')
+
+const v1 = await checkRich('V1 happy path：单桶 100% → percent 0', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, body: GEMINI_LOAD_OK }, { url: GEMINI_QUOTA, body: { buckets: [GEMINI_BUCKET_FULL] } }],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Standard', windows: [V_WIN_FULL] }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+eq(v1.snap.dataQuality, 'official', 'V1b 成功时 dataQuality === official')
+vok(v1.snap.degradedReason === undefined, 'V1c 适配器不写 degradedReason（那是 applyCachePolicy 的活）')
+vok(v1.snap.windows.every((w) => !('limit' in w)), 'V1d 不硬造 limit（窗口只有 percent）')
+eq(
+  v1.list.map((c) => c.url),
+  [GEMINI_LOAD, GEMINI_QUOTA],
+  'V1e access_token 有效时不发刷新请求（序列恰好两步）'
+)
+vok(!v1.list[0].auth.startsWith('token '), 'V1f 业务请求是 Bearer 前缀，不带 copilot 式的 token 前缀')
+
+await checkRich('V2 remainingFraction 0.965 → percent 3.5（一位小数）', {
+  adapter: geminiAdapter,
+  routes: [
+    { url: GEMINI_LOAD, body: GEMINI_LOAD_OK },
+    { url: GEMINI_QUOTA, body: { buckets: [gBucket('gemini-3.1-pro-preview', 0.965, '2026-05-23T02:48:06Z')] } }
+  ],
+  expect: {
+    snap: gemOk({
+      source: '官方接口',
+      plan: 'Standard',
+      windows: [
+        {
+          name: 'gemini-3.1-pro-preview',
+          used: 3.5,
+          percent: 3.5,
+          unit: 'percent',
+          resetAt: '2026-05-23T02:48:06Z',
+          note: '官方配额接口'
+        }
+      ]
+    }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+
+const v3 = await checkRich('V3 多桶各成一个窗口，非 REQUESTS 桶被过滤', {
+  adapter: geminiAdapter,
+  routes: [
+    { url: GEMINI_LOAD, body: GEMINI_LOAD_OK },
+    {
+      url: GEMINI_QUOTA,
+      body: {
+        buckets: [
+          gBucket('gemini-3.1-pro-preview', 0.5, '2026-05-23T02:48:06Z'),
+          { resetTime: '2026-05-23T02:48:06Z', tokenType: 'INPUT_TOKENS', modelId: 'gemini-3.1-pro-preview', remainingFraction: 0.1 },
+          gBucket('gemini-3.1-flash-preview', 0.8, '2026-05-23T02:48:06Z')
+        ]
+      }
+    }
+  ],
+  expect: {
+    snap: gemOk({
+      source: '官方接口',
+      plan: 'Standard',
+      windows: [
+        { name: 'gemini-3.1-pro-preview', used: 50, percent: 50, unit: 'percent', resetAt: '2026-05-23T02:48:06Z', note: '官方配额接口' },
+        { name: 'gemini-3.1-flash-preview', used: 20, percent: 20, unit: 'percent', resetAt: '2026-05-23T02:48:06Z', note: '官方配额接口' }
+      ]
+    }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+eq(
+  v3.snap.windows.map((w) => w.name),
+  ['gemini-3.1-pro-preview', 'gemini-3.1-flash-preview'],
+  'V3b 每桶一个窗口，name === modelId'
+)
+
+await checkRich('V4 数组键是 quota（而非 buckets）时也能解析（宽容回落）', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, body: GEMINI_LOAD_OK }, { url: GEMINI_QUOTA, body: { quota: [GEMINI_BUCKET_FULL] } }],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Standard', windows: [V_WIN_FULL] }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+
+const v5 = await checkRich('V5 remainingFraction 缺失的桶被跳过，不产生 NaN', {
+  adapter: geminiAdapter,
+  routes: [
+    { url: GEMINI_LOAD, body: GEMINI_LOAD_OK },
+    {
+      url: GEMINI_QUOTA,
+      body: { buckets: [{ resetTime: '2026-05-23T02:48:06Z', tokenType: 'REQUESTS', modelId: 'ghost-model' }, GEMINI_BUCKET_FULL] }
+    }
+  ],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Standard', windows: [V_WIN_FULL] }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+vok(
+  v5.snap.windows.every((w) => Number.isFinite(w.percent)),
+  'V5b 没有 NaN percent'
+)
+
+const v6 = await checkRich('V6 resetTime 缺失时 resetAt 字段整个不存在（不是 null）', {
+  adapter: geminiAdapter,
+  routes: [
+    { url: GEMINI_LOAD, body: GEMINI_LOAD_OK },
+    { url: GEMINI_QUOTA, body: { buckets: [{ tokenType: 'REQUESTS', modelId: 'gemini-3.1-pro-preview', remainingFraction: 0.5 }] } }
+  ],
+  expect: {
+    snap: gemOk({
+      source: '官方接口',
+      plan: 'Standard',
+      windows: [{ name: 'gemini-3.1-pro-preview', used: 50, percent: 50, unit: 'percent', note: '官方配额接口' }]
+    }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+vok(!('resetAt' in v6.snap.windows[0]), 'V6b resetAt 键整个不存在（stable 会吞 undefined，所以直接查键）')
+
+await checkRich('V7 空 buckets → errSnap（不是 ok + 空窗口）', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, body: GEMINI_LOAD_OK }, { url: GEMINI_QUOTA, body: { buckets: [] } }],
+  expect: {
+    snap: gemErr('官方接口未返回可用的 REQUESTS 配额桶（当前无可查额度）'),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+
+const V8_BODY = { somethingElse: 1 }
+await checkRich('V8 响应格式未识别：附带 160 字符预览', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, body: GEMINI_LOAD_OK }, { url: GEMINI_QUOTA, body: V8_BODY }],
+  expect: {
+    snap: gemErr(`响应格式未识别：${JSON.stringify(V8_BODY).slice(0, 160)}`),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+
+// V9：凭据 4 条路径全未命中 → noDataSnap（GEMINI_CLI_HOME 与 HOME 都指向空目录）
+process.env.GEMINI_CLI_HOME = GEMINI_EMPTY
+process.env.HOME = GEMINI_EMPTY
+const v9 = await checkRich('V9 未配置：noDataSnap 且点名 gemini 登录入口', {
+  adapter: geminiAdapter,
+  routes: [],
+  expect: {
+    snap: gemNodata('未找到 Gemini 凭据（先运行 gemini 登录，或配置 gcloud ADC）'),
+    calls: []
+  }
+})
+eq(v9.snap.dataQuality, undefined, 'V9b 失败路径 dataQuality 必须是 undefined（ADR-0002）')
+process.env.GEMINI_CLI_HOME = GEMINI_TMP
+process.env.HOME = GEMINI_TMP
+
+// V9c：$GOOGLE_APPLICATION_CREDENTIALS 次选路径 + 路径顺序（前者优先）
+const GAC_FILE = joinPath(GEMINI_TMP, 'adc.json')
+writeFileSync(GAC_FILE, JSON.stringify({ ...GEMINI_FAKE_CREDS, access_token: 'ya29.gac-should-lose' }))
+process.env.GOOGLE_APPLICATION_CREDENTIALS = GAC_FILE
+const v9c = await checkRich('V9c 两条路径都有凭据时 $GEMINI_CLI_HOME 优先', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, body: GEMINI_LOAD_OK }, { url: GEMINI_QUOTA, body: { buckets: [GEMINI_BUCKET_FULL] } }],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Standard', windows: [V_WIN_FULL] }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+eq(v9c.list[0].auth, GEMINI_AUTH, 'V9c2 赢的是 GEMINI_CLI_HOME 那份凭据')
+process.env.GEMINI_CLI_HOME = GEMINI_EMPTY
+await checkRich('V9d 主路径缺失时 $GOOGLE_APPLICATION_CREDENTIALS 兜底', {
+  adapter: geminiAdapter,
+  routes: [
+    { url: GEMINI_LOAD, body: GEMINI_LOAD_OK },
+    { url: GEMINI_QUOTA, body: { buckets: [GEMINI_BUCKET_FULL] } }
+  ],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Standard', windows: [V_WIN_FULL] }),
+    calls: [
+      { ...V_LOAD_CALL, auth: 'Bearer ya29.gac-should-lose' },
+      { ...V_QUOTA_CALL, auth: 'Bearer ya29.gac-should-lose' }
+    ]
+  }
+})
+process.env.GEMINI_CLI_HOME = GEMINI_TMP
+delete process.env.GOOGLE_APPLICATION_CREDENTIALS
+
+// V10：access_token 过期 → 先 form-encoded 刷新，再走正常两步
+writeFileSync(
+  joinPath(GEMINI_TMP, 'oauth_creds.json'),
+  JSON.stringify({ ...GEMINI_FAKE_CREDS, access_token: 'ya29.expired', expiry_date: Date.now() - 3600_000 })
+)
+const V_TOKEN_BODY =
+  `grant_type=refresh_token&refresh_token=${encodeURIComponent(GEMINI_FAKE_RT)}` +
+  `&client_id=${encodeURIComponent('fake-client-id-for-tests')}` +
+  `&client_secret=${encodeURIComponent('fake-client-secret-for-tests')}`
+const V_TOKEN_CALL = {
+  url: GEMINI_TOKEN,
+  auth: null,
+  accept: 'application/json',
+  method: 'POST',
+  contentType: 'application/x-www-form-urlencoded',
+  body: V_TOKEN_BODY
+}
+const V_LOAD_CALL_R = { ...V_LOAD_CALL, auth: `Bearer ${GEMINI_REFRESHED_AT}` }
+const V_QUOTA_CALL_R = { ...V_QUOTA_CALL, auth: `Bearer ${GEMINI_REFRESHED_AT}` }
+await checkRich('V10 access_token 过期时先刷新（form-encoded）再取配额', {
+  adapter: geminiAdapter,
+  routes: [
+    { url: GEMINI_TOKEN, body: { access_token: GEMINI_REFRESHED_AT, expires_in: 3599, token_type: 'Bearer' } },
+    { url: GEMINI_LOAD, body: GEMINI_LOAD_OK },
+    { url: GEMINI_QUOTA, body: { buckets: [GEMINI_BUCKET_FULL] } }
+  ],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Standard', windows: [V_WIN_FULL] }),
+    calls: [V_TOKEN_CALL, V_LOAD_CALL_R, V_QUOTA_CALL_R]
+  }
+})
+
+await checkRich('V11 token 端点 400 + invalid_grant → refresh token 被吊销（不是 401）', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_TOKEN, status: 400, body: { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' } }],
+  expect: {
+    snap: gemErr('Gemini 凭据已失效（refresh token 被吊销）：请重新运行 gemini 登录'),
+    call: V_TOKEN_CALL
+  }
+})
+// 恢复有效凭据文件（后面各条不再走刷新分支）
+writeFileSync(joinPath(GEMINI_TMP, 'oauth_creds.json'), JSON.stringify(GEMINI_FAKE_CREDS))
+
+const v12 = await checkRich('V12 loadCodeAssist 401 → 重新登录', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, status: 401, body: { error: 'unauthorized' } }],
+  expect: {
+    snap: gemErr('凭据失效（HTTP 401）：请重新运行 gemini 登录'),
+    call: V_LOAD_CALL
+  }
+})
+vok(v12.snap.degradedReason === undefined, 'V12b 错误路径也不写 degradedReason')
+
+await checkRich('V13 retrieveUserQuota 403 → 重新登录', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, body: GEMINI_LOAD_OK }, { url: GEMINI_QUOTA, status: 403, body: {} }],
+  expect: {
+    snap: gemErr('凭据失效（HTTP 403）：请重新运行 gemini 登录'),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+
+await checkRich('V14 403 + SECURITY_POLICY_VIOLATED → 点名 VPC 服务边界', {
+  adapter: geminiAdapter,
+  routes: [
+    {
+      url: GEMINI_LOAD,
+      status: 403,
+      body: { error: { code: 403, message: 'Request is prohibited by organization policy', details: [{ reason: 'SECURITY_POLICY_VIOLATED' }] } }
+    }
+  ],
+  expect: {
+    snap: gemErr('请求被 VPC 服务边界拦截（SECURITY_POLICY_VIOLATED）：请联系管理员放行，或切换网络后重试'),
+    call: V_LOAD_CALL
+  }
+})
+
+await checkRich('V15 403 + cloudshell-gca → 给 gcloud config 指引', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, status: 403, body: { cloudaicompanionProject: 'cloudshell-gca' } }],
+  expect: {
+    snap: gemErr('默认 Cloud Shell 项目无 Code Assist 许可（cloudshell-gca）：请执行 gcloud config set project <你的项目ID> 后重试'),
+    call: V_LOAD_CALL
+  }
+})
+
+await checkRich('V16 loadCodeAssist 200 但配额归属项目缺失 → 未绑定许可', {
+  adapter: geminiAdapter,
+  routes: [
+    {
+      url: GEMINI_LOAD,
+      body: { currentTier: { id: 'standard-tier', name: 'Standard' }, cloudaicompanionProject: null }
+    }
+  ],
+  expect: {
+    snap: gemErr('服务端未返回配额归属项目（该账号未绑定 Code Assist Standard / Enterprise 许可）'),
+    call: V_LOAD_CALL
+  }
+})
+
+const v17 = await checkRich('V17 免费档退役（currentTier）：errSnap + 2026-06-18 文案', {
+  adapter: geminiAdapter,
+  routes: [
+    {
+      url: GEMINI_LOAD,
+      body: { currentTier: { id: 'free-tier', name: 'Free' }, cloudaicompanionProject: GEMINI_PROJECT }
+    }
+  ],
+  expect: {
+    snap: gemErr(
+      'Google 已于 2026-06-18 关停 Code Assist 个人免费档 / AI Pro / Ultra（Login with Google 已移除），本账号无可查额度：如需继续使用请绑定 Workspace Code Assist Standard / Enterprise 许可'
+    ),
+    call: V_LOAD_CALL
+  }
+})
+vok(v17.snap.detail.includes('2026-06-18'), 'V17b 退役文案含 2026-06-18（终态，不是含糊的「无数据」）')
+
+const v18 = await checkRich('V18 免费档退役（ineligibleTiers）：回显 Google 原文', {
+  adapter: geminiAdapter,
+  routes: [
+    {
+      url: GEMINI_LOAD,
+      body: {
+        currentTier: { id: 'standard-tier', name: 'Standard' },
+        ineligibleTiers: [{ tierId: 'free-tier', reasonMessage: 'Google AI Pro is no longer supported' }],
+        cloudaicompanionProject: GEMINI_PROJECT
+      }
+    }
+  ],
+  expect: {
+    snap: gemErr(
+      'Google 已于 2026-06-18 关停 Code Assist 个人免费档 / AI Pro / Ultra（Login with Google 已移除），本账号无可查额度（Google AI Pro is no longer supported）：如需继续使用请绑定 Workspace Code Assist Standard / Enterprise 许可'
+    ),
+    call: V_LOAD_CALL
+  }
+})
+vok(v18.snap.detail.includes('2026-06-18'), 'V18b 退役文案含 2026-06-18')
+
+await checkRich('V19 paidTier 存在时 plan 取 paidTier.name', {
+  adapter: geminiAdapter,
+  routes: [
+    {
+      url: GEMINI_LOAD,
+      body: {
+        currentTier: { id: 'standard-tier', name: 'Standard' },
+        paidTier: { id: 'enterprise-tier', name: 'Enterprise' },
+        cloudaicompanionProject: GEMINI_PROJECT
+      }
+    },
+    { url: GEMINI_QUOTA, body: { buckets: [GEMINI_BUCKET_FULL] } }
+  ],
+  expect: {
+    snap: gemOk({ source: '官方接口', plan: 'Enterprise', windows: [V_WIN_FULL] }),
+    calls: [V_LOAD_CALL, V_QUOTA_CALL]
+  }
+})
+
+await checkRich('V20 loadCodeAssist HTTP 500', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, status: 500, body: {} }],
+  expect: { snap: gemErr('HTTP 500'), call: V_LOAD_CALL }
+})
+
+await checkRich('V21 网络类错误：包成「请求失败:」', {
+  adapter: geminiAdapter,
+  routes: [{ url: GEMINI_LOAD, throw: 'fetch failed' }],
+  expect: { snap: gemErr('请求失败: fetch failed'), call: V_LOAD_CALL }
+})
+
+// ── 注册与目录（AC1–AC4 的静态侧）──
+const { CODE_ADAPTERS: V_CODE_ADAPTERS } = await loadTs('src/main/adapters/index.ts')
+// ⚠ loadTs 每次重新求值模块：这里拿到的 CODE_ADAPTERS.gemini 与 V 段直载的
+// geminiAdapter 是两个求值产物，判引用相等恒假 —— 只能判注册字段。
+vok(V_CODE_ADAPTERS.gemini?.id === 'gemini', 'V22 前置：CODE_ADAPTERS 里找得到 gemini')
+eq(
+  { id: V_CODE_ADAPTERS.gemini?.id, kind: V_CODE_ADAPTERS.gemini?.kind, builtin: V_CODE_ADAPTERS.gemini?.builtin },
+  { id: 'gemini', kind: 'coding', builtin: true },
+  'V22 CODE_ADAPTERS 注册了 gemini（与适配器自声明的身份一致）'
+)
+eq(
+  (({ id, name, kind, protocol, localCredential, singleton }) => ({ id, name, kind, protocol, localCredential, singleton }))(
+    providers.presetById('gemini')
+  ),
+  { id: 'gemini', name: 'Gemini Code Assist', kind: 'coding', protocol: 'gemini', localCredential: true, singleton: true },
+  'V23 BUILTIN_PRESETS 有 gemini 条目（coding + 本机凭据 + 单例）'
+)
+vok(!('keyHint' in providers.presetById('gemini')), 'V23b gemini 预设无 keyHint（本机文件型三家一致）')
+eq(geminiAdapter.kind, 'coding', 'V24 kind === coding（订阅制 + 限额 + 重置时间）')
+eq(geminiAdapter.id, 'gemini', 'V24b preset id == protocol id == mark == gemini（自定义实例才拿得到 logo）')
+
+// ── 静态守卫（每条先有前置，否则负向断言会空洞通过）──
+const geminiSrc = readFileSync(new URL('../src/main/adapters/gemini.ts', import.meta.url), 'utf8')
+const geminiCode = geminiSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+vok(geminiCode.length > 0, 'VSG0 前置：读得到 gemini.ts 去注释源码')
+vok(
+  /loadCodeAssist/.test(geminiCode) && /retrieveUserQuota/.test(geminiCode) && /oauth2\.googleapis\.com\/token/.test(geminiCode),
+  'VSG1 前置：三个端点常量都在源码里（下面的守卫不能空洞通过）'
+)
+vok(
+  (geminiCode.match(/method:\s*'POST'/g) ?? []).length >= 3,
+  'VSG2 三个端点都走 method POST（改回 GET 即红）'
+)
+vok(
+  /JSON\.stringify\(\{\s*project\s*\}\)/.test(geminiCode),
+  'VSG3 retrieveUserQuota 的 body 恰好是 { project }（删掉即红）'
+)
+vok(!/keychain|setKey/.test(geminiCode), 'VSG4 未 import keychain / setKey（不回写凭据）')
+vok(
+  /application\/x-www-form-urlencoded/.test(geminiCode),
+  'VSG5 token 刷新是 form-encoded（不是 JSON）'
+)
+vok(/Authorization:\s*`Bearer /.test(geminiCode), 'VSG6 业务请求用 Bearer 前缀（不带 copilot 式的 token 前缀）')
+
+// 恢复环境（V 段改过的全部 env 还原；临时目录删掉）
+if (savedGeminiHome === undefined) delete process.env.GEMINI_CLI_HOME
+else process.env.GEMINI_CLI_HOME = savedGeminiHome
+if (savedHome === undefined) delete process.env.HOME
+else process.env.HOME = savedHome
+if (savedGac === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS
+else process.env.GOOGLE_APPLICATION_CREDENTIALS = savedGac
+rmSync(GEMINI_TMP, { recursive: true, force: true })
+rmSync(GEMINI_EMPTY, { recursive: true, force: true })
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)
