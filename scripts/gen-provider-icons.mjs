@@ -27,6 +27,7 @@ const MARKS = {
   claude: { icon: 'simple-icons:claude', color: '#D97757' },
   codex: { icon: 'simple-icons:openai', color: '' },
   copilot: { icon: 'simple-icons:githubcopilot', color: '' },
+  cursor: { icon: 'simple-icons:cursor', color: '' },
   gemini: { icon: 'simple-icons:googlegemini', color: '' },
   deepseek: { icon: 'simple-icons:deepseek', color: '#4D6BFE' },
   kimi: { icon: 'simple-icons:moonshotai', color: '' },

@@ -101,6 +101,15 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     singleton: true
   },
   {
+    id: 'cursor',
+    name: 'Cursor',
+    kind: 'coding',
+    protocol: 'cursor',
+    defaultBaseUrl: 'https://api2.cursor.sh',
+    localCredential: true,
+    singleton: true
+  },
+  {
     id: 'deepseek',
     name: 'DeepSeek',
     kind: 'balance',

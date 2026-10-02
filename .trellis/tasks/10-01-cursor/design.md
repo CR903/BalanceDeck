@@ -139,7 +139,9 @@ W 段用 `node:sqlite` 在临时目录**真实建库**（`ItemTable(key TEXT, va
 ```ts
 export function cursorStateDb(): string
 export function cursorAuthJsonCandidates(): string[]
-export function readCursorToken(): { token: string; source: 'vscdb' | 'auth.json' } | null
+// ⚠ 实现是 async（node:sqlite 走动态 import，见 opencode.ts:122 先例），
+//   唯一调用处 collect 已 await。设计草稿曾写同步签名，以实现为准。
+export function readCursorToken(): Promise<{ token: string; source: 'vscdb' | 'auth.json' } | null>
 ```
 
 `source` 进 `detail`（"本机配置自动读取（state.vscdb）"之类），与 `credentialSource: 'file'` 的

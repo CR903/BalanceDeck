@@ -1797,5 +1797,499 @@ else process.env.GOOGLE_APPLICATION_CREDENTIALS = savedGac
 rmSync(GEMINI_TMP, { recursive: true, force: true })
 rmSync(GEMINI_EMPTY, { recursive: true, force: true })
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// W. Cursor（代码适配器）
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nW. Cursor（代码适配器）')
+
+// ── W 段夹具 ─────────────────────────────────────────────────────────────────
+// 来源（第三方记录 + 官方论坛，本机无账号可抓 —— 逐字标注，不得标「实测」）：
+// · 字段形状（planUsage.includedSpend/remaining/limit（分）、billingCycleStart/End
+//   （unix 毫秒字符串）、spendLimitUsage.individualLimit/Used、limitType）取自
+//   cbnsndwch/pacebar docs/providers/cursor（MIT，检索 2026-10-01）
+// · 数值样本（includedSpend 23222 / remaining 16778 / limit 40000；
+//   1288 / 712 / 2000 + displayMessage 原文）取自 Cursor 官方论坛 2026-08-12
+//   用户贴文（检索 2026-10-01）。两个独立来源互证不变量 includedSpend+remaining===limit。
+// ⚠ 凭据字面量红线（keystore.ts:6）：JWT 全用 {"alg":"none"} + base64url 自造，明显假。
+
+const { cursorAdapter, cursorStateDb, cursorAuthJsonCandidates } = await loadTs('src/main/adapters/cursor.ts')
+
+const CURSOR_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage'
+const b64u = (s) => Buffer.from(s, 'utf-8').toString('base64url')
+const CURSOR_JWT = `${b64u('{"alg":"none"}')}.${b64u('{"sub":"user_testcursor","exp":2000000000}')}.fakesig`
+const CURSOR_JWT_EXPIRED = `${b64u('{"alg":"none"}')}.${b64u('{"sub":"user_testcursor","exp":1000000000}')}.fakesig`
+const CURSOR_JWT_MANUAL = `${b64u('{"alg":"none"}')}.${b64u('{"sub":"user_manualpaste","exp":2000000000}')}.fakesig`
+
+const W_CYCLE_END = '1771077734000'
+const W_RESET_AT = new Date(1771077734000).toISOString()
+const W_USAGE_BASIC = {
+  billingCycleStart: '1768399334000',
+  billingCycleEnd: W_CYCLE_END,
+  planUsage: {
+    includedSpend: 1288,
+    bonusSpend: 0,
+    remaining: 712,
+    limit: 2000,
+    remainingBonus: false,
+    autoPercentUsed: 0,
+    apiPercentUsed: 46.444,
+    totalPercentUsed: 15.48
+  },
+  spendLimitUsage: {
+    totalSpend: 0,
+    pooledLimit: 0,
+    pooledUsed: 0,
+    pooledRemaining: 0,
+    individualLimit: 0,
+    individualUsed: 0,
+    individualRemaining: 0,
+    limitType: 'user'
+  },
+  enabled: true,
+  displayMessage: "You've used 64% of your included usage"
+}
+const W_CALL = {
+  url: CURSOR_URL,
+  auth: `Bearer ${CURSOR_JWT}`,
+  accept: null,
+  method: 'POST',
+  contentType: 'application/json',
+  connectVersion: '1',
+  body: '{}'
+}
+const W_WIN_BASIC = {
+  name: '本月套餐',
+  used: 12.88,
+  limit: 20,
+  unit: 'usd',
+  percent: 64.4,
+  resetAt: W_RESET_AT,
+  note: '官方接口'
+}
+
+// 代码适配器自己声明 kind，但不声明 mark（实例绑定层补，见 N 节）
+const curOk = (body = {}) => ok({ kind: 'coding', mark: null, ...body })
+const curErr = (detail) => ({ ...err(detail), kind: 'coding' })
+const curNodata = (detail) => ({ ...nodata(detail), kind: 'coding' })
+
+/**
+ * callProjectRich 的 W 段扩展：多记 `Connect-Protocol-Version`。
+ *
+ * 为什么另起函数而不是给 callProjectRich 加字段：它是 V 段（Gemini）与 W 段
+ * 共享的投影，`inst.list` 元素被全等比较 —— 加键会让 V 段每条请求断言变红
+ * （spec/adapters/index.md「给共享夹具加函数而不是改函数」）。
+ */
+function callProjectCursor(req) {
+  const headers = req.headers ?? {}
+  const k = Object.keys(headers).find((x) => x.toLowerCase() === 'connect-protocol-version')
+  return { ...callProjectRich(req), connectVersion: k ? headers[k] : null }
+}
+
+/** 与 makeRichRequest 行为完全相同（同 URL 精确匹配、未覆盖即抛），只是 list 记的是 W 投影 */
+function makeCursorRequest(routes) {
+  const list = []
+  return {
+    list,
+    request: async (req) => {
+      list.push(callProjectCursor(req))
+      const r = routes.find((x) => x.url === req.url)
+      if (!r) throw new TypeError(`fetch failed（本套件未覆盖的 URL: ${req.url}）`)
+      if (r.throw) throw new TypeError(r.throw)
+      return { status: r.status ?? 200, text: typeof r.body === 'string' ? r.body : JSON.stringify(r.body) }
+    }
+  }
+}
+
+/** W 段专用的检查器：走 makeCursorRequest（富投影 + Connect 头，断言得了 method / body / 三个头）+ 凭据与 setKey 探针 */
+async function checkCursor(label, { adapter, routes, expect, key = null }) {
+  const inst = makeCursorRequest(routes)
+  const keyIds = []
+  const setKeys = []
+  const snap = await adapter.collect(
+    makeCtx({ key, request: inst.request, onKey: (id) => keyIds.push(id), onSetKey: (id, v) => setKeys.push([id, v]) })
+  )
+  eq(project(snap), expect.snap, label)
+  if (expect.call) eq(inst.list, [expect.call], `${label} · 请求`)
+  if (expect.calls) eq(inst.list, expect.calls, `${label} · 请求序列`)
+  if (expect.keyIds) eq(keyIds, expect.keyIds, `${label} · 凭据查询 id`)
+  return { snap, list: inst.list, keyIds, setKeys }
+}
+
+// 凭据隔离：HOME 与 XDG_CONFIG_HOME 都指向空目录，否则真机的
+// ~/.cursor/auth.json 会污染「三源全空」断言（与 V 段同一手法）。
+// W 段是文件最后一段，改 env 不影响任何既有段；段末恢复原值。
+const CURSOR_TMP = mkdtempSync(joinPath(tmpdir(), 'bd-cursor-'))
+const CURSOR_EMPTY = mkdtempSync(joinPath(tmpdir(), 'bd-cursor-empty-'))
+const savedCursorDb = process.env.CURSOR_STATE_DB
+const savedCursorCfg = process.env.CURSOR_CONFIG_DIR
+const savedXdgCursor = process.env.XDG_CONFIG_HOME
+const savedHomeCursor = process.env.HOME
+const savedAppDataCursor = process.env.APPDATA
+process.env.HOME = CURSOR_EMPTY
+process.env.XDG_CONFIG_HOME = CURSOR_EMPTY
+delete process.env.CURSOR_CONFIG_DIR
+if (process.platform === 'win32') process.env.APPDATA = CURSOR_EMPTY
+
+// 主夹具库：token 用 JSON 再包一层（VS Code 全局存储形态），套餐名用裸串（两种解码分支都走到）
+const { DatabaseSync: CursorDb } = await import('node:sqlite')
+function makeCursorDb(file, entries) {
+  const db = new CursorDb(file)
+  db.prepare('CREATE TABLE ItemTable(key TEXT PRIMARY KEY, value TEXT)').run()
+  const ins = db.prepare('INSERT INTO ItemTable(key, value) VALUES (?, ?)')
+  for (const [k, v] of entries) ins.run(k, v)
+  db.close()
+}
+const CURSOR_DB = joinPath(CURSOR_TMP, 'state.vscdb')
+makeCursorDb(CURSOR_DB, [
+  ['cursorAuth/accessToken', JSON.stringify(CURSOR_JWT)],
+  ['cursorAuth/stripeMembershipType', 'pro']
+])
+process.env.CURSOR_STATE_DB = CURSOR_DB
+
+eq(cursorStateDb(), CURSOR_DB, 'W0 CURSOR_STATE_DB 被识别（凭据探测可注入）')
+delete process.env.CURSOR_STATE_DB
+vok(cursorStateDb().endsWith('state.vscdb'), 'W0b 默认路径落在 state.vscdb（各平台同名）')
+process.env.CURSOR_STATE_DB = CURSOR_DB
+vok(
+  cursorAuthJsonCandidates().some((p) => p.endsWith(joinPath('.cursor', 'auth.json'))),
+  'W0c 候选含 ~/.cursor/auth.json（多候选试探）'
+)
+
+const w1 = await checkCursor('W1 happy path：1288/712/2000 → used 12.88 + 自算 64.4%', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  expect: {
+    snap: curOk({ source: '官方接口', plan: 'Pro', windows: [W_WIN_BASIC], detail: '本机配置自动读取（state.vscdb）' }),
+    call: W_CALL
+  }
+})
+eq(w1.snap.dataQuality, 'official', 'W1b 成功时 dataQuality === official')
+vok(w1.snap.degradedReason === undefined, 'W1c 适配器不写 degradedReason（那是 applyCachePolicy 的活）')
+vok(!JSON.stringify(w1.snap).includes('PercentUsed'), 'W1d 快照里无服务端 percent 任一键（total/auto/api）')
+
+await checkCursor('W2 论坛样本：23222/16778/40000 → used 232.22 + 自算 58.1%', {
+  adapter: cursorAdapter,
+  routes: [
+    {
+      url: CURSOR_URL,
+      body: { ...W_USAGE_BASIC, planUsage: { includedSpend: 23222, remaining: 16778, limit: 40000 } }
+    }
+  ],
+  expect: {
+    snap: curOk({
+      source: '官方接口',
+      plan: 'Pro',
+      windows: [{ name: '本月套餐', used: 232.22, limit: 400, unit: 'usd', percent: 58.1, resetAt: W_RESET_AT, note: '官方接口' }],
+      detail: '本机配置自动读取（state.vscdb）'
+    }),
+    call: W_CALL
+  }
+})
+
+await checkCursor('W3 individualLimit > 0 时加「按需预算」第二窗口', {
+  adapter: cursorAdapter,
+  routes: [
+    {
+      url: CURSOR_URL,
+      body: {
+        ...W_USAGE_BASIC,
+        spendLimitUsage: { individualLimit: 10000, individualUsed: 2500, individualRemaining: 7500, limitType: 'user' }
+      }
+    }
+  ],
+  expect: {
+    snap: curOk({
+      source: '官方接口',
+      plan: 'Pro',
+      windows: [W_WIN_BASIC, { name: '按需预算', used: 25, limit: 100, unit: 'usd', percent: 25, note: '官方接口' }],
+      detail: '本机配置自动读取（state.vscdb）'
+    }),
+    call: W_CALL
+  }
+})
+
+await checkCursor('W3b limitType team 时按需预算用 pooled 口径', {
+  adapter: cursorAdapter,
+  routes: [
+    {
+      url: CURSOR_URL,
+      body: {
+        ...W_USAGE_BASIC,
+        spendLimitUsage: { pooledLimit: 50000, pooledUsed: 10000, pooledRemaining: 40000, limitType: 'team' }
+      }
+    }
+  ],
+  expect: {
+    snap: curOk({
+      source: '官方接口',
+      plan: 'Pro',
+      windows: [W_WIN_BASIC, { name: '按需预算', used: 100, limit: 500, unit: 'usd', percent: 20, note: '官方接口' }],
+      detail: '本机配置自动读取（state.vscdb）'
+    }),
+    call: W_CALL
+  }
+})
+
+const w4 = await checkCursor('W4 不变量不成立 → errSnap（绝不返回 0）', {
+  adapter: cursorAdapter,
+  routes: [
+    { url: CURSOR_URL, body: { ...W_USAGE_BASIC, planUsage: { includedSpend: 100, remaining: 100, limit: 40000 } } }
+  ],
+  expect: {
+    snap: curErr('响应格式未识别：includedSpend(100) + remaining(100) ≠ limit(40000)'),
+    call: W_CALL
+  }
+})
+
+const w5 = await checkCursor('W5 无 planUsage（团队形状）→ errSnap，不从人话正则数字', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: { billingCycleStart: '1768399334000', billingCycleEnd: W_CYCLE_END, teamUsage: {} } }],
+  expect: {
+    snap: curErr(`响应格式未识别：缺少 planUsage（团队/企业账号口径暂不支持）：${JSON.stringify({ billingCycleStart: '1768399334000', billingCycleEnd: W_CYCLE_END, teamUsage: {} }).slice(0, 160)}`),
+    call: W_CALL
+  }
+})
+
+const w6 = await checkCursor('W6 isUnlimited → 无 limit 窗口 + 不限量', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: { isUnlimited: true, billingCycleEnd: W_CYCLE_END } }],
+  expect: {
+    snap: curOk({
+      source: '官方接口',
+      plan: 'Pro',
+      windows: [{ name: '本月套餐', used: 0, unit: 'usd', note: '当前套餐不限量' }],
+      detail: '本机配置自动读取（state.vscdb）'
+    }),
+    call: W_CALL
+  }
+})
+vok(!('percent' in w6.snap.windows[0]) && !('limit' in w6.snap.windows[0]), 'W6b 无 limit 无 percent 键（不给假进度条）')
+eq(w6.snap.dataQuality, 'official', 'W6c 不限量路径 dataQuality 仍是 official')
+
+const w401 = await checkCursor('W7 401 → 重新登录文案', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, status: 401, body: { code: 'unauthenticated' } }],
+  expect: {
+    snap: curErr('Cursor 会话已失效（HTTP 401）：请在 Cursor 中重新登录后重试'),
+    call: W_CALL
+  }
+})
+eq(w401.snap.dataQuality, undefined, 'W7b 失败路径 dataQuality 必须是 undefined（ADR-0002）')
+
+const w429 = await checkCursor('W7c 429 → 限流文案', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, status: 429, body: {} }],
+  expect: {
+    snap: curErr('Cursor 接口限流（HTTP 429）：稍后将自动重试'),
+    call: W_CALL
+  }
+})
+vok(!String(w429.snap.detail).includes('检查网络'), 'W7c2 限流文案不含「检查网络」')
+
+await checkCursor('W7d 其它非 200 → HTTP <status>', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, status: 500, body: {} }],
+  expect: { snap: curErr('HTTP 500'), call: W_CALL }
+})
+
+await checkCursor('W7e 网络类错误 → 包成「请求失败:」', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, throw: 'fetch failed' }],
+  expect: { snap: curErr('请求失败: fetch failed'), call: W_CALL }
+})
+
+const W8_BODY = { planUsage: { includedSpend: 'lots', remaining: 1, limit: 2 } }
+const w8 = await checkCursor('W8 planUsage 非数字 → 响应格式未识别 + 160 字符预览', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W8_BODY }],
+  expect: {
+    snap: curErr(`响应格式未识别：${JSON.stringify(W8_BODY).slice(0, 160)}`),
+    call: W_CALL
+  }
+})
+
+// W9：三源全空 → noDataSnap（CURSOR_STATE_DB 指向不存在的文件，getKey 给 null）
+process.env.CURSOR_STATE_DB = joinPath(CURSOR_EMPTY, 'state.vscdb')
+const w9 = await checkCursor('W9 未配置：noDataSnap 且点名登录入口与两个文件路径', {
+  adapter: cursorAdapter,
+  routes: [],
+  key: null,
+  expect: {
+    snap: curNodata(`未找到 Cursor 凭据（请先在 Cursor 中登录；已查找 ${joinPath(CURSOR_EMPTY, 'state.vscdb')} 与 auth.json）`),
+    calls: [],
+    keyIds: ['cursor']
+  }
+})
+eq(w9.snap.dataQuality, undefined, 'W9b 失败路径 dataQuality 必须是 undefined（ADR-0002）')
+vok(
+  String(w9.snap.detail).includes('Cursor') &&
+    String(w9.snap.detail).includes('state.vscdb') &&
+    String(w9.snap.detail).includes('auth.json'),
+  'W9c 文案点名登录入口与两个文件路径'
+)
+process.env.CURSOR_STATE_DB = CURSOR_DB
+
+// W10：JWT exp 已过 → error 且请求序列为空（本地判定，不出网）
+const CURSOR_DB_EXPIRED = joinPath(CURSOR_TMP, 'expired.vscdb')
+makeCursorDb(CURSOR_DB_EXPIRED, [['cursorAuth/accessToken', CURSOR_JWT_EXPIRED]])
+process.env.CURSOR_STATE_DB = CURSOR_DB_EXPIRED
+const w10 = await checkCursor('W10 JWT exp 已过 → error（在 Cursor 中重新登录）', {
+  adapter: cursorAdapter,
+  routes: [],
+  key: null,
+  expect: {
+    snap: curErr('Cursor 登录已过期：请在 Cursor 中重新登录后重试'),
+    calls: []
+  }
+})
+eq(w10.list.length, 0, 'W10b 请求序列为空（本地判定，不发请求）')
+eq(w10.snap.dataQuality, undefined, 'W10c 失败路径 dataQuality 必须是 undefined')
+process.env.CURSOR_STATE_DB = CURSOR_DB
+
+const w11 = await checkCursor('W11 手动粘贴优先级最低：本机文件有值时用文件的', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  key: CURSOR_JWT_MANUAL,
+  expect: {
+    snap: curOk({ source: '官方接口', plan: 'Pro', windows: [W_WIN_BASIC], detail: '本机配置自动读取（state.vscdb）' }),
+    call: W_CALL
+  }
+})
+eq(w11.list[0].auth, `Bearer ${CURSOR_JWT}`, 'W11b 赢的是 state.vscdb 那份凭据（不是手动粘贴的）')
+
+// W11b：本机文件全空时手动粘贴兜底（plan 无同库可读，保持缺省）
+process.env.CURSOR_STATE_DB = joinPath(CURSOR_EMPTY, 'state.vscdb')
+await checkCursor('W11c 本机文件全空时手动粘贴兜底', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  key: CURSOR_JWT_MANUAL,
+  expect: {
+    snap: curOk({ source: '官方接口', windows: [W_WIN_BASIC], detail: '手动配置的凭据' }),
+    call: { ...W_CALL, auth: `Bearer ${CURSOR_JWT_MANUAL}` }
+  }
+})
+process.env.CURSOR_STATE_DB = CURSOR_DB
+
+const w12 = await checkCursor('W12 成功路径不调 setKey（锁住「不自愈」决策）', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  key: null,
+  expect: {
+    snap: curOk({ source: '官方接口', plan: 'Pro', windows: [W_WIN_BASIC], detail: '本机配置自动读取（state.vscdb）' }),
+    call: W_CALL
+  }
+})
+eq(w12.setKeys.length, 0, 'W12b setKey 零调用')
+eq(w401.setKeys.length, 0, 'W12c 错误路径也不调 setKey')
+
+// W13：token 以 UTF-16LE BLOB 落盘（CodexBar 实证形态）→ 识别后可用，不判空
+const CURSOR_DB_NUL = joinPath(CURSOR_TMP, 'nul.vscdb')
+makeCursorDb(CURSOR_DB_NUL, [
+  ['cursorAuth/accessToken', Buffer.from(CURSOR_JWT, 'utf16le')],
+  ['cursorAuth/stripeMembershipType', 'ultra']
+])
+process.env.CURSOR_STATE_DB = CURSOR_DB_NUL
+await checkCursor('W13 token 以 UTF-16LE BLOB 落盘 → 识别后可用，不判空', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  expect: {
+    snap: curOk({ source: '官方接口', plan: 'Ultra', windows: [W_WIN_BASIC], detail: '本机配置自动读取（state.vscdb）' }),
+    call: W_CALL
+  }
+})
+process.env.CURSOR_STATE_DB = CURSOR_DB
+
+// W14：同库无套餐名 → plan 字段省略（不编造）
+const CURSOR_DB_NOPLAN = joinPath(CURSOR_TMP, 'noplan.vscdb')
+makeCursorDb(CURSOR_DB_NOPLAN, [['cursorAuth/accessToken', JSON.stringify(CURSOR_JWT)]])
+process.env.CURSOR_STATE_DB = CURSOR_DB_NOPLAN
+const w14 = await checkCursor('W14 套餐名拿不到时 plan 字段省略', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  expect: {
+    snap: curOk({ source: '官方接口', windows: [W_WIN_BASIC], detail: '本机配置自动读取（state.vscdb）' }),
+    call: W_CALL
+  }
+})
+eq(project(w14.snap).plan, null, 'W14b plan 缺省（拿不到就留空，不编造）')
+process.env.CURSOR_STATE_DB = CURSOR_DB
+
+// W15：每条失败路径 dataQuality 都是 undefined，且永不出现 local
+for (const [tag, s] of [['W4', w4.snap], ['W5', w5.snap], ['W8', w8.snap], ['W9', w9.snap], ['W10', w10.snap], ['W401', w401.snap], ['W429', w429.snap]]) {
+  vok(s.dataQuality === undefined, `W15 ${tag} dataQuality === undefined`)
+  vok(s.degradedReason === undefined, `W15b ${tag} 不写 degradedReason`)
+  vok(s.dataQuality !== 'local', `W15c ${tag} 永不出现 local`)
+}
+
+// W16：vscdb 打不开（非 DB 文件 → 真实失败路径，不 mock）→ 回落 auth.json
+const CURSOR_BAD_DB = joinPath(CURSOR_TMP, 'bad.vscdb')
+writeFileSync(CURSOR_BAD_DB, '这不是 SQLite 数据库', 'utf-8')
+process.env.CURSOR_STATE_DB = CURSOR_BAD_DB
+const CURSOR_CFG = mkdtempSync(joinPath(tmpdir(), 'bd-cursor-cfg-'))
+writeFileSync(joinPath(CURSOR_CFG, 'auth.json'), JSON.stringify({ accessToken: CURSOR_JWT }), 'utf-8')
+process.env.CURSOR_CONFIG_DIR = CURSOR_CFG
+await checkCursor('W16 vscdb 只读失败 → 回落 auth.json（不碰 Cursor 目录）', {
+  adapter: cursorAdapter,
+  routes: [{ url: CURSOR_URL, body: W_USAGE_BASIC }],
+  expect: {
+    snap: curOk({ source: '官方接口', windows: [W_WIN_BASIC], detail: '本机配置自动读取（auth.json）' }),
+    call: W_CALL
+  }
+})
+delete process.env.CURSOR_CONFIG_DIR
+process.env.CURSOR_STATE_DB = CURSOR_DB
+rmSync(CURSOR_CFG, { recursive: true, force: true })
+
+// ── 注册与目录（AC1–AC4 的静态侧）──
+const { CODE_ADAPTERS: W_CODE_ADAPTERS } = await loadTs('src/main/adapters/index.ts')
+// ⚠ loadTs 每次重新求值模块：这里拿到的 CODE_ADAPTERS.cursor 与 W 段直载的
+// cursorAdapter 是两个求值产物，判引用相等恒假 —— 只能判注册字段。
+vok(W_CODE_ADAPTERS.cursor?.id === 'cursor', 'W17 前置：CODE_ADAPTERS 里找得到 cursor')
+eq(
+  { id: W_CODE_ADAPTERS.cursor?.id, kind: W_CODE_ADAPTERS.cursor?.kind, builtin: W_CODE_ADAPTERS.cursor?.builtin },
+  { id: 'cursor', kind: 'coding', builtin: true },
+  'W17 CODE_ADAPTERS 注册了 cursor（与适配器自声明的身份一致）'
+)
+eq(
+  (({ id, name, kind, protocol, localCredential, singleton }) => ({ id, name, kind, protocol, localCredential, singleton }))(
+    providers.presetById('cursor')
+  ),
+  { id: 'cursor', name: 'Cursor', kind: 'coding', protocol: 'cursor', localCredential: true, singleton: true },
+  'W17b BUILTIN_PRESETS 有 cursor 条目（coding + 本机凭据 + 单例）'
+)
+vok(!('keyHint' in providers.presetById('cursor')), 'W17c cursor 预设无 keyHint（本机文件型一致）')
+eq(cursorAdapter.kind, 'coding', 'W17d kind === coding（订阅制 + 限额 + 重置日）')
+eq(cursorAdapter.id, 'cursor', 'W17e preset id == protocol id == mark == cursor（自定义实例才拿得到 logo）')
+
+// ── 静态守卫（每条先有前置，否则负向断言会空洞通过）──
+const cursorSrc = readFileSync(new URL('../src/main/adapters/cursor.ts', import.meta.url), 'utf8')
+const cursorCode = cursorSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+vok(cursorCode.length > 0, 'WSG0 前置：读得到 cursor.ts 去注释源码')
+vok(/GetCurrentPeriodUsage/.test(cursorCode), 'WSG1 前置：用量端点在源码里（下面的守卫不能空洞通过）')
+vok(/method:\s*'POST'/.test(cursorCode), "WSG2 请求是 method POST（改回 GET 即红，W1 的请求断言兜底）")
+vok(/included\s*\/\s*limit/.test(cursorCode), 'WSG3 percent 由 includedSpend/limit 自算（改读服务端字段即红，W1/W2 兜底）')
+vok(!/totalPercentUsed|autoPercentUsed|apiPercentUsed/.test(cursorCode), 'WSG4 服务端 percent 字段一个都不读（冻结事故的教训）')
+vok(!/keychain|setKey/.test(cursorCode), 'WSG5 未 import keychain / setKey（不回写凭据）')
+vok(/Authorization:\s*`Bearer /.test(cursorCode), 'WSG6 业务请求用 Bearer 前缀（不带 copilot 式的 token 前缀）')
+vok(
+  /Connect-Protocol-Version/.test(cursorCode) && /Content-Type/.test(cursorCode),
+  'WSG7 三个头显式写全（不依赖接缝自动补，否则测试桩测不到真头）'
+)
+eq(PROTOCOLS.cursor, undefined, 'WSG8 Cursor 不进 protocols.ts 声明表（N7 额外保险）')
+
+// 恢复环境（W 段改过的全部 env 还原；临时目录删掉）
+if (savedCursorDb === undefined) delete process.env.CURSOR_STATE_DB
+else process.env.CURSOR_STATE_DB = savedCursorDb
+if (savedCursorCfg === undefined) delete process.env.CURSOR_CONFIG_DIR
+else process.env.CURSOR_CONFIG_DIR = savedCursorCfg
+if (savedXdgCursor === undefined) delete process.env.XDG_CONFIG_HOME
+else process.env.XDG_CONFIG_HOME = savedXdgCursor
+if (savedHomeCursor === undefined) delete process.env.HOME
+else process.env.HOME = savedHomeCursor
+if (savedAppDataCursor === undefined) delete process.env.APPDATA
+else process.env.APPDATA = savedAppDataCursor
+rmSync(CURSOR_TMP, { recursive: true, force: true })
+rmSync(CURSOR_EMPTY, { recursive: true, force: true })
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

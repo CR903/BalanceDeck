@@ -6,6 +6,7 @@ import { minimaxAdapter } from './minimax'
 import { claudeAdapter } from './claude'
 import { codexAdapter } from './codex'
 import { copilotAdapter } from './copilot'
+import { cursorAdapter } from './cursor'
 import { geminiAdapter } from './gemini'
 import { qwenAdapter } from './qwen'
 import { volcAdapter } from './volc'
@@ -16,7 +17,7 @@ import { bindInstance } from './bind-instance'
 /**
  * 代码实现的协议（声明表达不了的那些）：
  *   · 请求签名：qwen-bss（阿里云 RPC 签名）、volc-billing（火山签名）
- *   · 浏览器会话 / 本机文件：opencode-go、claude-code、codex、copilot
+ *   · 浏览器会话 / 本机文件：opencode-go、claude-code、codex、copilot、cursor
  *   · 备用端点与平台状态码：minimax（Token Plan 失败回落旧接口 query_balance）
  *
  * 其余 8 个协议走 ./protocols 的声明（ADR-0001）。
@@ -27,6 +28,7 @@ export const CODE_ADAPTERS: Record<string, ProviderAdapter> = {
   'claude-code': claudeAdapter,
   codex: codexAdapter,
   copilot: copilotAdapter,
+  cursor: cursorAdapter,
   gemini: geminiAdapter,
   minimax: minimaxAdapter,
   'qwen-bss': qwenAdapter,
