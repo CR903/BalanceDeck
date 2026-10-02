@@ -1,0 +1,11 @@
+{"file": "./prd.md", "reason": "需求与 32 条验收标准"}
+{"file": "./design.md", "reason": "技术设计与决策依据（D1-D10）"}
+{"file": "./implement.md", "reason": "分阶段清单 + 20 套件断言数基线 + Review Gates"}
+{"file": "./research/02-quota-lookup-paths.md", "reason": "端点/请求体/三baseURL/凭据三源/假100%陷阱/paidTier陷阱"}
+{"file": "./research/04-repo-contract-mapping.md", "reason": "kind/mark取值、items/extras边界、降级矩阵、窗口模型、测试落点"}
+{"file": "./research/05-recommendation.md", "reason": "推荐方案 + 窗口模型原文 + 风险表"}
+{"file": "./research/06-open-questions.md", "reason": "Q1-Q7待确认问题（本规划已逐条定论）"}
+{"file": "./research/03-competitors-and-licenses.md", "reason": "许可结论：AGPL禁抄清单 + 各路线代价"}
+{"file": "./research/07-sources.md", "reason": "信息源清单（含许可速查）+ 未能验证表"}
+{"file": "../../spec/adapters/index.md", "reason": "适配器契约：CollectRequest接缝、快照铸造器纪律"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（静态守卫需前置断言、loadTs用法）"}
