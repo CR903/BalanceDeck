@@ -2856,5 +2856,466 @@ else process.env.HOME = savedHomeAg
 rmSync(AG_TMP, { recursive: true, force: true })
 rmSync(AG_EMPTY, { recursive: true, force: true })
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Y. OpenAI 额度：codex.ts 升级为 wham/usage 主动查询优先、jsonl 转录兜底
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nY. OpenAI 额度（codex.ts 升级：wham 优先，jsonl 兜底）')
+
+// ── Y 段夹具 ─────────────────────────────────────────────────────────────────
+// 来源（二手转录，本机无 ChatGPT Plus/Pro 凭据可抓 —— 逐字标注，不得标「实测」）：
+// · 响应形状（plan_type / rate_limit.primary_window-secondary_window /
+//   used_percent / limit_window_seconds(18000/604800) / reset_at unix 秒 /
+//   secondary_window 为 null 的单窗口形态）取自 CodexBar issue #2900 的 EDU 账号
+//   实测样本（检索 2026-10-01）与 gist 摘要（secondary 为 null 时只产一个窗口）
+// · 端点/双头（Authorization Bearer + ChatGPT-Account-Id）与凭据文件形状
+//   （$CODEX_HOME/auth.json 的 tokens.access_token/tokens.account_id）取自
+//   .trellis/tasks/10-01-openai-quota/research/02-endpoints-and-auth.md
+// ⚠ 凭据字面量红线（store.ts:13）：token/account_id 全用明显假的占位，不得换成真值。
+
+const { codexAdapter, codexAuthFile, readCodexCreds } = await loadTs('src/main/adapters/codex.ts')
+const { bindInstance: yBind } = await loadTs('src/main/adapters/bind-instance.ts')
+const { mkdirSync } = await import('node:fs')
+
+const Y_WHAM = 'https://chatgpt.com/backend-api/wham/usage'
+const Y_FAKE_TOKEN = 'fake-jwt-for-tests'
+const Y_FAKE_ACCOUNT = 'fake-account-id-for-tests'
+const Y_NOW_S = Math.floor(NOW.getTime() / 1000)
+const Y_RESET_P = Y_NOW_S + 15542
+const Y_RESET_S = Y_NOW_S + 417595
+const Y_RESET_P_ISO = new Date(Y_RESET_P * 1000).toISOString()
+const Y_RESET_S_ISO = new Date(Y_RESET_S * 1000).toISOString()
+
+const Y_WHAM_OK = {
+  user_id: 'user-fake-for-tests',
+  account_id: Y_FAKE_ACCOUNT,
+  email: 'fake-for-tests@example.test',
+  plan_type: 'plus',
+  rate_limit: {
+    allowed: true,
+    limit_reached: false,
+    primary_window: { used_percent: 14, limit_window_seconds: 18000, reset_after_seconds: 15542, reset_at: Y_RESET_P },
+    secondary_window: { used_percent: 33, limit_window_seconds: 604800, reset_after_seconds: 417595, reset_at: Y_RESET_S }
+  }
+}
+const Y_WIN_5H = { name: '5 小时', used: 1000, unit: 'token', percent: 14, resetAt: Y_RESET_P_ISO, note: '服务端真值' }
+const Y_WIN_W = { name: '本周', used: 1000, unit: 'token', percent: 33, resetAt: Y_RESET_S_ISO, note: '服务端真值' }
+const Y_CALL_FILE = {
+  url: Y_WHAM,
+  auth: `Bearer ${Y_FAKE_TOKEN}`,
+  accept: 'application/json',
+  method: 'GET',
+  contentType: null,
+  body: null,
+  accountId: Y_FAKE_ACCOUNT
+}
+
+// 代码适配器自己声明 kind，但不声明 mark（实例绑定层补，见 N 节）
+const yOk = (body = {}) => ok({ kind: 'coding', mark: null, ...body })
+const yErr = (detail) => ({ ...err(detail), kind: 'coding' })
+const yNodata = (detail) => ({ ...nodata(detail), kind: 'coding' })
+
+/**
+ * callProjectRich 的 Y 段扩展：多记 `ChatGPT-Account-Id`。
+ *
+ * 为什么另起函数而不是给 callProjectRich 加字段：它是 V/X 段共享的投影，
+ * `inst.list` 元素被全等比较 —— 加键会让 V/X 每条请求断言变红
+ * （spec/adapters/index.md「给共享夹具加函数而不是改函数」，与 W 段同例）。
+ */
+function callProjectWham(req) {
+  const headers = req.headers ?? {}
+  const k = Object.keys(headers).find((x) => x.toLowerCase() === 'chatgpt-account-id')
+  return { ...callProjectRich(req), accountId: k ? headers[k] : null }
+}
+
+/** 与 makeRichRequest 行为完全相同（同 URL 精确匹配、未覆盖即抛），只是 list 记的是 Y 投影 */
+function makeWhamRequest(routes) {
+  const list = []
+  return {
+    list,
+    request: async (req) => {
+      list.push(callProjectWham(req))
+      const r = routes.find((x) => x.url === req.url)
+      if (!r) throw new TypeError(`fetch failed（本套件未覆盖的 URL: ${req.url}）`)
+      if (r.throw) throw new TypeError(r.throw)
+      return { status: r.status ?? 200, text: typeof r.body === 'string' ? r.body : JSON.stringify(r.body) }
+    }
+  }
+}
+
+/** Y 段专用的检查器：走 makeWhamRequest（富投影 + Account-Id，断言得了双头）+ 凭据与 setKey 探针 */
+async function checkCodex(label, { adapter, routes, expect, key = null, extras = {} }) {
+  const inst = makeWhamRequest(routes)
+  const keyIds = []
+  const setKeys = []
+  const snap = await adapter.collect(
+    makeCtx({ key, extras, request: inst.request, onKey: (id) => keyIds.push(id), onSetKey: (id, v) => setKeys.push([id, v]) })
+  )
+  eq(project(snap), expect.snap, label)
+  if (expect.call) eq(inst.list, [expect.call], `${label} · 请求`)
+  if (expect.calls) eq(inst.list, expect.calls, `${label} · 请求序列`)
+  if (expect.keyIds) eq(keyIds, expect.keyIds, `${label} · 凭据查询 id`)
+  return { snap, list: inst.list, keyIds, setKeys }
+}
+
+// 凭据隔离：CODEX_HOME 指向临时目录（与 GEMINI_CLI_HOME 同一惯例），
+// CODEX_ACCESS_TOKEN 先摘掉（否则真机的 env 会污染「无凭据」断言）。
+// Y 段是文件最后一段，改 env 不影响任何既有段；段末恢复原值。
+const savedCodexHome = process.env.CODEX_HOME
+const savedCodexToken = process.env.CODEX_ACCESS_TOKEN
+delete process.env.CODEX_ACCESS_TOKEN
+
+/** CODEX_HOME 夹具：可选假 auth.json + 可选 sessions（rate_limits 行按调用方给） */
+function mkCodexHome({ auth = false, sessionLines = null } = {}) {
+  const home = mkdtempSync(joinPath(tmpdir(), 'bd-codex-'))
+  if (auth) {
+    writeFileSync(home + '/auth.json', JSON.stringify({ tokens: { access_token: Y_FAKE_TOKEN, account_id: Y_FAKE_ACCOUNT } }))
+  }
+  if (sessionLines) {
+    const dir = joinPath(home, 'sessions', 's1')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(joinPath(dir, 'rollout-1.jsonl'), sessionLines.join('\n') + '\n')
+  }
+  return home
+}
+const yRlLine = (iso, total, primary, secondary) =>
+  JSON.stringify({
+    type: 'event_msg',
+    timestamp: iso,
+    payload: { type: 'token_count', info: { total_token_usage: { total_tokens: total } }, rate_limits: { primary, secondary } }
+  })
+const Y_RL = ['2026-09-19T01:00:00.000Z', 1000, { used_percent: 42, resets_in_seconds: 3600 }, { used_percent: 17, resets_in_seconds: 86400 }]
+const Y_FROZEN_WINDOWS = [
+  { name: '5 小时', used: 1000, unit: 'token', percent: 42, resetAt: '2026-09-19T03:00:00.000Z', note: '服务端真值' },
+  { name: '本周', used: 1000, unit: 'token', percent: 17, resetAt: '2026-09-20T02:00:00.000Z', note: '服务端真值' }
+]
+const Y_FROZEN = yOk({ source: '服务端真值', plan: 'ChatGPT 订阅', windows: Y_FROZEN_WINDOWS })
+
+const Y_HOME_FILE = mkCodexHome({ auth: true, sessionLines: [yRlLine(...Y_RL)] })
+process.env.CODEX_HOME = Y_HOME_FILE
+
+eq(codexAuthFile(), joinPath(Y_HOME_FILE, 'auth.json'), 'Y0 CODEX_HOME 被识别（与 codexHome() 同根）')
+vok(typeof readCodexCreds === 'function', 'Y0b readCodexCreds 可导出（凭据三源的测试缝）')
+
+// ── Phase 1 冻结"今天"：无 auth 时走的还是老路（AC10/AC11）──
+process.env.CODEX_HOME = mkCodexHome({ sessionLines: [yRlLine(...Y_RL)] })
+const y10 = await checkCodex('Y10 无 auth + sessions 有 rate_limits → 与今天逐字相同的 official 快照', {
+  adapter: codexAdapter,
+  routes: [],
+  key: null,
+  expect: { snap: Y_FROZEN, calls: [] }
+})
+eq(y10.snap.dataQuality, 'official', 'Y10b jsonl 服务端路径 dataQuality 仍是 official')
+eq(y10.list.length, 0, 'Y10c 无凭据时一次出网都没有（wham 根本没试）')
+
+process.env.CODEX_HOME = mkCodexHome()
+const y11 = await checkCodex('Y11 无 auth + 无 sessions → nodata（文案提及 sessions 与服务端查询两条路）', {
+  adapter: codexAdapter,
+  routes: [],
+  key: null,
+  expect: {
+    snap: yNodata('未找到 ~/.codex/sessions 会话记录，且服务端额度不可查（未登录 Codex CLI 或网络异常）'),
+    calls: []
+  }
+})
+eq(y11.snap.dataQuality, undefined, 'Y11b nodata 的 dataQuality 是 undefined')
+
+// 本地估算路径同样冻住（sessions 有 token 无 rate_limits → local 三窗口）
+process.env.CODEX_HOME = mkCodexHome({
+  sessionLines: [
+    yRlLine('2026-09-19T01:30:00.000Z', 400, null, null),
+    yRlLine('2026-09-19T01:45:00.000Z', 1000, null, null)
+  ]
+})
+const y10b = await checkCodex('Y10d 无 auth + 无 rate_limits → 本机估算三窗口（local 冻结）', {
+  adapter: codexAdapter,
+  routes: [],
+  key: null,
+  expect: {
+    snap: yOk({
+      quality: 'local',
+      source: '本机估算',
+      windows: [
+        { name: '5 小时', used: 1000, unit: 'token', note: '本机估算' },
+        { name: '本周（7天）', used: 1000, unit: 'token', note: '本机估算' },
+        { name: '本月', used: 1000, unit: 'token', note: '本机估算' }
+      ],
+      detail: '服务端主动查询不可用（未登录 Codex CLI 或网络异常）；当前为本机 token 统计'
+    }),
+    calls: []
+  }
+})
+eq(y10b.snap.dataQuality, 'local', 'Y10e 本地估算路径 dataQuality 仍是 local')
+
+// ── wham happy path（AC1/AC2/AC16/AC17/AC19）──
+process.env.CODEX_HOME = mkCodexHome({
+  auth: true,
+  sessionLines: [
+    yRlLine('2026-09-19T01:30:00.000Z', 400, null, null),
+    yRlLine('2026-09-19T01:45:00.000Z', 1000, null, null)
+  ]
+})
+const y1 = await checkCodex('Y1 happy path：wham 双窗口 + used 回填 + 请求双头全等', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: Y_WHAM_OK }],
+  key: null,
+  expect: {
+    snap: yOk({ source: '服务端真值', plan: 'ChatGPT 订阅', windows: [Y_WIN_5H, Y_WIN_W] }),
+    call: Y_CALL_FILE
+  }
+})
+eq(y1.snap.dataQuality, 'official', 'Y1b wham 成功时 dataQuality === official')
+vok(y1.snap.degradedReason === undefined, 'Y1c 适配器不写 degradedReason（那是 applyCachePolicy 的活）')
+vok(!('limit' in y1.snap.windows[0]) && !('limit' in y1.snap.windows[1]), 'Y1d 不硬造 limit（端点只给 percent）')
+eq(y1.setKeys.length, 0, 'Y1e 成功路径不调 setKey（不回写 auth.json）')
+vok(!JSON.stringify(y1.snap).includes(Y_FAKE_TOKEN), 'Y1f 快照里无 token 明文')
+vok(!JSON.stringify(y1.snap).includes(Y_FAKE_ACCOUNT), 'Y1g 快照里无 account_id 明文')
+
+// plan_type 各种值 → plan 恒为 'ChatGPT 订阅'（AC19，不发明 tier 中文名）
+for (const pt of ['pro', 'team', 'free', 'education']) {
+  await checkCodex(`Y19 plan_type=${pt} → plan 恒为 ChatGPT 订阅`, {
+    adapter: codexAdapter,
+    routes: [{ url: Y_WHAM, body: { ...Y_WHAM_OK, plan_type: pt } }],
+    key: null,
+    expect: {
+      snap: yOk({ source: '服务端真值', plan: 'ChatGPT 订阅', windows: [Y_WIN_5H, Y_WIN_W] }),
+      call: Y_CALL_FILE
+    }
+  })
+}
+
+// ── 窗口形态（AC3/AC4/AC5）──
+process.env.CODEX_HOME = mkCodexHome({ auth: true })
+await checkCodex('Y2 secondary_window 为 null → 只一个窗口（不造第二个）', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: { plan_type: 'plus', rate_limit: { primary_window: { used_percent: 14, limit_window_seconds: 18000, reset_at: Y_RESET_P }, secondary_window: null } } }],
+  key: null,
+  expect: {
+    snap: yOk({
+      source: '服务端真值',
+      plan: 'ChatGPT 订阅',
+      windows: [{ name: '5 小时', used: 0, unit: 'token', percent: 14, resetAt: Y_RESET_P_ISO, note: '服务端真值' }]
+    }),
+    call: Y_CALL_FILE
+  }
+})
+
+await checkCodex("Y3 未知秒数 86400 → '24 小时'（算术推导，不硬编码不报错）", {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: { plan_type: 'plus', rate_limit: { primary_window: { used_percent: 50, limit_window_seconds: 86400, reset_at: Y_RESET_P }, secondary_window: null } } }],
+  key: null,
+  expect: {
+    snap: yOk({
+      source: '服务端真值',
+      plan: 'ChatGPT 订阅',
+      windows: [{ name: '24 小时', used: 0, unit: 'token', percent: 50, resetAt: Y_RESET_P_ISO, note: '服务端真值' }]
+    }),
+    call: Y_CALL_FILE
+  }
+})
+
+await checkCodex('Y4 primary 缺 used_percent → 该窗口跳过，只出 secondary', {
+  adapter: codexAdapter,
+  routes: [
+    {
+      url: Y_WHAM,
+      body: {
+        plan_type: 'plus',
+        rate_limit: {
+          primary_window: { limit_window_seconds: 18000, reset_at: Y_RESET_P },
+          secondary_window: { used_percent: 33, limit_window_seconds: 604800, reset_at: Y_RESET_S }
+        }
+      }
+    }
+  ],
+  key: null,
+  expect: {
+    snap: yOk({
+      source: '服务端真值',
+      plan: 'ChatGPT 订阅',
+      windows: [{ name: '本周', used: 0, unit: 'token', percent: 33, resetAt: Y_RESET_S_ISO, note: '服务端真值' }]
+    }),
+    call: Y_CALL_FILE
+  }
+})
+
+// ── 失败 → 回退 jsonl（AC5 后半/AC7/AC8/AC9：今天什么样还什么样）──
+process.env.CODEX_HOME = Y_HOME_FILE
+await checkCodex('Y5 两窗口都缺 used_percent → 走 jsonl 回退（不是 percent:0）', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: { plan_type: 'plus', rate_limit: { primary_window: {}, secondary_window: {} } } }],
+  key: null,
+  expect: { snap: Y_FROZEN, call: Y_CALL_FILE }
+})
+
+const y6 = await checkCodex('Y6 401 → errSnap 含 codex login（有旧快照也不回退）', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, status: 401, body: { error: 'unauthorized' } }],
+  key: null,
+  expect: {
+    snap: yErr('Codex 凭据已失效（HTTP 401）：请运行 `codex login` 重新登录'),
+    call: Y_CALL_FILE
+  }
+})
+eq(y6.snap.dataQuality, undefined, 'Y6b 错误路径 dataQuality 是 undefined')
+eq(y6.setKeys.length, 0, 'Y6c 错误路径也不调 setKey')
+
+await checkCodex('Y7 429 → 静默走 jsonl（官方 frozen 快照）', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, status: 429, body: {} }],
+  key: null,
+  expect: { snap: Y_FROZEN, call: Y_CALL_FILE }
+})
+
+await checkCodex('Y8a 404 → 静默走 jsonl', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, status: 404, body: {} }],
+  key: null,
+  expect: { snap: Y_FROZEN, call: Y_CALL_FILE }
+})
+
+await checkCodex('Y8b 抛错（断网）→ 静默走 jsonl', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, throw: 'fetch failed' }],
+  key: null,
+  expect: { snap: Y_FROZEN, call: Y_CALL_FILE }
+})
+
+await checkCodex('Y9 形状认不出（无 rate_limit）→ 静默走 jsonl（漂移韧性）', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: { somethingElse: 1 } }],
+  key: null,
+  expect: { snap: Y_FROZEN, call: Y_CALL_FILE }
+})
+
+// 失败路径的 dataQuality 都是 undefined（AC20：用无可用数据的家底测终端失败）
+process.env.CODEX_HOME = mkCodexHome({ auth: true, sessionLines: ['{"type":"session_meta","timestamp":"2026-09-19T01:00:00.000Z"}'] })
+const y9b = await checkCodex('Y9b 形状认不出 + 无 sessions → errSnap（不是 ok + 空窗口）', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: { somethingElse: 1 } }],
+  key: null,
+  expect: {
+    snap: yErr('会话记录中无用量数据；服务端主动查询不可用（未登录 Codex CLI 或网络异常）'),
+    call: Y_CALL_FILE
+  }
+})
+process.env.CODEX_HOME = mkCodexHome({ auth: true })
+const y8c = await checkCodex('Y8c 抛错 + 无 sessions → nodata', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, throw: 'fetch failed' }],
+  key: null,
+  expect: {
+    snap: yNodata('未找到 ~/.codex/sessions 会话记录，且服务端额度不可查（未登录 Codex CLI 或网络异常）'),
+    call: Y_CALL_FILE
+  }
+})
+for (const [tag, s] of [['Y6', y6.snap], ['Y9b', y9b.snap], ['Y8c', y8c.snap], ['Y11', y11.snap]]) {
+  vok(s.dataQuality === undefined, `Y20 ${tag} dataQuality === undefined`)
+  vok(s.degradedReason === undefined, `Y20b ${tag} 不写 degradedReason`)
+  vok(s.dataQuality !== 'local', `Y20c ${tag} 永不出现 local`)
+}
+
+// ── 凭据三源：手动粘贴 + env（AC12/AC13）──
+const Y_MANUAL_TOKEN = 'manual-fake-jwt-for-tests'
+const Y_MANUAL_ACCOUNT = '123e4567-e89b-42d3-a456-426614174000'
+const yInst = {
+  id: 'inst-codex-1',
+  name: 'Codex 手动',
+  presetId: 'codex',
+  protocol: 'codex',
+  kind: 'coding',
+  baseUrl: '',
+  builtin: true,
+  enabled: true,
+  createdAt: AT
+}
+process.env.CODEX_HOME = mkCodexHome()
+const y12 = await checkCodex('Y12 手动 token + extras accountId → wham 成功（经实例绑定）', {
+  adapter: yBind(codexAdapter, yInst),
+  routes: [{ url: Y_WHAM, body: Y_WHAM_OK }],
+  key: Y_MANUAL_TOKEN,
+  extras: { 'accountId:codex': Y_MANUAL_ACCOUNT },
+  expect: {
+    snap: {
+      status: 'ok',
+      quality: 'official',
+      kind: 'coding',
+      builtin: true,
+      mark: 'codex',
+      source: '服务端真值',
+      plan: 'ChatGPT 订阅',
+      dataAt: AT,
+      windows: [
+        { name: '5 小时', used: 0, unit: 'token', percent: 14, resetAt: Y_RESET_P_ISO, note: '服务端真值' },
+        { name: '本周', used: 0, unit: 'token', percent: 33, resetAt: Y_RESET_S_ISO, note: '服务端真值' }
+      ],
+      detail: null,
+      failureReason: null
+    },
+    call: {
+      url: Y_WHAM,
+      auth: `Bearer ${Y_MANUAL_TOKEN}`,
+      accept: 'application/json',
+      method: 'GET',
+      contentType: null,
+      body: null,
+      accountId: Y_MANUAL_ACCOUNT
+    },
+    keyIds: ['inst-codex-1']
+  }
+})
+eq({ id: y12.snap.id, name: y12.snap.name }, { id: 'inst-codex-1', name: 'Codex 手动' }, 'Y12b 快照的 id/name 换成实例身份')
+vok(!JSON.stringify(y12.snap).includes(Y_MANUAL_TOKEN), 'Y12c 快照里无手动 token 明文')
+vok(!JSON.stringify(y12.snap).includes(Y_MANUAL_ACCOUNT), 'Y12d 快照里无 accountId 明文')
+
+process.env.CODEX_ACCESS_TOKEN = 'env-fake-jwt-for-tests'
+process.env.CODEX_HOME = mkCodexHome()
+const y13 = await checkCodex('Y13 env token → wham 成功；无 account_id 时请求无 Account-Id 头但照发', {
+  adapter: codexAdapter,
+  routes: [{ url: Y_WHAM, body: Y_WHAM_OK }],
+  key: null,
+  expect: {
+    snap: yOk({
+      source: '服务端真值',
+      plan: 'ChatGPT 订阅',
+      windows: [
+        { name: '5 小时', used: 0, unit: 'token', percent: 14, resetAt: Y_RESET_P_ISO, note: '服务端真值' },
+        { name: '本周', used: 0, unit: 'token', percent: 33, resetAt: Y_RESET_S_ISO, note: '服务端真值' }
+      ]
+    }),
+    call: {
+      url: Y_WHAM,
+      auth: 'Bearer env-fake-jwt-for-tests',
+      accept: 'application/json',
+      method: 'GET',
+      contentType: null,
+      body: null,
+      accountId: null
+    }
+  }
+})
+vok(!JSON.stringify(y13.snap).includes('env-fake-jwt'), 'Y13b 快照里无 env token 明文')
+delete process.env.CODEX_ACCESS_TOKEN
+
+// ── 静态守卫（每条先有前置，否则负向断言会空洞通过）──
+const codexSrc = readFileSync(new URL('../src/main/adapters/codex.ts', import.meta.url), 'utf8')
+const codexCode = codexSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+vok(codexCode.length > 0, 'YSG0 前置：读得到 codex.ts 去注释源码')
+vok(
+  /backend-api\/wham\/usage/.test(codexCode) && /readJson/.test(codexCode) && /ChatGPT-Account-Id/.test(codexCode),
+  'YSG1 前置：wham 端点 + readJson + Account-Id 头都在源码里（下面的守卫不能空洞通过）'
+)
+vok(/readJson\(\s*ctx\s*,\s*WHAM_URL/.test(codexCode), 'YSG2 wham 出网走 readJson（可注入；AC18）')
+vok(!/fetch\s*\(/.test(codexCode), 'YSG3 源码里无裸 fetch（出网能力可注入）')
+vok(!/writeFile/.test(codexCode), 'YSG4 源码里无 writeFile（不碰 auth.json；AC15）')
+vok(!/setKey/.test(codexCode), 'YSG5 源码里无 setKey（无自愈回写；AC15）')
+vok(/codex login/.test(codexCode), 'YSG6 401 文案含 codex login（AC6 的静态侧）')
+eq(PROTOCOLS.codex, undefined, 'YSG7 Codex 不进 protocols.ts 声明表（N7 额外保险；AC21）')
+
+// 恢复环境（Y 段改过的全部 env 还原）
+if (savedCodexHome === undefined) delete process.env.CODEX_HOME
+else process.env.CODEX_HOME = savedCodexHome
+if (savedCodexToken === undefined) delete process.env.CODEX_ACCESS_TOKEN
+else process.env.CODEX_ACCESS_TOKEN = savedCodexToken
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)
