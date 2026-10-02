@@ -1,0 +1,12 @@
+{"file": "./prd.md", "reason": "需求与 29 条验收标准"}
+{"file": "./design.md", "reason": "技术设计与决策依据（D1-D10）"}
+{"file": "./implement.md", "reason": "分阶段清单 + 20 套件断言数基线 + Review Gates"}
+{"file": "./research/02-endpoints-and-auth.md", "reason": "端点/请求头/真实响应样本/percent陷阱/过期自愈决策"}
+{"file": "./research/04-repo-contract-mapping.md", "reason": "kind/mark取值、凭据顺序、降级表、窗口模型、测试落点"}
+{"file": "./research/05-gotchas-and-open-questions.md", "reason": "改版事故、header清单、WAL陷阱、Q1-Q9待确认问题"}
+{"file": "./research/01-cursor-quota-model.md", "reason": "额度模型：双池/量纲分/计费周期/老端点形态"}
+{"file": "./research/00-summary-and-recommendation.md", "reason": "一页纸推荐方案 + 信息源清单（含许可）"}
+{"file": "../../spec/adapters/index.md", "reason": "适配器契约：CollectRequest接缝、readJson可选参、快照铸造器纪律"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（静态守卫需前置断言、loadTs用法）"}
+{"file": "./design.md", "reason": "D5方向性守卫是本次最关键的门（防静默退化成读服务端字段）"}
+{"file": "./research/02-endpoints-and-auth.md", "reason": "核对percent字段四份矛盾解读，防止实现被任一单方说法带偏"}
