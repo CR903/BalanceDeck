@@ -29,6 +29,7 @@ const MARKS = {
   copilot: { icon: 'simple-icons:githubcopilot', color: '' },
   cursor: { icon: 'simple-icons:cursor', color: '' },
   gemini: { icon: 'simple-icons:googlegemini', color: '' },
+  antigravity: { icon: 'simple-icons:google', color: '' },
   deepseek: { icon: 'simple-icons:deepseek', color: '#4D6BFE' },
   kimi: { icon: 'simple-icons:moonshotai', color: '' },
   zhipu: { icon: 'thesvg:zhipu', color: '#3859FF' },

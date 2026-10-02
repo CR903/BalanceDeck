@@ -2291,5 +2291,570 @@ else process.env.APPDATA = savedAppDataCursor
 rmSync(CURSOR_TMP, { recursive: true, force: true })
 rmSync(CURSOR_EMPTY, { recursive: true, force: true })
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// X. Google Antigravity（代码适配器）
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nX. Google Antigravity（代码适配器）')
+
+// ── X 段夹具 ─────────────────────────────────────────────────────────────────
+// 来源（二手实录，本机无 Antigravity 可抓 —— 逐字标注，不得标「实测」）：
+// · 响应形状（groups[].displayName / buckets[].bucketId/displayName/window/resetTime/
+//   remainingFraction；2 池 × 2 窗口）取自 can1357/oh-my-pi#9940 贴出的真实 JSON
+//   （检索 2026-10-01）与 quotas crate live fixture（2026-07-14）交叉一致的部分，
+//   按手写重造。
+// · 三种 nesting（顶层 groups / response.groups / summary.groups）与三种 fraction
+//   写法（驼峰 / 蛇形 / case-value）取自 usagebar docs/providers/antigravity.md
+//   （MIT fork，检索 2026-10-01）。
+// · loadCodeAssist 的 metadata 与 paidTier 陷阱（currentTier 对 Pro 也报 free-tier，
+//   真实订阅在 paidTier）取自 pi-antigravity 源码注释（检索 2026-10-01）。
+// ⚠ 凭据字面量红线（keystore.ts:6）：token 全用 fake 占位，不得换成真值。
+
+const { antigravityAdapter, antigravityTokenFile, readAntigravityToken, parseQuotaSummary } =
+  await loadTs('src/main/adapters/antigravity.ts')
+
+const AG_H1 = 'https://daily-cloudcode-pa.googleapis.com'
+const AG_H2 = 'https://daily-cloudcode-pa.sandbox.googleapis.com'
+const AG_H3 = 'https://cloudcode-pa.googleapis.com'
+const AG_LOAD = `${AG_H1}/v1internal:loadCodeAssist`
+const AG_QUOTA = `${AG_H1}/v1internal:retrieveUserQuotaSummary`
+const AG_LOAD_BODY = JSON.stringify({
+  metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
+})
+const AG_PROJECT = 'test-cloudaicompanion-project-1' // 形状仿 cloudaicompanionProject
+const AG_QUOTA_BODY = JSON.stringify({ project: AG_PROJECT })
+const AG_TOKEN = 'ya29.fake-antigravity-token-for-tests'
+const AG_TOKEN_KC = 'ya29.fake-antigravity-keychain-for-tests'
+const AG_TOKEN_MANUAL = 'ya29.fake-antigravity-manual-for-tests'
+
+/** loadCodeAssist：currentTier 报 free-tier，真实订阅在 paidTier（AC10 的覆盖对象） */
+const AG_LOAD_OK = {
+  currentTier: { id: 'free-tier', name: 'Free' },
+  paidTier: { id: 'g1-pro-tier', name: 'Google AI Pro' },
+  cloudaicompanionProject: AG_PROJECT
+}
+
+const AG_RESET_WEEK = '2026-08-29T12:08:59.000Z'
+const AG_RESET_5H = '2026-08-27T15:45:28.000Z'
+
+/** retrieveUserQuotaSummary：2 组 × 2 窗口（驼峰写法） */
+const AG_QUOTA_OK = {
+  groups: [
+    {
+      displayName: 'Gemini Models',
+      description: 'Models within this group: Gemini Flash, Gemini Pro',
+      buckets: [
+        { bucketId: 'gemini-weekly', displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: AG_RESET_WEEK, remainingFraction: 0.583 },
+        { bucketId: 'gemini-5h', displayName: 'Five Hour Limit Remaining', window: '5h', resetTime: AG_RESET_5H, remainingFraction: 0.853 }
+      ]
+    },
+    {
+      displayName: 'Claude and GPT models',
+      buckets: [
+        { bucketId: 'claude-weekly', displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: AG_RESET_WEEK, remainingFraction: 0.2 },
+        { bucketId: 'claude-5h', displayName: 'Five Hour Limit Remaining', window: '5h', resetTime: AG_RESET_5H, remainingFraction: 0.9 }
+      ]
+    }
+  ]
+}
+const X_WIN = [
+  { name: 'Gemini Models · 本周', used: 0, percent: 41.7, unit: 'percent', resetAt: AG_RESET_WEEK, note: 'Weekly Limit Remaining' },
+  { name: 'Gemini Models · 5小时', used: 0, percent: 14.7, unit: 'percent', resetAt: AG_RESET_5H, note: 'Five Hour Limit Remaining' },
+  { name: 'Claude and GPT models · 本周', used: 0, percent: 80, unit: 'percent', resetAt: AG_RESET_WEEK, note: 'Weekly Limit Remaining' },
+  { name: 'Claude and GPT models · 5小时', used: 0, percent: 10, unit: 'percent', resetAt: AG_RESET_5H, note: 'Five Hour Limit Remaining' }
+]
+
+const X_LOAD_CALL = {
+  url: AG_LOAD,
+  auth: `Bearer ${AG_TOKEN}`,
+  accept: 'application/json',
+  method: 'POST',
+  contentType: 'application/json',
+  body: AG_LOAD_BODY
+}
+const X_QUOTA_CALL = {
+  url: AG_QUOTA,
+  auth: `Bearer ${AG_TOKEN}`,
+  accept: 'application/json',
+  method: 'POST',
+  contentType: 'application/json',
+  body: AG_QUOTA_BODY
+}
+
+// 代码适配器自己声明 kind，但不声明 mark（实例绑定层补，见 N 节）
+const agOk = (body = {}) => ok({ kind: 'coding', mark: null, ...body })
+const agErr = (detail) => ({ ...err(detail), kind: 'coding' })
+const agNodata = (detail) => ({ ...nodata(detail), kind: 'coding' })
+
+/** X 段专用的检查器：走 makeRichRequest（富投影，断言得了 method / body）+ 凭据与 setKey 探针 */
+async function checkAntigravity(label, { adapter, routes, expect, key = null }) {
+  const inst = makeRichRequest(routes)
+  const keyIds = []
+  const setKeys = []
+  const snap = await adapter.collect(
+    makeCtx({ key, request: inst.request, onKey: (id) => keyIds.push(id), onSetKey: (id, v) => setKeys.push([id, v]) })
+  )
+  eq(project(snap), expect.snap, label)
+  if (expect.call) eq(inst.list, [expect.call], `${label} · 请求`)
+  if (expect.calls) eq(inst.list, expect.calls, `${label} · 请求序列`)
+  if (expect.keyIds) eq(keyIds, expect.keyIds, `${label} · 凭据查询 id`)
+  return { snap, list: inst.list, keyIds, setKeys }
+}
+
+// 凭据隔离：ANTIGRAVITY_KEYCHAIN 置空（关掉真 Keychain exec），TOKEN_FILE 指向
+// 临时文件，HOME 指向空目录（否则默认路径的真文件会污染断言，与 V/W 同一手法）。
+// X 段是文件最后一段，改 env 不影响任何既有段；段末恢复原值。
+const AG_TMP = mkdtempSync(joinPath(tmpdir(), 'bd-antigravity-'))
+const AG_EMPTY = mkdtempSync(joinPath(tmpdir(), 'bd-antigravity-empty-'))
+const AG_TOKEN_FILE = joinPath(AG_TMP, 'antigravity-oauth-token')
+writeFileSync(
+  AG_TOKEN_FILE,
+  JSON.stringify({ token: { access_token: AG_TOKEN, refresh_token: 'fake-refresh-for-tests', expiry: '2026-10-03T00:00:00Z' } })
+)
+const savedAgKc = process.env.ANTIGRAVITY_KEYCHAIN
+const savedAgFile = process.env.ANTIGRAVITY_TOKEN_FILE
+const savedHomeAg = process.env.HOME
+process.env.ANTIGRAVITY_KEYCHAIN = ''
+process.env.ANTIGRAVITY_TOKEN_FILE = AG_TOKEN_FILE
+process.env.HOME = AG_EMPTY
+
+eq(antigravityTokenFile(), AG_TOKEN_FILE, 'X0 ANTIGRAVITY_TOKEN_FILE 被识别（凭据探测可注入）')
+eq(readAntigravityToken(), { token: AG_TOKEN, source: 'file' }, 'X0b token 文件被读出（{ token.access_token } 形状）')
+delete process.env.ANTIGRAVITY_TOKEN_FILE
+eq(
+  antigravityTokenFile(),
+  joinPath(AG_EMPTY, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'),
+  'X0c 默认路径落在 ~/.gemini/antigravity-cli/antigravity-oauth-token（HOME 重定向可覆盖）'
+)
+process.env.ANTIGRAVITY_TOKEN_FILE = AG_TOKEN_FILE
+eq(parseQuotaSummary(AG_QUOTA_OK)?.length, 4, 'X0d 前置：纯函数 parseQuotaSummary 直接可用（plan-utils 模式）')
+
+const x1 = await checkAntigravity('X1 happy path：2 组 × 2 窗口 + plan 取 paidTier', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: AG_QUOTA_OK }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+eq(x1.snap.dataQuality, 'official', 'X1b 成功时 dataQuality === official')
+vok(x1.snap.degradedReason === undefined, 'X1c 适配器不写 degradedReason（那是 applyCachePolicy 的活）')
+vok(x1.snap.windows.every((w) => !('limit' in w)), 'X1d 不硬造 limit（纯百分比口径，字段省略）')
+vok(!JSON.stringify(x1.snap).includes('ya29'), 'X1e 快照里无 token 明文')
+eq(x1.setKeys.length, 0, 'X1f 成功路径不调 setKey（锁住不刷新不回写，AC8）')
+eq(new Set(x1.snap.windows.map((w) => w.name)).size, 4, 'X1g 四窗口名互异（组名前缀，D7 冻结）')
+
+const x2a = await checkAntigravity('X2a groups 在 response 下：解析出同结果', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: { response: { groups: AG_QUOTA_OK.groups } } }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+eq(project(x2a.snap), project(x1.snap), 'X2a2 与顶层写法完全同结果（AC12 冻结）')
+const x2b = await checkAntigravity('X2b groups 在 summary 下：解析出同结果', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: { summary: { groups: AG_QUOTA_OK.groups } } }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+eq(project(x2b.snap), project(x1.snap), 'X2b2 与顶层写法完全同结果（AC12 冻结）')
+
+/** 同一组数字，换两种 fraction 写法（蛇形 / case-value） */
+const AG_QUOTA_FRAC = {
+  groups: [
+    {
+      displayName: 'Gemini Models',
+      buckets: [
+        { displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: AG_RESET_WEEK, remaining_fraction: 0.583 },
+        { displayName: 'Five Hour Limit Remaining', window: '5h', resetTime: AG_RESET_5H, remaining: { case: 'remainingFraction', value: 0.853 } }
+      ]
+    },
+    {
+      displayName: 'Claude and GPT models',
+      buckets: [
+        { displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: AG_RESET_WEEK, remaining: { case: 'remainingFraction', value: 0.2 } },
+        { displayName: 'Five Hour Limit Remaining', window: '5h', resetTime: AG_RESET_5H, remaining_fraction: 0.9 }
+      ]
+    }
+  ]
+}
+const x3 = await checkAntigravity('X3 蛇形 / case-value 写法：解析出同结果', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: AG_QUOTA_FRAC }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+eq(project(x3.snap), project(x1.snap), 'X3b 三种 fraction 写法完全同结果（AC13 冻结）')
+
+await checkAntigravity('X4 越界/非数字 fraction 的 bucket 被跳过（不 clamp）', {
+  adapter: antigravityAdapter,
+  routes: [
+    { url: AG_LOAD, body: AG_LOAD_OK },
+    {
+      url: AG_QUOTA,
+      body: {
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            buckets: [
+              { displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: AG_RESET_WEEK, remainingFraction: 0.583 },
+              { displayName: '坏桶 1', window: 'weekly', resetTime: AG_RESET_WEEK, remainingFraction: 1.5 },
+              { displayName: '坏桶 2', window: 'weekly', resetTime: AG_RESET_WEEK, remainingFraction: -0.1 },
+              { displayName: '坏桶 3', window: 'weekly', resetTime: AG_RESET_WEEK, remainingFraction: 'lots' }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: [X_WIN[0]], detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+
+const X4B_BODY = {
+  groups: [{ displayName: 'Gemini Models', buckets: [{ displayName: '坏桶', window: 'weekly', remainingFraction: 1.5 }] }]
+}
+const x4b = await checkAntigravity('X4b 所有 bucket 都无可用 fraction → errSnap（不是 ok + 空窗口）', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: X4B_BODY }],
+  expect: {
+    snap: agErr(`响应格式未识别：${JSON.stringify(X4B_BODY).slice(0, 160)}`),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+
+const x5 = await checkAntigravity('X5 resetTime 非法 → 该窗口 resetAt 字段省略，不报错', {
+  adapter: antigravityAdapter,
+  routes: [
+    { url: AG_LOAD, body: AG_LOAD_OK },
+    {
+      url: AG_QUOTA,
+      body: { groups: [{ displayName: 'Gemini Models', buckets: [{ displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: 'not-a-time', remainingFraction: 0.5 }] }] }
+    }
+  ],
+  expect: {
+    snap: agOk({
+      source: 'Antigravity 接口',
+      plan: 'Google AI Pro',
+      windows: [{ name: 'Gemini Models · 本周', used: 0, percent: 50, unit: 'percent', note: 'Weekly Limit Remaining' }],
+      detail: '本机登录态自动读取（token 文件）'
+    }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+vok(!('resetAt' in x5.snap.windows[0]), 'X5b resetAt 键整个不存在（stable 会吞 undefined，所以直接查键）')
+
+const X6_BODY = { foo: 1 }
+const x6 = await checkAntigravity('X6 groups 缺失 → errSnap + 160 字符预览', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: X6_BODY }],
+  expect: {
+    snap: agErr(`响应格式未识别：${JSON.stringify(X6_BODY).slice(0, 160)}`),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+
+await checkAntigravity('X7 未知 window 值原样透传（monthly 不报错不丢弃）', {
+  adapter: antigravityAdapter,
+  routes: [
+    { url: AG_LOAD, body: AG_LOAD_OK },
+    {
+      url: AG_QUOTA,
+      body: { groups: [{ displayName: 'Gemini Models', buckets: [{ displayName: 'Monthly Limit Remaining', window: 'monthly', resetTime: AG_RESET_WEEK, remainingFraction: 0.25 }] }] }
+    }
+  ],
+  expect: {
+    snap: agOk({
+      source: 'Antigravity 接口',
+      plan: 'Google AI Pro',
+      windows: [{ name: 'Gemini Models · monthly', used: 0, percent: 75, unit: 'percent', resetAt: AG_RESET_WEEK, note: 'Monthly Limit Remaining' }],
+      detail: '本机登录态自动读取（token 文件）'
+    }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+
+// X8：三源全空 → noDataSnap（ANTIGRAVITY_KEYCHAIN 删除后走真 security exec，
+// 条目不存在即失败跳过；TOKEN_FILE 指向不存在的文件；getKey 给 null）
+delete process.env.ANTIGRAVITY_KEYCHAIN
+process.env.ANTIGRAVITY_TOKEN_FILE = joinPath(AG_EMPTY, 'no-token')
+const x8 = await checkAntigravity('X8 未配置：noDataSnap 且点名登录入口', {
+  adapter: antigravityAdapter,
+  routes: [],
+  key: null,
+  expect: {
+    snap: agNodata('未找到 Antigravity 凭据（请先在 Antigravity 或 agy 中登录一次）'),
+    calls: [],
+    keyIds: ['antigravity']
+  }
+})
+eq(x8.snap.dataQuality, undefined, 'X8b 失败路径 dataQuality 必须是 undefined（ADR-0002）')
+vok(
+  String(x8.snap.detail).includes('Antigravity') && String(x8.snap.detail).includes('agy'),
+  'X8c 文案点名登录入口（Antigravity / agy）'
+)
+process.env.ANTIGRAVITY_KEYCHAIN = ''
+process.env.ANTIGRAVITY_TOKEN_FILE = AG_TOKEN_FILE
+
+const x9 = await checkAntigravity('X9 loadCodeAssist 401 → 重登录文案', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, status: 401, body: { error: 'unauthorized' } }],
+  expect: {
+    snap: agErr('Antigravity 凭据已失效（HTTP 401）：请在 Antigravity 中重新登录'),
+    call: X_LOAD_CALL
+  }
+})
+eq(x9.snap.dataQuality, undefined, 'X9b 失败路径 dataQuality 必须是 undefined')
+vok(!x9.list.some((c) => c.url.includes('oauth2')), 'X9c 请求序列里没有 oauth2 token 端点（锁住"不刷新"，AC6）')
+eq(x9.setKeys.length, 0, 'X9d 错误路径也不调 setKey')
+eq(x9.list.length, 1, 'X9e 401 不触发 host 回退（仍是一次请求，AC23 一半）')
+
+const x10 = await checkAntigravity('X10 手动粘贴优先级最低：本机文件有值时用文件的', {
+  adapter: antigravityAdapter,
+  key: AG_TOKEN_MANUAL,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: AG_QUOTA_OK }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+eq(x10.list[0].auth, `Bearer ${AG_TOKEN}`, 'X10b 赢的是 token 文件那份凭据（不是手动粘贴的）')
+
+// X10c：本机文件全空时手动粘贴兜底（plan 照常从服务端来，保持有值）
+process.env.ANTIGRAVITY_TOKEN_FILE = joinPath(AG_EMPTY, 'no-token')
+const X_MANUAL_LOAD = { ...X_LOAD_CALL, auth: `Bearer ${AG_TOKEN_MANUAL}` }
+const X_MANUAL_QUOTA = { ...X_QUOTA_CALL, auth: `Bearer ${AG_TOKEN_MANUAL}` }
+await checkAntigravity('X10c 本机文件全空时手动粘贴兜底', {
+  adapter: antigravityAdapter,
+  key: AG_TOKEN_MANUAL,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: AG_QUOTA_OK }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '手动配置的凭据' }),
+    calls: [X_MANUAL_LOAD, X_MANUAL_QUOTA]
+  }
+})
+process.env.ANTIGRAVITY_TOKEN_FILE = AG_TOKEN_FILE
+
+// X11：Keychain 值带 go-keyring-base64: 前缀 → 剥前缀后可用
+process.env.ANTIGRAVITY_KEYCHAIN =
+  'go-keyring-base64:' + Buffer.from(JSON.stringify({ token: { access_token: AG_TOKEN_KC } }), 'utf-8').toString('base64')
+const X_KC_LOAD = { ...X_LOAD_CALL, auth: `Bearer ${AG_TOKEN_KC}` }
+const X_KC_QUOTA = { ...X_QUOTA_CALL, auth: `Bearer ${AG_TOKEN_KC}` }
+await checkAntigravity('X11 Keychain 前缀值可用（优先级高于 token 文件）', {
+  adapter: antigravityAdapter,
+  key: AG_TOKEN_MANUAL,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: AG_QUOTA_OK }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（Keychain）' }),
+    calls: [X_KC_LOAD, X_KC_QUOTA]
+  }
+})
+process.env.ANTIGRAVITY_KEYCHAIN = JSON.stringify({ token: { access_token: AG_TOKEN_KC } })
+await checkAntigravity('X11b Keychain 裸 JSON 值同样可用', {
+  adapter: antigravityAdapter,
+  key: null,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, body: AG_QUOTA_OK }],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（Keychain）' }),
+    calls: [X_KC_LOAD, X_KC_QUOTA]
+  }
+})
+process.env.ANTIGRAVITY_KEYCHAIN = ''
+
+const x13 = await checkAntigravity('X13 loadCodeAssist 未给 project → errSnap（假 100% 陷阱截停）', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: { currentTier: { id: 'free-tier' }, cloudaicompanionProject: '' } }],
+  expect: {
+    snap: agErr('服务端未返回配额归属项目（loadCodeAssist 未给出 cloudaicompanionProject）：为避免假 100% 剩余，本轮不报数字'),
+    call: X_LOAD_CALL
+  }
+})
+eq(x13.list.length, 1, 'X13b project 为空时只发了一个请求（quota 没发，D6 冻结）')
+eq(x13.list[0].url, AG_LOAD, 'X13c 唯一的请求是 loadCodeAssist')
+
+const x14a = await checkAntigravity('X14a 403 + SUBSCRIPTION_REQUIRED → 无有效订阅', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, status: 403, body: { error: { code: 403, reason: 'SUBSCRIPTION_REQUIRED' } } }],
+  expect: {
+    snap: agErr('当前账号无有效 Antigravity 订阅（免费档可能不提供额度接口）'),
+    call: X_LOAD_CALL
+  }
+})
+await checkAntigravity('X14b 403 + VALIDATION_REQUIRED → 完成验证', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, status: 403, body: { error: { code: 403, reason: 'VALIDATION_REQUIRED' } } }],
+  expect: {
+    snap: agErr('Google 账号需完成验证（VALIDATION_REQUIRED）：请按 Google 提示完成验证后重试'),
+    call: X_LOAD_CALL
+  }
+})
+await checkAntigravity('X14c 403 其他 reason → 透传 reason 字段，不自己编', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, status: 403, body: { error: { code: 403, reason: 'BILLING_DISABLED' } } }],
+  expect: {
+    snap: agErr('Antigravity 接口拒绝访问（HTTP 403）：BILLING_DISABLED'),
+    call: X_LOAD_CALL
+  }
+})
+await checkAntigravity('X14d quota 端点 403 同样走同一套文案', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, body: AG_LOAD_OK }, { url: AG_QUOTA, status: 403, body: { error: { reason: 'BILLING_DISABLED' } } }],
+  expect: {
+    snap: agErr('Antigravity 接口拒绝访问（HTTP 403）：BILLING_DISABLED'),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+
+const x15 = await checkAntigravity('X15 429 → 限流文案；body 里有 retryAfter 时进 detail', {
+  adapter: antigravityAdapter,
+  routes: [
+    { url: AG_LOAD, body: AG_LOAD_OK },
+    { url: AG_QUOTA, status: 429, body: { error: { code: 429, message: 'Quota exceeded' }, retryAfter: '30' } }
+  ],
+  expect: {
+    snap: agErr('Antigravity 配额接口限流（HTTP 429，30 秒后重试）：稍后将自动重试'),
+    calls: [X_LOAD_CALL, X_QUOTA_CALL]
+  }
+})
+vok(String(x15.snap.detail).includes('30'), 'X15b Retry-After 的值进了 detail')
+await checkAntigravity('X15c 429 无 retryAfter → 基础限流文案', {
+  adapter: antigravityAdapter,
+  routes: [{ url: AG_LOAD, status: 429, body: {} }],
+  expect: {
+    snap: agErr('Antigravity 配额接口限流（HTTP 429）：稍后将自动重试'),
+    call: X_LOAD_CALL
+  }
+})
+
+// X16：第一 host 抛错 → 自动试第二 host（每个请求独立从 host1 开始，
+// 同一个请求换 host 重发，D9；quota 同样先打 h1，抛错才换 h2）
+const AG_LOAD_H2 = `${AG_H2}/v1internal:loadCodeAssist`
+const AG_QUOTA_H2 = `${AG_H2}/v1internal:retrieveUserQuotaSummary`
+const AG_LOAD_H3 = `${AG_H3}/v1internal:loadCodeAssist`
+const X_LOAD_H2 = { ...X_LOAD_CALL, url: AG_LOAD_H2 }
+const X_QUOTA_H2 = { ...X_QUOTA_CALL, url: AG_QUOTA_H2 }
+await checkAntigravity('X16 第一 base URL 抛错 → 自动试第二 host', {
+  adapter: antigravityAdapter,
+  routes: [
+    { url: AG_LOAD, throw: 'fetch failed' },
+    { url: AG_LOAD_H2, body: AG_LOAD_OK },
+    { url: AG_QUOTA, throw: 'fetch failed' },
+    { url: AG_QUOTA_H2, body: AG_QUOTA_OK }
+  ],
+  expect: {
+    snap: agOk({ source: 'Antigravity 接口', plan: 'Google AI Pro', windows: X_WIN, detail: '本机登录态自动读取（token 文件）' }),
+    calls: [X_LOAD_CALL, X_LOAD_H2, X_QUOTA_CALL, X_QUOTA_H2]
+  }
+})
+const x16b = await checkAntigravity('X16b 三 host 全灭 → 请求失败（scheduler 同时置 offline）', {
+  adapter: antigravityAdapter,
+  routes: [
+    { url: AG_LOAD, throw: 'fetch failed' },
+    { url: AG_LOAD_H2, throw: 'fetch failed' },
+    { url: AG_LOAD_H3, throw: 'fetch failed' }
+  ],
+  expect: {
+    snap: agErr('请求失败: fetch failed'),
+    calls: [
+      X_LOAD_CALL,
+      X_LOAD_H2,
+      { ...X_LOAD_CALL, url: AG_LOAD_H3 }
+    ]
+  }
+})
+
+// X17：每条失败路径 dataQuality 都是 undefined，且永不出现 local、不写 degradedReason
+for (
+  const [tag, s] of [
+    ['X4b', x4b.snap],
+    ['X6', x6.snap],
+    ['X8', x8.snap],
+    ['X9', x9.snap],
+    ['X13', x13.snap],
+    ['X14a', x14a.snap],
+    ['X15', x15.snap],
+    ['X16b', x16b.snap]
+  ]
+) {
+  vok(s.dataQuality === undefined, `X17 ${tag} dataQuality === undefined`)
+  vok(s.degradedReason === undefined, `X17b ${tag} 不写 degradedReason`)
+  vok(s.dataQuality !== 'local', `X17c ${tag} 永不出现 local`)
+}
+
+// ── 注册与目录（AC1–AC4 的静态侧）──
+const { CODE_ADAPTERS: X_CODE_ADAPTERS } = await loadTs('src/main/adapters/index.ts')
+// ⚠ loadTs 每次重新求值模块：这里拿到的 CODE_ADAPTERS.antigravity 与 X 段直载的
+// antigravityAdapter 是两个求值产物，判引用相等恒假 —— 只能判注册字段。
+vok(X_CODE_ADAPTERS.antigravity?.id === 'antigravity', 'X18 前置：CODE_ADAPTERS 里找得到 antigravity')
+eq(
+  { id: X_CODE_ADAPTERS.antigravity?.id, kind: X_CODE_ADAPTERS.antigravity?.kind, builtin: X_CODE_ADAPTERS.antigravity?.builtin },
+  { id: 'antigravity', kind: 'coding', builtin: true },
+  'X18 CODE_ADAPTERS 注册了 antigravity（与适配器自声明的身份一致）'
+)
+eq(
+  (({ id, name, kind, protocol, localCredential, singleton }) => ({ id, name, kind, protocol, localCredential, singleton }))(
+    providers.presetById('antigravity')
+  ),
+  { id: 'antigravity', name: 'Google Antigravity', kind: 'coding', protocol: 'antigravity', localCredential: true, singleton: true },
+  'X18b BUILTIN_PRESETS 有 antigravity 条目（coding + 本机凭据 + 单例）'
+)
+vok(!('keyHint' in providers.presetById('antigravity')), 'X18c antigravity 预设无 keyHint（本机文件型一致）')
+eq(antigravityAdapter.kind, 'coding', 'X18d kind === coding（订阅制 + 滚动窗口 + 重置时间）')
+eq(antigravityAdapter.id, 'antigravity', 'X18e preset id == protocol id == mark == antigravity（自定义实例才拿得到 logo）')
+{
+  const iconsSrc = readFileSync(new URL('../src/renderer/src/provider-icons.ts', import.meta.url), 'utf8')
+  vok(iconsSrc.length > 0, 'X18f 前置：读得到 provider-icons.ts 生成物')
+  vok(iconsSrc.includes('"antigravity"'), 'X18g 生成物里有 antigravity 键（脚本跑出来的，非手改）')
+}
+
+// ── 静态守卫（每条先有前置，否则负向断言会空洞通过）──
+const agSrc = readFileSync(new URL('../src/main/adapters/antigravity.ts', import.meta.url), 'utf8')
+const agCode = agSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+vok(agCode.length > 0, 'XSG0 前置：读得到 antigravity.ts 去注释源码')
+vok(
+  /loadCodeAssist/.test(agCode) && /retrieveUserQuotaSummary/.test(agCode) &&
+    /daily-cloudcode-pa\.sandbox/.test(agCode) && /cloudcode-pa\.googleapis/.test(agCode),
+  'XSG1 前置：两个端点与三个 host 常量都在源码里（下面的守卫不能空洞通过）'
+)
+vok(
+  (agCode.match(/method:\s*'POST'/g) ?? []).length >= 1,
+  "XSG2 出网走 method POST（改回 GET 即红，X1 的请求断言兜底）"
+)
+vok(
+  /JSON\.stringify\(\{\s*project\s*\}\)/.test(agCode),
+  'XSG3 retrieveUserQuotaSummary 的 body 恰好是 { project }（删掉即红，X1/X13 兜底）'
+)
+vok(!/setKey/.test(agCode), 'XSG4 未调用/未 import setKey（锁住不刷新不回写；security 只读 exec 不在 ban 范围）')
+vok(!/1071006060591|GOCSPX-/.test(agSrc), 'XSG5 无 AGPL 字面量 client_id/secret（全文件查，注释也算）')
+eq(PROTOCOLS.antigravity, undefined, 'XSG6 Antigravity 不进 protocols.ts 声明表（N7 额外保险）')
+vok(
+  /execFileSync\('security'/.test(agCode),
+  'XSG7 Keychain 走 execFileSync security（只读，不走 shell，无注入面）'
+)
+vok(!/Connect-Protocol-Version/.test(agCode), 'XSG8 不发 Connect-Protocol-Version（Cloud Code 无证据要求它）')
+vok(
+  /User-Agent/.test(agCode) && /BalanceDeck/.test(agCode),
+  'XSG9 User-Agent 可识别自己（不伪装成 antigravity/… 之类）'
+)
+vok(/go-keyring-base64:/.test(agCode), 'XSG10 剥 go-keyring-base64 前缀（Keychain 登录态可读，X11 兜底）')
+vok(!/'local'/.test(agCode), 'XSG11 源码里无 local（本适配器永不出现 local，X17 兜底）')
+
+// 恢复环境（X 段改过的全部 env 还原；临时目录删掉）
+if (savedAgKc === undefined) delete process.env.ANTIGRAVITY_KEYCHAIN
+else process.env.ANTIGRAVITY_KEYCHAIN = savedAgKc
+if (savedAgFile === undefined) delete process.env.ANTIGRAVITY_TOKEN_FILE
+else process.env.ANTIGRAVITY_TOKEN_FILE = savedAgFile
+if (savedHomeAg === undefined) delete process.env.HOME
+else process.env.HOME = savedHomeAg
+rmSync(AG_TMP, { recursive: true, force: true })
+rmSync(AG_EMPTY, { recursive: true, force: true })
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

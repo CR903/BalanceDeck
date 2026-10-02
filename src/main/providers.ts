@@ -110,6 +110,15 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     singleton: true
   },
   {
+    id: 'antigravity',
+    name: 'Google Antigravity',
+    kind: 'coding',
+    protocol: 'antigravity',
+    defaultBaseUrl: 'https://daily-cloudcode-pa.googleapis.com',
+    localCredential: true,
+    singleton: true
+  },
+  {
     id: 'deepseek',
     name: 'DeepSeek',
     kind: 'balance',
