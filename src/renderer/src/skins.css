@@ -440,6 +440,34 @@ textarea {
   padding: 4px 0 8px;
 }
 
+/* ─── 分组块（P1-4 按组分块）：组头 + 该组卡片网格 ──────────────────────────
+   沿用既有令牌（--fg-dim / 11px，与 titlebar 字号体系一致），不引入新色值。
+   单组/无组时退化为单个块，多一行组头是可接受代价。 */
+.pcard-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pcard-section {
+  margin-bottom: 14px;
+}
+.pcard-section:last-child {
+  margin-bottom: 0;
+}
+.pcard-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+.pcard-section-head .count {
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
 .pcard {
   display: flex;
   flex-direction: column;
@@ -494,26 +522,6 @@ textarea {
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: -0.005em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 所属组名（design.md D5b）：与名称**后缀**是两件不同的事 ——
-   后缀区分「同名供应商的不同实例」（`Claude 公司`），本标签表达「它属于哪一组」。
-   刻意做成比名称更弱的一层：不抢视觉层级，长组名截断而不是把名称挤没
-   （`.pcard-name` 有 flex: 1 1 auto，组名用 flex: 0 1 auto + max-width 让位给它）。 */
-.pcard-group {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 76px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--surface-sunken);
-  color: var(--fg-faint);
-  font-size: 9.5px;
-  font-weight: 500;
-  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1297,14 +1305,15 @@ textarea {
   white-space: nowrap;
 }
 
-/* ─── 分组（P1-4）──────────────────────────────────────────────────────────
+/* ─── 分组（P1-4：归组下拉 + 分块组头）─────────────────────────────────────
    刻意复用 .field 的既有规则（token、圆角、focus 光晕），只补布局：
    分组是纯展示层控件，不该有一套自己的视觉语言。
+   （标题栏的分组筛选下拉已随按组分块退役，本节只剩设置页归组与分块组头。）
 
    ⚠ 这里必须用块注释。CSS 不认 `//` 行注释，而这不是「忽略一行」的差别：
      解析器会把 `//` 开头的那段当成一个**非法选择器**，连同后面紧跟的规则一起吞掉。
      实测（npm run build 后在产物里查这几条规则）：写成 `//` 时本节的
-     .prow-group / .grp-note / .grp-filter .grp-select **全部不在产物里** ——
+     .prow-group / .grp-note **全部不在产物里** ——
      构建**不报错**、界面只是控件没排版，而没有任何一处会红。 */
 
 /** 供应商行里的归组下拉。放在 prow-sub 之下，与那一行左侧对齐 */
@@ -1341,28 +1350,6 @@ textarea {
 }
 .grp-note b {
   color: var(--fg-dim);
-}
-
-/** 标题栏里的分组筛选。max-width 免得组名很长时把状态文字挤没 */
-.grp-filter {
-  flex: 0 1 auto;
-  display: flex;
-  min-width: 0;
-}
-.grp-filter .grp-select {
-  max-width: 108px;
-  height: 26px;
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
-  font-size: 11px;
-  outline: none;
-}
-.grp-filter .grp-select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .prow-empty {

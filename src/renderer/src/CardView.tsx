@@ -1,4 +1,4 @@
-import { ALL_GROUPS, distinguishSuffixes, displayName, groupOf, orderForDisplay, primaryWindowIndex, snapshotLevel, windowLevel } from './read-model'
+import { UNGROUPED, distinguishSuffixes, displayName, groupNames, groupOf, orderForDisplay, primaryWindowIndex, snapshotLevel, windowLevel } from './read-model'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderInfo, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { shortWindowLabel } from '../../shared/tray-text'
@@ -34,35 +34,12 @@ function QualityChip({ s }: { s: ProviderSnapshot }): React.JSX.Element | null {
   )
 }
 
-/**
- * 卡片上的组名标签（design.md D5b）。
- *
- * ⚗ 它与 `distinguishSuffixes` 的**名称后缀是两件不同的事**，不能合并：
- *   · 后缀区分「同名供应商的**不同实例**」（`Claude 公司` / `Claude 个人`）
- *   · 本标签表达「这个账户属于**哪一组**」（它可能是「公司」也可能是「个人」）
- *   两者会同时出现在一张卡上（`Claude 公司` + 标签「公司」）—— 看着冗余，但它们回答的
- *   是不同问题；而且同名实例**可能同组**，那时只有后缀、标签给不出任何区分。
- *
- * ⚗ `group` 为空串 = **不知道**（快照有、instanceInfo 里查不到该实例），此时**不渲染**。
- *   写「未分组」是撒谎：那是在声称一个我们并不知道的事实（它可能属于「公司」）。
- *   数据诚实优先于「每张卡都有标签」这种整齐。
- */
-function GroupTag({ group }: { group: string }): React.JSX.Element | null {
-  if (!group) return null
-  return (
-    <span className="pcard-group" title={`所属分组：${group}`}>
-      {group}
-    </span>
-  )
-}
-
 /** 套餐卡（coding / token）：窗口切换 + 环形进度 + 用量 + 重置 */
 function PlanCard({
   s,
   now,
   winIndex,
   suffix,
-  group,
   onSelectWindow
 }: {
   s: ProviderSnapshot
@@ -70,8 +47,6 @@ function PlanCard({
   winIndex: number
   /** 同名多账号的区分后缀；空串 = 不加（不造假区分） */
   suffix: string
-  /** 所属组名（空串 = 不知道，不渲染标签）—— 见 design.md D5b */
-  group: string
   onSelectWindow: (name: string) => void
 }): React.JSX.Element {
   const lvl = snapshotLevel(s)
@@ -87,7 +62,6 @@ function PlanCard({
       <span className="pcard-top">
         <ProviderMark mark={s.mark} size={22} />
         <span className="pcard-name">{displayName(s.name, suffix)}</span>
-        <GroupTag group={group} />
         <StatusDot lvl={lvl} />
       </span>
       {multi && (
@@ -158,16 +132,13 @@ function BalanceCard({
   s,
   now,
   hide,
-  suffix,
-  group
+  suffix
 }: {
   s: ProviderSnapshot
   now: number
   hide: boolean
   /** 同名多账号的区分后缀；空串 = 不加 */
   suffix: string
-  /** 所属组名（空串 = 不知道，不渲染标签）—— 见 design.md D5b */
-  group: string
 }): React.JSX.Element {
   const lvl = snapshotLevel(s)
   const w = s.windows[0]
@@ -180,7 +151,6 @@ function BalanceCard({
       <span className="pcard-top">
         <ProviderMark mark={s.mark} size={22} />
         <span className="pcard-name">{displayName(s.name, suffix)}</span>
-        <GroupTag group={group} />
         <StatusDot lvl={lvl} />
       </span>
       <span className="pcard-big">
@@ -232,22 +202,6 @@ function Skeleton(): React.JSX.Element {
   )
 }
 
-/** 下拉里「全部」那一项的**哨兵 value**（显示文案是「全部」，不是这个 value）。
- *
- * ⚠ value 里带一个控制字符：`sanitizeGroupId` 会剥掉全部 C0 控制字符，所以**任何用户
- *   输入的组名都不可能等于它**。用裸的「全部」当 value 的话，用户自建一个叫「全部」的组
- *   就会与哨兵撞名 —— `<option value>` 出现两个同值项，选中哪一项变成浏览器的实现细节
- *   （state-management.md 记过的「存下的值不能兼任哨兵」，这里是同一类，只是撞名的是用户数据）。
- *
- * ⚠ **故意不用 `ALL_GROUPS`（空串）当 value**：存储里空串就是「全部」，但 `<option value="">`
- *   在受控 select 里与「值没匹配上任何 option」读起来一样（都得到第一个选项）——
- *   「选中的是哪一项」会读不准，下拉断言就变成恒真。于是分两层：存储用空串、
- *   控件用哨兵，映射只在 onChange 一处。
- */
-const ALL_GROUPS_VALUE = '\u0001all'
-/** 哨兵那一项在界面上的文案（与 value 分开，正是为了上面那条撞名防护） */
-const ALL_GROUPS_LABEL = '全部'
-
 /** 顺序对齐：保留已有顺序，新出现的追加到末尾 */
 function reconcileOrder(prev: string[], ids: string[]): string[] {
   const set = new Set(ids)
@@ -264,10 +218,7 @@ export function CardView({
   onRefresh,
   onSettings,
   onCollapse,
-  instanceInfo,
-  groupFilter,
-  groups,
-  onSetGroupFilter
+  instanceInfo
 }: {
   state: AppState
   hideBalance: boolean
@@ -284,12 +235,6 @@ export function CardView({
    * 连 logo 都一样。不给它，卡片就只能裸渲染 `{s.name}`。
    */
   instanceInfo: ProviderInfo[]
-  /** 当前筛选的**分组 id**（不是实例 id）—— `ALL_GROUPS`（空串）= 全部显示 */
-  groupFilter: string
-  /** 分组下拉的选项（含「未分组」兜底） */
-  groups: string[]
-  /** 切换筛选：`ALL_GROUPS` = 看全部。见 App.tsx 的 applyGroupFilter */
-  onSetGroupFilter: (group: string) => void
 }): React.JSX.Element {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
@@ -344,24 +289,8 @@ export function CardView({
   }
 
   /**
-   * **生效**的筛选值：存储里指向一个已不存在的组时回落「全部」。
-   *
-   * 为什么必须有这一步：组不是独立存储的，它是「成员 groupId 的去重集合」——
-   * 最后一个成员被删掉，那个组就自然消失了（design.md D2）。此时若不回落：
-   *   ① `visibleIds` 返回空集 → 一张卡都不剩，界面却把原因说成「这个组被筛掉了」；
-   *   ② 受控 `<select>` 的 value 匹配不到任何 option → 静默回落到第一个选项，
-   *      界面上写着「全部」而状态里存着一个不存在的组（state-management.md 记过这个坑）。
-   * 这里只**读**不写：不回写用户的存储（那是写侧的事，且下次启动再回落一次也无害）。
-   *
-   * ⚠ 排序与空态判据**都用它**，不是原始 `groupFilter` —— 两处用不同的值，
-   *   就会出现「下拉写着 A 组、列表却是全部」这种自相矛盾的画面。
-   */
-  const effFilter = groupFilter && groups.includes(groupFilter) ? groupFilter : ALL_GROUPS
-  /** 下拉的 value：哨兵（全部）或组 id。effFilter 保证了它永远匹配得到某个 option */
-  const selectValue = effFilter === ALL_GROUPS ? ALL_GROUPS_VALUE : effFilter
-
-  /**
-   * 展示列表 = 可见的卡片，按**分组序 ⨯ 组内拖拽序**排。
+   * 展示列表 = 全部卡片，按**分组序 ⨯ 组内拖拽序**排（无筛选：筛掉的下拉已删除，
+   * 采集与托盘天然覆盖全部账户）。
    *
    * 为什么两个维度都要：`order` 是用户在网格里拖出来的**组内**次序，
    * `orderForDisplay` 给的是**组与组**之间的次序（组首成员的位置）。只按其中一层排，
@@ -369,9 +298,6 @@ export function CardView({
    *
    * 组合方式：先按 read-model 给出的展示序列把**组**编号，再在每组内部按 `order`
    * 的名次排。`Array.sort` 稳定（ES2019+），所以名次相同的卡维持原顺序。
-   *
-   * ⚠ 筛选只是**不展示**（D1）：不碰 `order` 状态，切回来立刻恢复用户原来的排法。
-   * ⚠ 被筛掉的账户**仍然在采集**，因此托盘与提醒覆盖全部账户（design.md D6）。
    */
   const shown = useMemo(() => {
     // 组内名次 < BIG 是前提（卡片数远小于 1000），于是两个整数合成一个词典序键
@@ -388,7 +314,9 @@ export function CardView({
         key: (id: string): number => rank.get(id) ?? BIG
       }
     }
-    const seq = orderForDisplay(instanceInfo, effFilter)
+    // 无筛选：展示序列 = 全部实例（orderForDisplay 缺省 ALL_GROUPS）。
+    // 将来若加回筛选，解开位置在这里 —— hidden 的过滤条件与 seq 传参一起改。
+    const seq = orderForDisplay(instanceInfo)
     // 组序：组 → 名次（它在展示序列里第一次出现的位置）
     // ⚠ 用 read-model 的 `groupOf` 而不是裸 `p.groupId`：未分组实例的 groupId 是**空串**
     //   （假值），裸读会把所有未分组的卡踢出组序，它们的**拖拽名次就成了死代码**。
@@ -401,15 +329,11 @@ export function CardView({
       const g = groupOf(it)
       if (!groupRank.has(g)) groupRank.set(g, groupRank.size)
     }
-    const inDisplay = new Set(seq)
     return {
-      // ⚗ 只筛**注册表里有、且被筛选排除掉**的实例。快照有、instanceInfo 里查不到的
-      //   id（IPC 竞态下的短暂状态、debugPush 注入的快照）**必须照样显示**：
-      //   我们不知道它属于哪一组，凭什么替用户把它藏起来？早先写成 `!inDisplay.has(id)`
-      //   时那些快照被整张滤掉，`--uitest` 的 cachedCard / cachedBanner / localChip
-      //   三条一起红（2026-10-01 实机），而界面上只表现为「卡片全没了 + 空态谎称
-      //   『分组已全部隐藏』」。下面 key() 里那条「未知实例排到末尾」分支在那时是死代码。
-      hidden: (id: string): boolean => byId.has(id) && !inDisplay.has(id),
+      // 无筛选即无隐藏：快照有、instanceInfo 里查不到的 id（IPC 竞态下的短暂状态、
+      // debugPush 注入的快照）照样显示，见下面 key() 里「未知实例排到末尾」分支。
+      // 将来若加回筛选，解开位置在这里（连同上面 seq 的传参一起改）。
+      hidden: (_id: string): boolean => false,
       // 未知实例（快照有、instanceInfo 里查不到 —— IPC 竞态下的短暂状态）排到末尾：
       // 混进任何一组的名次里，用户看到的是「某张卡莫名其妙换了个位置」，排最后反而可诊断。
       key: (id: string): number => {
@@ -418,7 +342,7 @@ export function CardView({
         return (groupRank.get(groupOf(it)) ?? 0) * BIG + (rank.get(id) ?? BIG)
       }
     }
-  }, [instanceInfo, effFilter, order])
+  }, [instanceInfo, order])
 
   const ordered = useMemo(
     () =>
@@ -426,6 +350,34 @@ export function CardView({
       configured.filter((s) => !shown.hidden(s.id)).sort((a, b) => shown.key(a.id) - shown.key(b.id)),
     [configured, shown]
   )
+
+  /**
+   * 分块 = 渲染切分（design.md D1/D2）：`ordered` 已是「组序 ⨯ 组内拖拽序」全序，
+   * 这里只按 `groupOfId` 切段，**不重排**。块顺序复用 `groupNames`（自定义组升序、
+   * 未分组末尾），不另起顺序源。
+   *
+   * 未知实例（快照有、注册表无 → groupOfId 空串）进未分组段末尾：不知道 ≠ 未分组，
+   * 所以它不打组标签（aria 也不读组名），但段归属必须有个去处。
+   * 每张卡顺带记下它在全文 DOM 里的下标（拖拽槽位是 DOM 序，见 endDrag 的换算）。
+   */
+  const sections = useMemo(() => {
+    const names = [...groupNames(instanceInfo)]
+    if (!names.includes(UNGROUPED)) names.push(UNGROUPED)
+    const buckets = new Map<string, ProviderSnapshot[]>(names.map((g) => [g, []]))
+    for (const snap of ordered) {
+      const g = groupOfId(snap.id) || UNGROUPED
+      const arr = buckets.get(g)
+      if (arr) arr.push(snap)
+      else buckets.set(g, [snap])
+    }
+    let dom = 0
+    return names
+      .filter((g) => (buckets.get(g)?.length ?? 0) > 0)
+      .map((g) => ({
+        group: g,
+        cards: (buckets.get(g) as ProviderSnapshot[]).map((snap) => ({ s: snap, dom: dom++ }))
+      }))
+  }, [ordered, instanceInfo, infoById])
 
   // ─── 拖拽排序 ──────────────────────────────────────────────────────────────
   //
@@ -443,6 +395,13 @@ export function CardView({
   const prevRects = useRef(new Map<string, DOMRect>())
   const orderRef = useRef<string[]>([])
   orderRef.current = ordered.map((s) => s.id)
+  /**
+   * DOM 序的 id 列表。分块后 DOM 序（块 ⨯ 块内）与 ordered 序可能不同 ——
+   * 块按 `groupNames` 排，ordered 按组首成员位置排。拖拽槽位是 DOM 下标，
+   * 落点提交时按这张表换算回 ordered 坐标（见 endDrag）。
+   */
+  const flatRef = useRef<string[]>([])
+  flatRef.current = sections.flatMap((sec) => sec.cards.map((c) => c.s.id))
   const suppressClickUntil = useRef(0)
   const dragRef = useRef<{
     id: string
@@ -527,7 +486,11 @@ export function CardView({
     if (!commit) return
     const ids = orderRef.current
     const from = ids.indexOf(d.id)
-    const to = Math.max(0, Math.min(ids.length - 1, d.target))
+    // ⚠ d.target 是 DOM 槽位下标：按槽位 occupants 换算回 ordered 坐标。
+    //   两序一致时恒等换算；跨块拖拽时换算出的全局 order 会被 key() 的组序拉回
+    //   （与改动前逐字一致的语义：组优先，不改变归属 —— design.md D3）。
+    const targetId = flatRef.current[d.target]
+    const to = Math.max(0, Math.min(ids.length - 1, targetId === undefined ? d.target : ids.indexOf(targetId)))
     if (from < 0 || from === to) return
     const next = [...ids]
     next.splice(from, 1)
@@ -683,27 +646,6 @@ export function CardView({
             )}
           </span>
         </span>
-        {/* 分组筛选：只影响**列表显示**，采集照跑（被筛掉的账户仍在托盘与提醒里）。
-
-            ⚠ 语义是**单选**（2026-10-01 用户决策）：选中某一组 = **只显示它**，
-              「全部」= 显示所有组。刻意不复用 `enabled: false` —— 那是停止采集，
-              切回要等一轮，历史还会断档。 */}
-        <span className="grp-filter">
-          <select
-            className="grp-select"
-            value={selectValue}
-            aria-label="按分组筛选"
-            title="按分组筛选卡片（只影响列表显示，托盘与提醒仍覆盖全部账户）"
-            onChange={(e) => onSetGroupFilter(e.target.value === ALL_GROUPS_VALUE ? ALL_GROUPS : e.target.value)}
-          >
-            <option value={ALL_GROUPS_VALUE}>{ALL_GROUPS_LABEL}</option>
-            {groups.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        </span>
         <IconButton
           name={hideBalance ? 'eyeOff' : 'eye'}
           title={hideBalance ? '显示余额' : '隐藏余额'}
@@ -731,26 +673,11 @@ export function CardView({
               去添加
             </button>
           </div>
-        ) : ordered.length === 0 && effFilter !== ALL_GROUPS ? (
-          // ① **筛选把卡片都筛掉了**（单选语义下 = 选中的那一组一个能显示的都没有）。
-          //    **不是**错误状态 —— 采集与托盘都还在跑（design.md D6），所以文案说清
-          //    「仍在采集」，并给一个真能回来的按钮。
-          <div className="empty-state">
-            <span className="empty-icon">
-              <Icon name="eyeOff" size={22} />
-            </span>
-            <span className="empty-title">分组已全部隐藏</span>
-            <span className="empty-sub">这些账户仍在正常采集，托盘与提醒依然覆盖它们</span>
-            <button type="button" className="btn-primary sm empty-cta" onClick={() => onSetGroupFilter(ALL_GROUPS)}>
-              显示全部分组
-            </button>
-          </div>
         ) : ordered.length === 0 ? (
-          // ② 兜底：有 configured 却一张卡都渲染不出来。**当前不可达**（`hidden` 只对
-          //    「注册表里有且被筛掉」的 id 为真，所以筛=全部时 ordered.length 恒等于
-          //    configured.length），但它必须在这里 —— 哪天上面那条判据又漏了条件，
-          //    兜底就是「给一句中性的话」而不是「谎称分组被隐藏」或干脆渲染一张空白网格
-          //    （design.md D1b）。上面那条 `configured.length === 0` 已经接走了
+          // 兜底：有 configured 却一张卡都渲染不出来。**当前不可达**（无筛选，
+          //    hidden 恒 false，所以 ordered.length 恒等于 configured.length），
+          //    但它必须在这里 —— 判据漏条件时兜底给一句中性的话，而不是渲染一张
+          //    空白网格。上面那条 `configured.length === 0` 已经接走了
           //    「本来就没配置」的情形，所以这里不需要另一套文案。
           <div className="empty-state">
             <span className="empty-icon">
@@ -763,55 +690,66 @@ export function CardView({
             </button>
           </div>
         ) : (
-          <div className="pcard-grid" ref={gridRef}>
-            {ordered.map((s, i) => {
-              const dragging = dragView?.id === s.id
-              const suffix = suffixOf(s.id)
-              const group = groupOfId(s.id)
-              return (
-                <div
-                  key={s.id}
-                  data-card-id={s.id}
-                  tabIndex={0}
-                  role="button"
-                  // ⚠ `aria-label` **覆盖**卡内全部可见文本，所以只写 `s.name` 会让读屏用户
-                  //   听到两个一模一样的名字 —— 那正是 P1-4 要解决的问题在无障碍通道上复发。
-                  //   后缀与组名都补进来；组名为空串（查不到实例）时不提「未分组」（D5b 的数据诚实）。
-                  aria-label={`${displayName(s.name, suffix)}${group ? `（${group}）` : ''} 详情`}
-                  className={
-                    'pcard ' +
-                    (isPlan(s) ? 'plan' : 'balance') +
-                    ` lvl-${snapshotLevel(s)}` +
-                    (isStale(s) ? ' stale' : '') +
-                    (dragging ? ' dragging' : '')
-                  }
-                  style={dragStyleFor(s.id, i)}
-                  title="点击查看详情 · 拖拽调整顺序（⌥←/⌥→）"
-                  onPointerDown={(e) => onCardPointerDown(e, s.id, i)}
-                  onKeyDown={(e) => onKeyDown(e, s.id)}
-                  onClick={() => {
-                    if (Date.now() < suppressClickUntil.current) return // 拖拽后的补发 click
-                    onOpen(s.id)
-                  }}
-                >
-                  {/* 与上面的 className 同一个口径（shared/quality 的 isPlan）：
-                      这里原先写的是裸 `s.kind === 'balance'`，与 558 行的 isPlan() 并存 ——
-                      今天两者等价，但 isPlan 的规则一旦改动，分支与类名就会各走各的 */}
-                  {!isPlan(s) ? (
-                    <BalanceCard s={s} now={now} hide={hideBalance} suffix={suffix} group={group} />
-                  ) : (
-                    <PlanCard
-                      s={s}
-                      now={now}
-                      winIndex={activeWindowIndex(s)}
-                      suffix={suffix}
-                      group={group}
-                      onSelectWindow={(name) => selectWindow(s.id, name)}
-                    />
-                  )}
+          // 按组分块：组头（组名 + 计数）+ 该组卡片网格。`sections` 只做渲染切分，
+          // 顺序（组序 ⨯ 组内拖拽序）早在 `ordered` 里定好 —— 这里不重排。
+          // gridRef 挂在外层容器：FLIP 与槽位几何按全局 `[data-card-id]` 取，跨块天然可用。
+          <div className="pcard-sections" ref={gridRef}>
+            {sections.map(({ group, cards }) => (
+              <section key={group} className="pcard-section" role="group" aria-label={group}>
+                <div className="pcard-section-head" data-group={group}>
+                  <span className="pcard-section-name">{group}</span>
+                  <span className="count">{cards.length}</span>
                 </div>
-              )
-            })}
+                <div className="pcard-grid">
+                  {cards.map(({ s, dom: i }) => {
+                    const dragging = dragView?.id === s.id
+                    const suffix = suffixOf(s.id)
+                    // 卡片自己的组名标签已随分块删除（组头即上下文）；aria 仍保留组名，
+                    // 读屏逐卡浏览时不断上下文。查不到实例（空串）时不提「未分组」。
+                    const cardGroup = groupOfId(s.id)
+                    return (
+                      <div
+                        key={s.id}
+                        data-card-id={s.id}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`${displayName(s.name, suffix)}${cardGroup ? `（${cardGroup}）` : ''} 详情`}
+                        className={
+                          'pcard ' +
+                          (isPlan(s) ? 'plan' : 'balance') +
+                          ` lvl-${snapshotLevel(s)}` +
+                          (isStale(s) ? ' stale' : '') +
+                          (dragging ? ' dragging' : '')
+                        }
+                        style={dragStyleFor(s.id, i)}
+                        title="点击查看详情 · 拖拽调整顺序（⌥←/⌥→）"
+                        onPointerDown={(e) => onCardPointerDown(e, s.id, i)}
+                        onKeyDown={(e) => onKeyDown(e, s.id)}
+                        onClick={() => {
+                          if (Date.now() < suppressClickUntil.current) return // 拖拽后的补发 click
+                          onOpen(s.id)
+                        }}
+                      >
+                        {/* 与上面的 className 同一个口径（shared/quality 的 isPlan）：
+                            这里原先写的是裸 `s.kind === 'balance'`，与 isPlan() 并存 ——
+                            今天两者等价，但 isPlan 的规则一旦改动，分支与类名就会各走各的 */}
+                        {!isPlan(s) ? (
+                          <BalanceCard s={s} now={now} hide={hideBalance} suffix={suffix} />
+                        ) : (
+                          <PlanCard
+                            s={s}
+                            now={now}
+                            winIndex={activeWindowIndex(s)}
+                            suffix={suffix}
+                            onSelectWindow={(name) => selectWindow(s.id, name)}
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
       </div>

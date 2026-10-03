@@ -2182,12 +2182,12 @@ export async function runUiTest(
     r.settingsDeleteConfirm = 'fail:no-picker'
   }
 
-  // ─── P1-4 多账户分组：筛选只影响列表 / 托盘不变 / 同名区分 / 组名标签 ─────────
+  // ─── P1-4 多账户分组：按组分块展示（组头 + 计数 + 卡片网格）──────────────────
   //
   // 键统一 `grp*` 前缀，与其它 section 的键不重叠 —— 本段与趋势图子任务共用同一个
   // uitest.ts，各自只加自己的键，合并时不需要去重。
   //
-  // ⚠ 本段**自建夹具**（两个自定义实例 + 两个组名），不依赖用户机器上已有的分组。
+  // ⚠ 本段**自建夹具**（两个自定义实例 + 一个组名），不依赖用户机器上已有的分组。
   // 第一版依赖「用户恰好有 ≥2 个组」，实测整段 skip，等于没有护栏。
   const backToCards = async (): Promise<void> => {
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
@@ -2218,24 +2218,6 @@ export async function runUiTest(
   const forceCollect = async (): Promise<void> => {
     await exec("document.querySelector('button[title=立即刷新]')?.click()")
   }
-  /** 下拉选中某一项（React 受控 select 必须走原生 setter，直接设 .value 不触发 onChange） */
-  const pickGroup = async (value: string): Promise<void> => {
-    await exec(`(async()=>{
-      const sel=document.querySelector('.grp-select')
-      if(!sel) return
-      const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set
-      if(sel.value===${JSON.stringify(value)}) return
-      setter.call(sel,${JSON.stringify(value)})
-      sel.dispatchEvent(new Event('change',{bubbles:true}))
-      await new Promise(r=>setTimeout(r,260))
-    })()`)
-  }
-  const cardsNow = async (): Promise<string[]> => {
-    const s = String(await exec("[...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId).join(',')"))
-    return s === '' ? [] : s.split(',')
-  }
-  const storedFilter = async (): Promise<string> =>
-    String(await exec("window.api.getExtras(['ui:groupFilter']).then(e=>e['ui:groupFilter']||'')"))
 
   /** 加一个自定义实例。⚠ key 必须填：没有 key 时适配器铸的是 noDataSnap（status
    *  'nodata'），而 CardView 的 configured 过滤掉 nodata → **根本没有卡片**。
@@ -2266,19 +2248,17 @@ export async function runUiTest(
     await sleep(800)
   }
 
-  // ── 夹具：建一个「有卡」实例 + 一个「没卡」实例（没 key → nodata → 不占卡片）
-  //    两个组：GRP_VIS（给有卡的） / GRP_EMPTY（给没卡的 → 筛它必然空）
-  //    ⚠ 为什么要有「没卡」那个：筛到空态需要「这一组里一张卡都不剩」，而用户机器上
-  //    任何真实组都可能恰好都有卡 —— 那样空态就永远走不到，断言形同虚设。
+  // ── 夹具：两个有卡实例 —— vis 归 GRP_VIS 组，dry 不归组（进「未分组」兜底块）。
+  //    两个都要填 key（见 addCustom 的注释），失败也是一张卡（status=error，
+  //    CardView 只过滤 nodata）。
   const GRP_VIS = 'uitest-可见组'
-  const GRP_EMPTY = 'uitest-空组'
   const NAME_VIS = 'uitest-vis'
   const NAME_DRY = 'uitest-dry'
 
   await exec(footerClick('设置'))
   await sleep(700)
   await addCustom(NAME_VIS, 'https://uitest-vis.example.com/v1', 'sk-uitest-vis')
-  await addCustom(NAME_DRY, 'https://uitest-dry.example.com/v1', '')
+  await addCustom(NAME_DRY, 'https://uitest-dry.example.com/v1', 'sk-uitest-dry')
   const fixtureRaw = String(
     await exec(
       `window.api.listProviders().then(p=>JSON.stringify(p.providers.filter(x=>x.name==='${NAME_VIS}'||x.name==='${NAME_DRY}').map(x=>({id:x.id,name:x.name}))))`
@@ -2290,142 +2270,141 @@ export async function runUiTest(
   if (!visId || !dryId) {
     r.grpSetup = `fail:vis=${visId} dry=${dryId}`
     for (const k of [
-      'grpSelect',
-      'grpOptions',
-      'grpSentinelDistinct',
-      'grpGroupTag',
-      'grpFilterStored',
-      'grpFilterCards',
-      'grpFilterTrayStable',
-      'grpFilterNoRecollect',
-      'grpEmptyState',
-      'grpEmptyRestore',
-      'grpEmptyFilterCleared',
-      'grpFixtureCard'
+      'grpFixtureCard',
+      'grpSections',
+      'grpSectionOrder',
+      'grpSectionCounts',
+      'grpUngroupedBucket',
+      'grpUnknownBucket',
+      'grpGroupTag'
     ]) {
       r[k] = 'skip:no-fixture'
     }
   } else {
     r.grpSetup = 'ok'
     // 归组：写真相源（注册表里的 groupId）。走 IPC 而非输入框 —— 断言的是**行为**，
-    // 输入框本身由 J17 之外的静态门与设置页的 e2e 覆盖，这里要的是「分组能生效」。
+    // 输入框本身由其它静态门与设置页的 e2e 覆盖，这里要的是「分组能生效」。
+    // dry 刻意不归组：它是「未分组」兜底块的探针。
     await exec(`window.api.setInstanceGroup(${JSON.stringify(visId)},${JSON.stringify(GRP_VIS)})`)
-    await exec(`window.api.setInstanceGroup(${JSON.stringify(dryId)},${JSON.stringify(GRP_EMPTY)})`)
     await sleep(400)
 
     await backToCards()
     await sleep(600)
     // ⚠ 必须**主动触发**一轮采集再等，不能只等后台轮询（周期 60s，断言等不起）
     await forceCollect()
-    // ⚠ 卡片基线必须在**夹具建好并采集完**之后取：`uitest-vis` 有 key → 失败也是一张卡
-    //   （status=error，CardView 只过滤 nodata）。拿加夹具之前的列表当基线，恢复断言必红。
+    // ⚠ 两张夹具卡都要等到：uitest-dry 有 key → 失败也是一张卡
+    //   （status=error，CardView 只过滤 nodata）。
     const visCardReady = await waitFor(`!!document.querySelector('[data-card-id="${visId}"]')`)
-    r.grpFixtureCard = visCardReady ? 'ok' : 'fail:vis-card-never-appeared'
-    const cardsBase = (await cardsNow()).join(',')
+    const dryCardReady = await waitFor(`!!document.querySelector('[data-card-id="${dryId}"]')`)
+    r.grpFixtureCard = visCardReady && dryCardReady ? 'ok' : `fail:vis=${visCardReady} dry=${dryCardReady}`
 
-    // ① 下拉存在，选项与注册表去重结果一致（期望值在页面里现算，不复制 read-model）
-    r.grpSelect = (await exec("!!document.querySelector('.grp-select')")) ? 'ok' : 'fail:no-select'
-    const grpOptions = String(
-      await exec("JSON.stringify([...document.querySelectorAll('.grp-select option')].map(o=>o.textContent))")
+    // 注册表真相：实例 id 集合 + 期望块顺序（自定义组升序、未分组末尾 ——
+    // 与 read-model 的 groupNames 同一规则，在页面里现算，不复制实现）。
+    const regRaw = String(
+      await exec(`window.api.listProviders().then(p=>JSON.stringify({ids:p.providers.map(x=>x.id),groups:(()=>{const us='未分组';const s=new Set(p.providers.map(x=>x.groupId||us));const rest=[...s].filter(x=>x!==us).sort();return [...rest,...(s.has(us)?[us]:[])]})()}))`)
     )
-    const grpExpected = String(
-      await exec(`window.api.listProviders().then(p=>{
-        const us='未分组'
-        const s=new Set(p.providers.map(x=>x.groupId||us))
-        const rest=[...s].filter(x=>x!==us).sort()
-        return JSON.stringify(['全部', ...rest, ...(s.has(us)?[us]:[])])
-      })`)
-    )
-    r.grpOptions = grpOptions === grpExpected ? 'ok' : `fail:${grpOptions}!=${grpExpected}`
-    // 哨兵 value 必须**不与任何真实组名相等**，否则用户自建同名组就会与「全部」撞名
-    r.grpSentinelDistinct =
-      (await exec(`(()=>{const os=[...document.querySelectorAll('.grp-select option')]
-        const all=os[0]?.value
-        return os.length>1 && !!all && !os.slice(1).some(o=>o.value===all)})()`)) === true
-        ? 'ok'
-        : 'fail:sentinel-collision'
-
-    // ② 卡片上显示所属组名（AC 5 / design.md D5b）；未分组的显示「未分组」
-    const tagProbe = String(
+    const reg = JSON.parse(regRaw) as { ids: string[]; groups: string[] }
+    // DOM 快照：一块 = 组头（名 + 计数）+ 该组卡片；未知卡 = 快照有、注册表无。
+    const domRaw = String(
       await exec(`(()=>{
-        const c=document.querySelector('[data-card-id="${visId}"]')
-        const u=[...document.querySelectorAll('[data-card-id]')].find(x=>!x.querySelector('.pcard-group'))
-        return JSON.stringify({
-          vis: c?.querySelector('.pcard-group')?.textContent ?? null,
-          hasTag: !!c?.querySelector('.pcard-group'),
-          // 没有标签的那张必须**不在注册表里**（查不到实例 → 不渲染，而不是谎称「未分组」）
-          unknown: u ? u.dataset.cardId : null
-        })
+        const secs=[...document.querySelectorAll('.pcard-section')].map(sec=>({
+          name: sec.querySelector('.pcard-section-name')?.textContent ?? '',
+          count: Number(sec.querySelector('.pcard-section-head .count')?.textContent ?? -1),
+          cards: [...sec.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId),
+          tagged: [...sec.querySelectorAll('[data-card-id]')].filter(c=>c.querySelector('.pcard-group')).length
+        }))
+        const ids=new Set(${JSON.stringify(reg.ids)})
+        const unknown=[...document.querySelectorAll('[data-card-id]')].map(c=>c.dataset.cardId).filter(id=>!ids.has(id))
+        return JSON.stringify({secs, unknown, hasSelect: !!document.querySelector('.grp-select')})
       })()`)
     )
-    const tag = JSON.parse(tagProbe) as { vis: string | null; hasTag: boolean; unknown: string | null }
-    // 注册表里的全部实例 id。**下面两条断言都要靠它区分「属于另一组」与「我们不知道它属于哪组」** ——
-    // 后者是 `debugPush` 注入的快照（cached/local/error 三段留下的 fake-provider），
-    // 它不在注册表里，而我们无从断言它被哪个组筛掉了。
-    const knownIds = new Set(
-      (JSON.parse(
-        String(await exec("window.api.listProviders().then(p=>JSON.stringify(p.providers.map(x=>x.id)))"))
-      ) as string[]) ?? []
-    )
-    r.grpGroupTag =
-      tag.hasTag && tag.vis === GRP_VIS && (tag.unknown === null || !knownIds.has(tag.unknown))
+    const dom = JSON.parse(domRaw) as {
+      secs: { name: string; count: number; cards: string[]; tagged: number }[]
+      unknown: string[]
+      hasSelect: boolean
+    }
+    // 未知卡（若有）同样进未分组块 —— 期望块里没有它时补上。
+    const expected = [...reg.groups]
+    if (dom.unknown.length > 0 && !expected.includes('未分组')) expected.push('未分组')
+
+    // ① 块数 = 组数（+ 未知卡逼出的兜底块），且标题栏的分组下拉已消失（AC1）。
+    //    下拉没了，「点不动」的根因（缺 no-drag）无从谈起 —— 删除即修复。
+    const secNames = dom.secs.map((x) => x.name)
+    r.grpSections =
+      !dom.hasSelect &&
+      dom.secs.length === expected.length &&
+      expected.every((g) => secNames.includes(g))
         ? 'ok'
-        : `fail:${tagProbe}`
+        : `fail:select=${dom.hasSelect} 期望[${expected.join(',')}] 实际[${secNames.join(',')}]`
+    // ② 块顺序与 groupNames 一致（未分组恒末尾）
+    r.grpSectionOrder =
+      JSON.stringify(secNames) === JSON.stringify(expected)
+        ? 'ok'
+        : `fail:期望[${expected.join(',')}] 实际[${secNames.join(',')}]`
+    // ③ 组头计数与该块实际卡数一致（且每块非空 —— 空块不应渲染）
+    const badCount = dom.secs.find((x) => x.count !== x.cards.length || x.count <= 0)
+    r.grpSectionCounts = !badCount ? 'ok' : `fail:${JSON.stringify(badCount)}`
+    // ④ 未分组实例进兜底块（dry 刻意不归组，就是这条的探针）
+    const drySec = dom.secs.find((x) => x.cards.includes(dryId))?.name ?? null
+    r.grpUngroupedBucket = drySec === '未分组' ? 'ok' : `fail:dry在[${drySec}]`
+    // ⑤ 组内卡无组名小标签（分块后冗余），组头有组名（上下文仍在）。
+    //    未知卡同样无标签 —— 它在 grpUnknownBucket 里另有专断，这里只看总数。
+    const taggedTotal = dom.secs.reduce((n, x) => n + x.tagged, 0)
+    r.grpGroupTag =
+      taggedTotal === 0 && dom.secs.length > 0 && dom.secs.every((x) => x.name !== '')
+        ? 'ok'
+        : `fail:标签数=${taggedTotal} 块数=${dom.secs.length}`
 
     {
-      // ③ 选中某一组 → 只显示该组成员，**且仍在被采集**（托盘标题不变，D6）
-      //
-      // ⚠ 先把采集周期挪到 5 分钟：`grpFilterNoRecollect` 的测量窗口有 ~1s 宽，而后台
-      //   调度每 60s 就会自己跑一轮 —— 落进窗口里就报一条**假红**，且它与被测行为无关。
-      //   写 `refreshInterval`（非 `ui:` 前缀）会触发一次 recollect，所以先写、**等它落定**
-      //   再取基线；读完 lastSyncAfter 立刻还原（本段之后不再依赖它）。
+      // ⑥ 未知实例（快照有、注册表无）：进未分组块末尾且**不打标签**（数据诚实）。
+      //    采集来的快照一定对应注册表实例，靠等是等不出来的 —— 用 debugPush 显式注入一个
+      //    （cached/local/error 三段已有先例），断言完立刻 refreshNow 还原。
+      //    ⚠ 先把采集周期挪到 5 分钟：自然采集（60s）若落进注入窗口会把 ghost 冲掉，
+      //    报一条与被测行为无关的假红。写 `refreshInterval`（非 `ui:` 前缀）会触发一次
+      //    recollect，所以先写、**等它落定**再注入；读完立刻还原。
       await exec("window.api.setExtras({refreshInterval:'300'})")
       await sleep(2500)
-      const trayBefore = String(await exec('window.api.debugTrayTitle()'))
-      const lastSyncBefore = String(await exec('window.api.getState().then(s=>s.lastSync)'))
-      await pickGroup(GRP_VIS)
+      const cur = String(await exec('window.api.getState().then(s=>JSON.stringify(s.snapshots))'))
+      const snaps = JSON.parse(cur) as unknown[]
+      const ghost = {
+        id: 'uitest-unknown',
+        name: 'uitest-ghost',
+        kind: 'coding',
+        builtin: false,
+        mark: 'custom',
+        plan: '',
+        status: 'ok',
+        windows: [{ name: '5 小时', used: 1, limit: 10, unit: 'usd', percent: 10 }],
+        dataQuality: 'official',
+        updatedAt: new Date().toISOString()
+      }
+      await exec(`window.api.debugPush(${JSON.stringify([...snaps, ghost])}, false)`)
       await sleep(700)
-      const left = await cardsNow()
-      const expectedVis = await exec(`window.api.listProviders().then(p=>JSON.stringify(
-        p.providers.filter(x=>(x.groupId||'未分组')===${JSON.stringify(GRP_VIS)}).map(x=>x.id)))`)
-      const expIds = new Set(JSON.parse(String(expectedVis ?? '[]')) as string[])
-      // 「不显示别的组」= **没有一张注册表里的卡**属于别的组。注册表里查不到的 id
-      // （debugPush 注入的快照）不在判据内 —— 我们不知道它属于哪组，替它断言同样是撒谎。
-      r.grpFilterCards =
-        left.length > 0 &&
-        left.every((x) => expIds.has(x) || !knownIds.has(x)) &&
-        !left.includes(dryId)
+      const ghostReady = await waitFor('!!document.querySelector(\'[data-card-id="uitest-unknown"]\')')
+      const ghostProbe = String(
+        await exec(`(()=>{
+          const c=document.querySelector('[data-card-id="uitest-unknown"]')
+          if(!c) return JSON.stringify({at:null})
+          const sec=c.closest('.pcard-section')
+          return JSON.stringify({
+            at: sec?.querySelector('.pcard-section-name')?.textContent ?? null,
+            tag: c.querySelector('.pcard-group')?.textContent ?? null,
+            aria: c.getAttribute('aria-label') ?? ''
+          })
+        })()`)
+      )
+      const g = JSON.parse(ghostProbe) as { at: string | null; tag: string | null; aria: string }
+      // aria 不含组名后缀：不知道 ≠ 未分组，读屏也不许替用户断言归属。
+      r.grpUnknownBucket =
+        ghostReady && g.at === '未分组' && g.tag === null && !g.aria.includes('（')
           ? 'ok'
-          : `fail:期望[${[...expIds].join(',')}]或非注册表 实际[${left.join(',')}]`
-      // 存储里就是**这一个组名**（单选，不是 id 列表、也不是取反）
-      r.grpFilterStored = (await storedFilter()) === GRP_VIS ? 'ok' : `fail:${await storedFilter()}`
-      // 托盘取**全局**排序第一位（tray-text.ts 的既有契约），筛选不改变它
-      const trayAfter = String(await exec('window.api.debugTrayTitle()'))
-      r.grpFilterTrayStable = trayAfter === trayBefore ? 'ok' : `fail:${trayBefore}->${trayAfter}`
-      // ⚠ 筛选**不重发采集请求**：ui: 前缀 → extras:set 不触发 refreshNow（ipc.ts）。
-      //   判据用 lastSync 而不是「有没有在扫描」—— 后者只是时序巧合。
-      const lastSyncAfter = String(await exec('window.api.getState().then(s=>s.lastSync)'))
-      r.grpFilterNoRecollect = lastSyncAfter === lastSyncBefore ? 'ok' : `fail:${lastSyncBefore}->${lastSyncAfter}`
+          : `fail:${ghostProbe}`
+      await exec('window.api.refreshNow()')
+      await sleep(2500)
+      await forceCollect()
+      await waitFor(`!!document.querySelector('[data-card-id="${visId}"]')`)
       await exec("window.api.setExtras({refreshInterval:'60'})")
     }
-
-    // ④ 筛到**一个可显示的卡都不剩**的组 → 空态必须说清是筛选，且给出**真能回来**的按钮
-    //   （design.md D1b：空态不许对「本来就没卡片」谎报）
-    await pickGroup(GRP_EMPTY)
-    await sleep(700)
-    const dryCards = await cardsNow()
-    const title = String(await exec("document.querySelector('.empty-title')?.textContent ?? ''"))
-    const cta = String(await exec("document.querySelector('.empty-cta')?.textContent ?? ''"))
-    r.grpEmptyState =
-      dryCards.length === 0 && title.includes('分组已全部隐藏') && cta.includes('显示全部分组')
-        ? 'ok'
-        : `fail:cards=${JSON.stringify(dryCards)} title=${title} cta=${cta}`
-    // 还原：点空态里的按钮 → 一次写 ALL_GROUPS，卡片立刻回来
-    await exec("(document.querySelector('.empty-cta')?.textContent||'').includes('显示全部分组') && document.querySelector('.empty-cta').click()")
-    await sleep(900)
-    const restored = (await cardsNow()).join(',')
-    r.grpEmptyRestore = restored === cardsBase ? 'ok' : `fail:${cardsBase}->${restored}`
-    r.grpEmptyFilterCleared = (await storedFilter()) === '' ? 'ok' : `fail:${await storedFilter()}`
   }
 
   // ── ③ 同名两账号的卡片名带不同后缀（D5）────────────────────────────────────
@@ -2470,19 +2449,23 @@ export async function runUiTest(
     dupReady && dupParts.length === 2 && dupParts[0] !== dupParts[1] && dupParts.some((x) => x.includes('uitest-a.example.com'))
       ? 'ok'
       : `fail:ready=${dupReady} names=${dupCardNames}`
-  // 同名两账号**同组**时：后缀与组名标签同时出现，两者回答不同问题（D5b）。
-  // 期望值从注册表现算（不把 read-model 的判定复制进断言）。
+  // 同名两账号分块后：后缀仍区分实例（卡名里），组归属只看它所在的块 ——
+  // 组内不再打标签（分块即上下文）。期望值从注册表现算（不把 read-model 的判定复制进断言）。
   const dupExpGroup = String(
     await exec(
       "window.api.listProviders().then(p=>{const d=p.providers.find(x=>x.name==='uitest-dup'); return d?(d.groupId||'未分组'):''})"
     )
   )
-  const dupTag = String(
+  const dupSecProbe = String(
     await exec(
-      `(()=>{const c=[...document.querySelectorAll('[data-card-id]')].filter(x=>x.querySelector('.pcard-name')?.textContent.includes('uitest-dup'))[0]; return c?.querySelector('.pcard-group')?.textContent ?? ''})()`
+      `(()=>{const cs=[...document.querySelectorAll('[data-card-id]')].filter(x=>x.querySelector('.pcard-name')?.textContent.includes('uitest-dup')); const c=cs[0]; return JSON.stringify({sec: c?.closest('.pcard-section')?.querySelector('.pcard-section-name')?.textContent ?? '', tagged: cs.filter(x=>x.querySelector('.pcard-group')).length})})()`
     )
   )
-  r.grpDupGroupTag = dupExpGroup !== '' && dupTag === dupExpGroup ? 'ok' : `fail:标签=${dupTag} 期望=${dupExpGroup}`
+  const dupSec = JSON.parse(dupSecProbe) as { sec: string; tagged: number }
+  r.grpDupGroupTag =
+    dupExpGroup !== '' && dupSec.tagged === 0 && dupSec.sec === dupExpGroup
+      ? 'ok'
+      : `fail:标签数=${dupSec.tagged} 块=${dupSec.sec} 期望=${dupExpGroup}`
 
   // 清理：测试实例必须删掉，否则反复跑会越堆越多（同名的还会干扰分组断言）
   await exec(footerClick('设置'))

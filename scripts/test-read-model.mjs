@@ -342,115 +342,88 @@ const appSrc = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/App.ts
 const setSrc = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/SettingsView.tsx'), 'utf8'))
 ok(appSrc.length > 0, 'J4 前置：App.tsx 剥注释后非空（负向断言不能空洞通过）')
 
+const cardRaw = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/CardView.tsx'), 'utf8'))
 console.log('\nJ2. 分组语义的边界守卫（这几条都是「写错了不报错、只是功能悄悄变了」）')
 
-// ⚠ `extras:get` 对**从未写过**的键返回 `''` 而不是 undefined，所以判「键缺失」只能用
-//   假值兜底。判 `== null` 恒为假 —— 后果不是崩，是**每个用户的分组筛选在第一次启动
-//   就被静默清空**（表现为「我设的筛选怎么自己回到全部了」）。
+// 分组筛选下拉已随按组分块**删除**（2026-10-03）：存量 `ui:groupFilter` 残留磁盘无害，
+// 渲染层读都不读 —— 下面几条钉住的正是「读都不读」（删了控件却留着读取，
+// 存量用户打开面板会只剩一组的卡，那是比控件点不动更坏的静默回归）。
 ok(
-  !/e\[['"]ui:groupFilter['"]\]\s*(==|===|!=|!==)\s*(null|undefined)/.test(appSrc),
-  "J5 ui:groupFilter 不与 null/undefined 比较（extras:get 对缺失键给 ''，判 == null 恒为假）"
+  !/ui:groupFilter/.test(appSrc) && !/ui:groupFilter/.test(cardRaw),
+  'J5 App/CardView 不再读写 ui:groupFilter（存量键残留磁盘，读都不读）'
 )
+// 先剥掉 ui:groupFilter 再判：它是唯一合法的携带者，剩下的 groupFilter 必然是死管线。
+const noFilterKey = (src) => !/groupFilter/.test(src.replace(/ui:groupFilter/g, ''))
 ok(
-  /e\[['"]ui:groupFilter['"]\]\s*\|\|\s*ALL_GROUPS/.test(appSrc),
-  "J6 ui:groupFilter 读侧用假值兜底 '' → ALL_GROUPS（缺失键 = 全部显示，而不是恒为假）"
+  noFilterKey(appSrc) && noFilterKey(cardRaw),
+  'J6 groupFilter/onSetGroupFilter/applyGroupFilter 无残留（漏删一项就是死代码）'
 )
-// 存储是一个**裸组名**（不是 JSON 数组）：单选筛选器只有「一个组名 or 全部」两个状态，
-// 照抄黑名单那套去 JSON.parse 一个非 JSON 串会抛 → 整个筛选恒空。
-ok(
-  /setExtras\(\{\s*'ui:groupFilter':\s*group\s*\}\)/.test(appSrc),
-  'J7 写侧存裸组名字符串（不 JSON 编码：单选筛选器只有一个值可存）'
-)
-const cardRaw = stripComments(readFileSync(resolve(ROOT, 'src/renderer/src/CardView.tsx'), 'utf8'))
-// ⚠ 旧键 ui:groupHidden 已**退役**（黑名单 → 单选筛选器）。读侧必须完全忽略它：
-//   否则一次升级就会把「我藏起来的组」的 JSON 当成筛选值，那串东西不可能等于任何真实
-//   组名 → 列表莫名其妙变成空白。
+ok(!/ALL_GROUPS/.test(cardRaw), 'J7 ALL_GROUPS 哨兵退役出 CardView（缺省即全部，不再需要哨兵层）')
+// ⚠ 旧键 ui:groupHidden 已**退役**（黑名单 → 单选筛选器 → 按组分块，两轮删除都没把它加回来）。
+//   读侧必须完全忽略它：否则一次升级就会把「我藏起来的组」的 JSON 当成别的值，
+//   那串东西不可能等于任何真实组名 → 列表莫名其妙变成空白。
 ok(
   !/ui:groupHidden/.test(appSrc) && !/ui:groupHidden/.test(cardRaw),
   'J8 读侧完全不再提 ui:groupHidden（残留值留在 extras 里不动，照 ui:voiceGender 的处置）'
 )
-// 「筛选只是不展示」是**结构性质**，用静态守卫钉住最省事：只要主进程读了这个键，
-// 就说明有人把筛选接到了采集或托盘上 —— 而那正是 D1/D6 明确禁止的。
-// ⚠ uitest.ts 是观测点（它读这个键来断言托盘不变），豁免它。
+// 「无筛选」是**结构性质**，用静态守卫钉住最省事：只要主进程读了这个键，
+// 就说明有人把分组接到了采集或托盘上 —— 而分组只是显示层的归类。
+// ⚠ uitest.ts 是观测点（它读注册表断言分块），豁免它。
 const mainHits = readdirSync(resolve(ROOT, 'src/main'), { recursive: true })
   .filter((f) => typeof f === 'string' && f.endsWith('.ts') && !f.includes('qa/uitest'))
   .filter((f) => /ui:groupFilter/.test(stripComments(readFileSync(resolve(ROOT, 'src/main', f), 'utf8'))))
-eq(mainHits, [], 'J9 主进程不读 ui:groupFilter（筛选不碰采集与托盘：托盘仍覆盖全部账户）')
+eq(mainHits, [], 'J9 主进程不读 ui:groupFilter（分组不碰采集与托盘：托盘仍覆盖全部账户）')
 
-// AC 明确要求设置页写出那句话。没有它，用户会以为筛掉了公司账户就收不到告警 ——
+// 设置页写明分组的语义边界。没有它，用户会以为分到不同块的账户收不到告警 ——
 // 而实际上（且应该）仍然收得到。这条只能静态断言：仓库没有 React 测试基础设施。
+// ⚠ 旧文案提「标题栏的下拉」（控件已删）：留着它等于给一个不存在的控件写说明书。
 ok(
-  setSrc.includes('筛选只影响列表显示') && setSrc.includes('托盘与提醒仍覆盖全部账户'),
-  'J10 设置页写明「筛选只影响列表显示，托盘与提醒仍覆盖全部账户」'
+  setSrc.includes('分组只影响列表分块') && setSrc.includes('托盘与提醒仍覆盖全部账户'),
+  'J10 设置页写明「分组只影响列表分块，托盘与提醒仍覆盖全部账户」'
 )
+ok(!setSrc.includes('筛选只影响列表显示'), 'J10b 设置页不再提已删除的筛选下拉（旧文案随控件退役）')
 
-ok(cardRaw.includes('分组已全部隐藏'), 'J11 筛选把卡片都筛掉时显示空态而不是空白网格')
-// ⚠⚠ 本仓库实测过的真 bug：判据只有 `ordered.length === 0` 时，「本来就没有卡片」
-//   （首帧 IPC 未返回 / 采集失败 / 快照 id 与实例 id 对不上）会**谎称**「分组已全部隐藏」，
-//   并附上一个点了也没用的恢复按钮（筛选本来就是「全部」，清空它不改变任何东西）。
-//   实机 --uitest 的 cachedCard / cachedBanner / localChip 三条就是被这个假空态带崩的。
+ok(!cardRaw.includes('分组已全部隐藏'), 'J11 「分组已全部隐藏」空态随筛选一并删除（无筛选即无此状态）')
+ok(!/effFilter/.test(cardRaw), 'J12 effFilter/selectValue 管线删除（排序与空态不再经筛选值）')
 ok(
-  /ordered\.length === 0 && effFilter !== ALL_GROUPS/.test(cardRaw),
-  'J12 「分组已全部隐藏」空态的判据同时要求筛选值非空（否则对「本来没卡片」谎报）'
+  !/onSetGroupFilter/.test(cardRaw),
+  'J13 onSetGroupFilter prop 与空态回全部按钮删除（无写入路径，ui:groupFilter 只减不增）'
 )
+// ⚠ instanceInfo 空守卫：首帧 IPC 未返回时 orderForDisplay 返回空集，拿空集去算组序会
+//   让全部卡片挤进默认名次里乱跳。
+ok(/instanceInfo\.length/.test(cardRaw), 'J14 instanceInfo 未到手时走兜底分支（否则组序是空集上算出来的）')
+// 无筛选即无隐藏（未知实例显示语义保留：快照有而 instanceInfo 里查不到的 id 照样显示）。
+// 将来若加回筛选，解开位置在 hidden 与 seq 传参 —— 这条变红时记得两处一起改。
 ok(
-  /className="btn-primary sm empty-cta" onClick=\{\(\) => onSetGroupFilter\(ALL_GROUPS\)\}/.test(cardRaw),
-  'J13 空态的「显示全部分组」直接写 ALL_GROUPS（一次到位，不经过任何 toggle 累加）'
+  /hidden: \(_id: string\): boolean => false/.test(cardRaw),
+  'J15 hidden 恒 false（无筛选即无隐藏；未知实例照样显示，排末尾）'
 )
-// ⚠ instanceInfo 空守卫：首帧 IPC 未返回时 orderForDisplay 返回空集，拿空集去过滤会
-//   把每一张卡都滤掉。
-ok(/instanceInfo\.length/.test(cardRaw), 'J14 instanceInfo 未到手时不过滤（否则「查不到实例」= 「卡片全没了」）')
-// ⚠ 只筛「注册表里有、且被筛选排除掉」的实例。快照有而 instanceInfo 里查不到的 id
-//   （IPC 竞态、debugPush 注入的快照）必须照样显示 —— 我们不知道它属于哪一组。
+// 分块渲染：section[role=group] + 组头 + 网格；块顺序复用 groupNames（不另起顺序源）。
 ok(
-  /hidden: \(id: string\): boolean => byId\.has\(id\) && !inDisplay\.has\(id\)/.test(cardRaw),
-  'J15 只筛「注册表里有且被筛选排除」的实例 —— 查不到实例的 id 必须照样显示'
+  /className="pcard-section"/.test(cardRaw) &&
+    /role="group"/.test(cardRaw) &&
+    /groupNames\(instanceInfo\)/.test(cardRaw),
+  'J16 按组分块渲染（section + 组头 + 网格，块顺序复用 groupNames）'
 )
-// 筛选值指向已消失的组时回落「全部」：组会随最后一个成员被删而消失（design.md D2），
-// 不回落的话受控 select 会静默回落到第一个选项，且列表变成空白。
+// 组名标签：分块后组内每卡都打组名 = 视觉噪音，上下文由组头承担。
+// ⚠ 负向断言带存在前提（cardRaw 非空），否则文件改名即空洞通过。
 ok(
-  /groupFilter && groups\.includes\(groupFilter\) \? groupFilter : ALL_GROUPS/.test(cardRaw),
-  'J16 筛选值指向已不存在的组 → 回落「全部」（否则下拉与列表自相矛盾）'
-)
-// 组名标签：design.md D5b 的 AC「卡片上显示所属组名；未分组显示「未分组」」
-//
-// ⚠ 判据跟着**当前实现形状**走：组名先在 `ordered.map` 的循环体里算成一个局部 `group`
-//   （同一个值同时喂给 aria-label 与两种卡型 —— 算三次就多三处会漂的表达式），所以门
-//   判的是「循环体算出 group → 两种卡型都收到 group」，而不是某个字面量出现在 JSX 里。
-//   形状变了这条会红（已实测），改形状时记得连门一起改。
-ok(
-  /className="pcard-group"/.test(cardRaw) &&
-    /const group = groupOfId\(s\.id\)/.test(cardRaw) &&
-    /<BalanceCard[^>]*\bsuffix=\{suffix\} group=\{group\}/.test(cardRaw) &&
-    /<PlanCard[\s\S]{0,300}?\bsuffix=\{suffix\}[\s\S]{0,200}?\bgroup=\{group\}/.test(cardRaw),
-  'J17 卡片上渲染所属组名标签 .pcard-group（两种卡型都把同一个 group 传下去）'
+  cardRaw.length > 1000 && !/pcard-group/.test(cardRaw),
+  'J17 组内卡不再渲染 .pcard-group 标签（组头即上下文）'
 )
 // 同一条链上的一环：`groupOfId` 查不到实例时必须返回**空串**而不是 UNGROUPED。
-// J18 只钉住 GroupTag 会把空串渲染成 null；这里是「空串从哪来」那一端，两端都要有门。
+// J17 只钉住「标签已删」；这里是「空串从哪来」那一端 —— 未知实例进兜底块但不读组名。
 ok(
   /const groupOfId = \(id: string\): string => \{[\s\S]{0,200}?return it \? groupOf\(it\) : ''/.test(cardRaw),
-  'J17b groupOfId 对查不到的实例返回空串（不知道 ≠ 未分组，J18 那一端才有 null 可返）'
+  'J17b groupOfId 对查不到的实例返回空串（不知道 ≠ 未分组，aria 才有空可留）'
 )
-// ⚠ 查不到实例时 groupOfId 返回空串 → GroupTag 返回 null（不渲染）。
-//   写「未分组」是撒谎：那是在声称一个我们并不知道的事实。
-ok(
-  /function GroupTag[\s\S]*?if \(!group\) return null/.test(cardRaw),
-  'J18 查不到实例时不渲染组名标签（不知道 ≠ 未分组，不许替用户断言）'
-)
-// 哨兵 value 必须带控制字符：sanitizeGroupId 剥掉全部 C0 控制字符 → 用户组名撞不上它。
-// 用裸「全部」当 value 的话，自建一个叫「全部」的组就会与「看全部」同值，
-// 而选中哪一项变成浏览器的实现细节（受控 select 的 value 只认字符串）。
-const sentinel = /const ALL_GROUPS_VALUE = '([^']*)'/.exec(cardRaw)
-ok(
-  // 源码里写的是转义序列而不是裸控制字符，所以判据两种写法都要认
-  !!sentinel && (/\\u00[0-9a-fA-F]{2}/.test(sentinel[1]) || /[\u0000-\u001F]/.test(sentinel[1])),
-  `J19 下拉哨兵 value 含控制字符（用户组名不可能与之相等）实得 ${JSON.stringify(sentinel?.[1])}`
-)
-// 哨兵 → 存储值的映射必须在 onChange 一处发生，且映射到 ALL_GROUPS（空串）
-ok(
-  /e\.target\.value === ALL_GROUPS_VALUE \? ALL_GROUPS : e\.target\.value/.test(cardRaw),
-  'J20 下拉哨兵 → 存储空串的映射写在 onChange（存储用空串、控件用哨兵，两层不混）'
-)
+// GroupTag 组件随标签一并删除（确认无他处引用 —— 删调用不删定义等于留死代码）。
+ok(!/function GroupTag/.test(cardRaw), 'J18 GroupTag 组件已删除（无他处引用，不留死代码）')
+// 哨兵 value 随下拉退役：存储缺省即全部，不再需要控件层的哨兵映射。
+ok(!/ALL_GROUPS_VALUE/.test(cardRaw), 'J19 下拉哨兵 ALL_GROUPS_VALUE 已删除（无控件即无撞名）')
+// 标题栏分组筛选下拉已删除：.grp-select 缺 no-drag 导致「点不动」，删除即修复。
+// 反验搭档是 uitest 的 grpSections（含「下拉不存在」断言）—— 静态门钉源码，行为门钉产物。
+ok(!/grp-select/.test(cardRaw), 'J20 标题栏 .grp-select 已删除（点不动的根因随控件消除）')
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

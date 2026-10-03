@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
 import type { AppState, ProviderInfo, ProviderSnapshot } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
@@ -18,7 +18,7 @@ import {
 } from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
-import { ALL_GROUPS, groupNames, speakableSnapshots } from './read-model'
+import { speakableSnapshots } from './read-model'
 import {
   DEFAULT_TTS_CONFIG,
   PROBE_IDLE,
@@ -119,18 +119,9 @@ export default function App(): React.JSX.Element {
   /** 不播报的供应商 id（ui:voiceMuted，默认空 = 全部播报） */
   const [voiceMuted, setVoiceMuted] = useState<string[]>([])
 
-  // ─── 多账户分组（P1-4）────────────────────────────────────────────────────
-  /**
-   * 当前筛选的**分组 id**（ui:groupFilter）—— 单选筛选器，缺省 `ALL_GROUPS` = 全部。
-   *
-   * 语义是「只显示选中那一组」，不是 `enabled: false` 的停止采集：切回零延迟，且
-   * 筛选期间采集与历史采样照常（趋势图不会因此缺一段）。
-   *
-   * ⚠ 存的是**组 id**（筛的是整个组），不是实例 id。
-   * ⚠ 旧的 `ui:groupHidden`（黑名单形态）**不再读也不再写**：残留值留在 extras 里
-   *   不动（照 `ui:voiceGender` 的处置先例 —— 它已下线，旧值留着无害）。
-   */
-  const [groupFilter, setGroupFilter] = useState(ALL_GROUPS)
+  // ─── 多账户分组（P1-4）：卡片按组分块展示 ─────────────────────────────────
+  // 无筛选状态：分组只决定主页的**分块聚合**，存量 `ui:groupFilter` 残留磁盘无害，
+  // 渲染层读都不读（J5 钉住）。托盘与提醒天然覆盖全部账户。
   /** 实例身份（providers:list）：分组归属与同名区分都只能从这里取 —— 见 design.md D5 */
   const [instanceInfo, setInstanceInfo] = useState<ProviderInfo[]>([])
 
@@ -532,7 +523,7 @@ export default function App(): React.JSX.Element {
   }
   useEffect(() => {
     void window.api.getExtras([
-      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:groupFilter'
+      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted'
     ]).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
@@ -544,12 +535,6 @@ export default function App(): React.JSX.Element {
       } catch {
         setVoiceMuted([])
       }
-      // 分组筛选值：裸字符串（组 id 或空串 = 全部）。
-      // ⚠ 判「键缺失」用 `|| ALL_GROUPS` 而不是 `== null`：extras:get 对未写过的键返回
-      //   `''` 而不是 undefined，`== null` 永远为假（这坑本文件里已经踩过两次）。
-      //   这里空串**就是**「全部」，所以不需要 JSON.parse 与类型守卫 ——
-      //   单选筛选器存的是个组名，不是 id 列表。
-      setGroupFilter(e['ui:groupFilter'] || ALL_GROUPS)
       // ⚠ 这里**不再读** ui:voiceGender：性别改由 petGender(pet.id) 现算（FR3）。
       //   旧键留在 extras 里不动 —— 读过再用它改写用户选的助理，就是「覆盖用户显式偏好」
       //   （上一轮集成复核因此还原过一次），而它本来也只是「谁播报」的另一种问法。
@@ -586,22 +571,6 @@ export default function App(): React.JSX.Element {
       .catch(() => setInstanceInfo([]))
   }, [view])
 
-  /**
-   * 切到某一组（`ALL_GROUPS` = 看全部）。
-   *
-   * ⚠ 「无变化不写」：`setExtra` 是**无条件整文件重写**（store.ts），而受控 `<select>`
-   *   触发 change 未必意味着值真的变了。
-   * ⚠ ui: 前缀 → 不触发 `refreshNow()`：筛选只是显示层的事，出网一次都没必要。
-   */
-  const applyGroupFilter = (group: string): void => {
-    if (group === groupFilter) return
-    setGroupFilter(group)
-    void window.api.setExtras({ 'ui:groupFilter': group })
-  }
-
-  // ⚠ 必须 memo：不 memo 的话每次渲染都是新数组引用，CardView 里依赖它的 useMemo
-  //   全部失效（分组排序会在每次状态推送时重算，等于没有缓存）。
-  const groups = useMemo(() => groupNames(instanceInfo), [instanceInfo])
 
   // ─── 语音提醒：智能播报 ───────────────────────────────────────────────────
 
@@ -1231,9 +1200,6 @@ export default function App(): React.JSX.Element {
             onSettings={() => setView('settings')}
             onCollapse={doCollapse}
             instanceInfo={instanceInfo}
-            groupFilter={groupFilter}
-            groups={groups}
-            onSetGroupFilter={applyGroupFilter}
           />
         )}
       </div>
