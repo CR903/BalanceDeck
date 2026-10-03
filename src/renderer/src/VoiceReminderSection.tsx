@@ -91,8 +91,8 @@ export function presetConfig(id: string): { url: string; voice: string; style: s
 /**
  * 音色下拉的分组：按性别分两档。
  *
- * 为什么分组：用户真正在做的事是「配一个男角色 / 女角色」，这与选哪位数字助理是
- * 同一个心智模型。摊平成 21 行的话，得逐行读「（男声·清朗）」才知道自己在找什么。
+ * 为什么分组：用户真正在做的事是「配一个男声 / 女声」。
+ * 摊平成 21 行的话，得逐行读「（男声·清朗）」才知道自己在找什么。
  */
 const VOICE_GROUPS: { gender: 'female' | 'male'; label: string }[] = [
   { gender: 'female', label: '女声' },

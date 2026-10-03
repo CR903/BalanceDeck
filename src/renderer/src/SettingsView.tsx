@@ -10,7 +10,6 @@ import type {
 import { Icon, IconButton } from './components'
 import { UNGROUPED, groupNames } from './read-model'
 import { ProviderMark } from './ProviderMark'
-import { PetSection, type PetSectionProps } from './PetSection'
 import { VoiceReminderSection, type VoiceReminderSectionProps } from './VoiceReminderSection'
 import badgeIcon from './assets/icon.png?inline'
 
@@ -341,14 +340,12 @@ export function SettingsView({
   /** 贴边自动隐藏（ui:dockHide，默认开） */
   dockHide: boolean
   onToggleDockHide: (on: boolean) => void
-  // 「数字助理」与「语音提醒」两个分区的 props 在同一个解构里只能有一个 rest，
-  // 所以合成一份 sectionProps 一起透传：两套接口都在类型上并了进来，少传任何一个
-  // prop 仍是编译错误；TS 不对 JSX 的变量展开做多余属性检查，两个分区各取自己那份即可。
+  // 语音提醒分区的 props 用 rest 透传：少传任何一个仍是编译错误；
+  // TS 不对 JSX 的变量展开做多余属性检查，分区取自己那份即可。
   //
-  // ⚠ 这里**没有**语音性别：系统语音的性别由选中的数字助理决定（petGender），设置页
-  //   不再提供第二处开关 —— 同一个问题问两遍，两处迟早会打架（FR3 / ui:voiceGender 下线）。
-} & PetSectionProps &
-  VoiceReminderSectionProps): React.JSX.Element {
+  // ⚠ 这里**没有**语音性别开关：系统语音回退固定用女声（App 的 DEFAULT_VOICE_GENDER），
+  //   设置页不再提供第二处开关 —— 同一个问题问两遍，两处迟早会打架。
+} & VoiceReminderSectionProps): React.JSX.Element {
   const [payload, setPayload] = useState<ProvidersPayload | null>(null)
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -740,8 +737,6 @@ export function SettingsView({
             </div>
           </div>
         )}
-
-        <PetSection {...sectionProps} />
 
         <VoiceReminderSection {...sectionProps} />
 

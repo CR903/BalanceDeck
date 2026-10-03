@@ -1,58 +1,58 @@
 import { BrowserWindow, screen, app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { BALL_VIEW, FIGURE_VIEW } from '../shared/pet-view'
+import { BALL_VIEW } from '../shared/pet-view'
 import { createDockHide, type DockPersisted } from './dockHide'
 import type { DockEdge } from '../shared/dock-hide'
 
-// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成小圆环／个性人物。
+// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 2D 小圆环。
 // 位置持久化在 userData/state.json。
 //
-// 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view，窗口尺寸与机位同源）：
-//   · 只有主体可见（WebGL 渲染），其余像素完全透明；
+// 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view）：
+//   · 只有主体可见（纯 DOM 渲染），其余像素完全透明；
 //   · 主体以外的区域鼠标穿透（光标轮询 + setIgnoreMouseEvents），桌面上点得到下面的窗口；
 //   · 用户拖动主体即拖动窗口（位置持久化）。
+//
+// 人物形态已下线（10-03-remove-human）：窗口恒 56×56，不再有形态分支。
 
 const EXPANDED = { width: 384, height: 600 }
-/** 收起态：2D 小圆环（默认形态；56×56，环心一个数，无 WebGL） */
+/** 收起态：2D 小圆环（唯一的收起形态；56×56，环心一个数，无 WebGL） */
 const COLLAPSED_BALL = BALL_VIEW
-/** 收起态：个性人物（人物独立站着，竖版窗口才装得下全身并把脸放大） */
-const COLLAPSED_FIGURE = FIGURE_VIEW
-
-/** 当前收起态是否为「个性人物」形态（由 preferences 决定，见 primePrefs） */
-let petFigure = false
 /** 是否总在最前（可关闭；关闭后不再悬浮于其他窗口之上） */
 let alwaysOnTop = true
 
-/** 收起态目标尺寸：球形态 / 个性人物形态 */
+/** 收起态目标尺寸：恒为 2D 小圆环（人物形态已下线，不再有形态分支） */
 function collapsedTarget(): { width: number; height: number } {
-  return petFigure ? COLLAPSED_FIGURE : COLLAPSED_BALL
+  return COLLAPSED_BALL
 }
 
 /**
- * 读取并应用启动期偏好（收起态形态 + 是否置顶 + 贴边隐藏开关）。
+ * 读取并应用启动期偏好（是否置顶 + 贴边隐藏开关）。
  * 在 createOverlay 之前 await 一次，窗口就能按最终尺寸/层级直接创建，避免闪一下。
+ *
+ * 老用户迁移（10-03-remove-human）：`ui:pet === '1'`（曾开启个性人物）→ 写回 `'0'`。
+ * 窗口本来就恒为 56×56（形态分支已删），这一写只是让磁盘上的旧偏好不再谎称人物形态，
+ * 避免未来代码把残留值误读成形态。
  */
 export async function primePrefs(): Promise<void> {
   try {
-    const { getExtra } = await import('./keystore')
+    const { getExtra, setExtra } = await import('./keystore')
     const pet = await getExtra('ui:pet')
-    petFigure = pet === '1'
+    if (pet === '1') {
+      try {
+        await setExtra('ui:pet', '0')
+      } catch {
+        // 落盘失败不阻断启动：窗口恒为圆环，残留值无行为影响
+      }
+    }
     const top = await getExtra('ui:alwaysOnTop')
     alwaysOnTop = top !== '0'
     // ui:dockHide 缺省开：extras:get 对缺失键给 ''，判 !== '0'（R7）
     const dockPref = await getExtra('ui:dockHide')
     dockEnabled = dockPref !== '0'
   } catch {
-    // 读不到就用默认值（球形态 + 置顶 + 贴边隐藏开）
+    // 读不到就用默认值（置顶 + 贴边隐藏开）
   }
-}
-
-/** 切换收起态形态（渲染层在「个性人物」开关变化时调用） */
-export function setPetFigure(figure: boolean): void {
-  if (figure === petFigure) return
-  petFigure = figure
-  if (win && state.collapsed) resizeCollapsed()
 }
 
 /** 总在最前开关（关闭后窗口不再悬浮于其它窗口之上） */
@@ -67,9 +67,9 @@ function applyAlwaysOnTop(): void {
   win.setAlwaysOnTop(alwaysOnTop, alwaysOnTop ? 'floating' : 'normal')
 }
 
-/** 测试观测点：当前形态与置顶状态 */
-export function petWindowState(): { figure: boolean; alwaysOnTop: boolean } {
-  return { figure: petFigure, alwaysOnTop }
+/** 测试观测点：置顶状态 */
+export function petWindowState(): { alwaysOnTop: boolean } {
+  return { alwaysOnTop }
 }
 
 /** 贴边隐藏位移异常只记一次日志（窗口关闭/退出竞态时原生调用会抛） */
@@ -145,7 +145,7 @@ const dock = createDockHide({
     return screen.getDisplayNearestPoint({ x: cx, y: cy }).workArea
   },
   isActive: () => {
-    if (!win || !state.collapsed || petFigure || !dockEnabled) return false
+    if (!win || !state.collapsed || !dockEnabled) return false
     const b = win.getBounds()
     return b.width === BALL_VIEW.width && b.height === BALL_VIEW.height
   },
@@ -256,10 +256,10 @@ export function dockTapPeek(): void {
   dock.onTapPeek()
 }
 
-/** 收起态异步缩放到当前形态的目标尺寸 */
+/** 收起态异步缩放到目标尺寸（恒 56×56） */
 function resizeCollapsed(): void {
   if (!win || !state.collapsed) return
-  // 形态尺寸变了：隐藏偏移与痕迹命中区都按旧尺寸算的，先复位（R5 取消条件），再按新尺寸摆
+  // 先复位隐藏态（R5 取消条件），再按目标尺寸摆
   dock.resetToVisible()
   const b = win.getBounds()
   const target = collapsedTarget()
@@ -340,7 +340,6 @@ export function createOverlay(): BrowserWindow {
     //   outer box-shadow：窗口与元素同为 56×56，圆形阴影的光晕在窗口内、圆外的那四块
     //   留在画面上，把窗口四角填成方形。证据与「为什么不用原生阴影」是两件事，
     //   前者已改、后者仍然成立；详见 .trellis/tasks/09-28-dot-frame-label-carousel/design.md §9。
-    //   人物的立体感由场景内的接触阴影负责。
     hasShadow: !state.collapsed,
     fullscreenable: false,
     minimizable: false,
@@ -354,7 +353,7 @@ export function createOverlay(): BrowserWindow {
       // 隐藏/非聚焦窗口的 setTimeout 会做 intensive throttling（1 分钟以上的
       // 定时器被降到最低频率）。定时播报的间隔是 1 小时，被节流后就无法保证
       // 「到点播报」——而且这个失败是静默的：定时器仍会触发，只是可能晚很多，
-      // 界面上看不出任何异常。与 3D 场景的 rAF（PetBall 已有 paused 机制）不同，
+      // 界面上看不出任何异常。收起态小圆环的数字动画走 rAF（切窗口时暂停重排），
       // 语音提醒走的是 setTimeout 自重排，且触发后要发网络请求，时序不能被压。
       backgroundThrottling: false
     }
@@ -383,7 +382,7 @@ export function createOverlay(): BrowserWindow {
     win = null
   })
 
-  // BD_DEBUG_RING=1：渲染层显示命中环（自检用，核对投影与点击穿透判定；**仅人物形态有投影**）
+  // BD_DEBUG_RING=1：渲染层显示命中调试环（自检用，核对命中判定）
   const query = process.env.BD_DEBUG_RING === '1' ? { bddebug: '1' } : undefined
   if (process.env.ELECTRON_RENDERER_URL) {
     const url = process.env.ELECTRON_RENDERER_URL + (query ? '?bddebug=1' : '')
@@ -584,12 +583,12 @@ export function dragStop(): void {
     persist()
   }
   grabPoint = null
-  // 隐藏逻辑接在收回之后：贴边则起 1000ms 隐藏计时（R1；展开态/人物形态/开关关闭时内部直接清掉）
+  // 隐藏逻辑接在收回之后：贴边则起 1000ms 隐藏计时（R1；展开态/开关关闭时内部直接清掉）
   dock.onDragStop()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态 3D 主体的鼠标穿透
+// 收起态 2D 主体的鼠标穿透
 //
 // 窗口是一块透明小窗（尺寸见 shared/pet-view），只有主体的位置应该接收鼠标。渲染层把主体
 // 的命中区（窗口内 CSS 像素）发过来，这里以光标轮询判断命中：

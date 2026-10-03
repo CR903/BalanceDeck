@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "10-03-remove-human",
-    "10-03-dock-autohide"
+    "10-03-dock-autohide",
+    "10-03-holo-sphere"
   ],
   "parent": null,
   "relatedFiles": [],

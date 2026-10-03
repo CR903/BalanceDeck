@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核查人物残留grep是否干净、剩余测试是否真变红过、out是否新鲜"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查三层删除后无悬空引用（figure通道/类型/菜单项）"}

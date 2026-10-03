@@ -7,7 +7,6 @@ import { createOverlay, getOverlay, loadPersisted, petIgnoreState, primePrefs, s
 import { createTray, updateTray, currentTrayTitle, trayImageInfo } from './tray'
 import { syncAutostart } from './autostart'
 import { startScheduler, refreshNow, currentState, stopScheduler } from './scheduler'
-import { registerHumanAssetScheme, setupHumanAssetProtocol } from './human-assets'
 import { runExportCommand } from './cli/export-command'
 import { createExportWriter } from './cli/export-writer'
 import { EXPORT_FILE_NAME } from './cli/export-snapshot'
@@ -73,9 +72,6 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 app.dock?.hide?.()
 
-// bd-asset:// 特权 scheme 必须在 ready 前注册（数字人素材用）
-registerHumanAssetScheme()
-
 loadPersisted()
 // 组合根注入：供应商注册表的存储（纯逻辑在 ./store，electron 只在 keystore 里）
 // 必须在 registerIpc 之前 —— 否则任何 providers:* 调用都会因未配置而抛错。
@@ -125,9 +121,7 @@ app.whenReady().then(async () => {
   //   ⚠ electron-builder.yml 读不到 TS 常量，所以两边各写一份，由
   //     scripts/test-system-notify.mjs 的 H6 静态比对（与 H0b 的 NOTIFY_LEVELS 同套路）。
   app.setAppUserModelId('dev.zhouri.balancedeck')
-  // 数字人素材协议（bd-asset://human-pets…，缺失时渲染层回落，不阻塞启动）
-  setupHumanAssetProtocol()
-  // 先读偏好：收起态形态（球/个性人物）与是否置顶，窗口按最终形态一次成型
+  // 先读偏好：是否置顶，窗口按最终层级一次成型（收起态恒 56×56，人物形态已下线）
   await primePrefs()
 
   // ── QA 运行模式：入口只做分派，实现在 ./qa ──────────────────────────────
@@ -137,7 +131,7 @@ app.whenReady().then(async () => {
     return
   }
 
-  // --ballshot：只拍收起态（默认球形态 = 2D 小圆环；BD_PET=1 是个性人物），见 ./qa/ballshot
+  // --ballshot：只拍收起态 2D 小圆环，见 ./qa/ballshot
   if (process.argv.includes('--ballshot')) {
     await runBallshot()
     return

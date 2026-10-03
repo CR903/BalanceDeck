@@ -34,7 +34,7 @@ export interface TtsStyle {
 //   已知的一处存疑：云夏（zh-CN-YunxiaNeural）被页面标成「男声·热情」，而微软自己的
 //   音色表把 Yunxia 列为女声 —— 也就是说这 8 个「男声」里可能有 1 个标错了。
 //   照抄的理由：本字段只决定下拉里的分组，用户按下拉里的文字就能对上服务页面；
-//   而系统语音性别走的是 petGender（助理身份），两者互不相干。
+//   而系统语音回退固定用女声（App 的 DEFAULT_VOICE_GENDER，人物形态下线前才跟助理走），两者互不相干。
 //   改这条数据前先看上面这段，别顺手「修正」成你以为的样子。
 export const TTS_VOICES: TtsVoice[] = [
   { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓（女声·温柔）', gender: 'female', trait: '温柔' },

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "删除跨主进程/渲染层/共享层三处形态分支，窗口尺寸常量与命中上报必须同步收敛到单形态"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "删用例不断言：确认剩余断言仍能变红；改src后必须build再跑electron QA（out非src）"}

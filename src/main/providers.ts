@@ -245,7 +245,7 @@ export async function listInstances(): Promise<ProviderInstance[]> {
   try {
     const arr = JSON.parse(raw) as unknown
     if (!Array.isArray(arr)) return []
-    // .map() 归一化（迁移先例，与 petState 的 encodePetState 同一手法）：
+    // .map() 归一化（读时补全、变更才落盘）：
     // `groupId` 是可选字段，旧实例读出来是 undefined —— 渲染层与纯函数不能各自处理
     // 「可能没有」这一种形状，统一补成空串（= 未分组）。**不回写磁盘**：
     // 没有变更就不该产生一次 setExtra（那是整文件重写）。

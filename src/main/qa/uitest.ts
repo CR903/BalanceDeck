@@ -11,7 +11,7 @@ import { app, screen } from 'electron'
 import { join } from 'path'
 import { consumeDragFired } from '../ipc'
 import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
-import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
+import { BALL_VIEW } from '../../shared/pet-view'
 // 隐藏偏移的断言口径与主进程同一常数（改 PEEK 时这里跟着变，不各自硬编码 56-4=52）
 import { PEEK } from '../../shared/dock-hide'
 import { refreshNow } from '../scheduler'
@@ -45,7 +45,7 @@ export async function runUiTest(
     }
   }
   const bounds = (): Electron.Rectangle => win.getBounds()
-  /** 收起态窗口很小（圆环 56×56 / 人物 213×293），主体就在正中：点击 = 点命中层中心 */
+  /** 收起态窗口很小（圆环 56×56），主体就在正中：点击 = 点命中层中心 */
   const ballCenterJs = `(()=>{
     const c=document.querySelector('.petball'); if(!c) return null
     const rc=c.getBoundingClientRect()
@@ -65,7 +65,7 @@ export async function runUiTest(
   //
   // 真实数据随机器而变（有没有多窗口套餐、有没有余额供应商都不由测试说了算），
   // 所以下面的断言一律**自己推快照**。夹具全部 `official` + 新鲜时间戳 —— 不触发
-  // 可信度角标，人物形态的 overlay 基线里没有角标（多一个元素整条比对就红）。
+  // 可信度角标（多一个元素，部分逐位比对的断言就红）。
   const isoNow = (): string => new Date().toISOString()
   /** `limit` 可缺省 —— AC3.3 要的正是「套餐窗口算不出比例」这一种（无 limit → windowPercent 为 null） */
   type FixWin = { name: string; used: number; limit?: number; unit: string; percent?: number }
@@ -136,14 +136,6 @@ export async function runUiTest(
     await exec(`window.api.debugPush(${JSON.stringify(snaps)}, false)`)
     await sleep(500)
   }
-
-  /**
-   * 展开的 overlay 盒：[className, left, top, right, bottom]（**绝对坐标，不是宽高**）。
-   * 踩过的坑：曾把它当 [x, y, w, h] 读，于是把 right 当成宽、bottom 当成高 ——
-   * 「基线 245/44」实际是 y=245、h=44（289-245），坐标没错，是**读法**错了。
-   * 所以下面只做差值运算，永远不直接拿 right/bottom 当尺寸。
-   */
-  type OverlayBox = [string, number, number, number, number]
 
   type BallProbe = {
     err: string
@@ -366,7 +358,7 @@ export async function runUiTest(
   r.dotDom = (await exec("!!document.querySelector('.petball') && !!document.querySelector('.petball-hit')"))
     ? 'ok'
     : 'fail'
-  // 诊断串：球形态的读数在 2D 小圆环的环心（.dot-value），人物形态在下方胶囊（.petball-value）
+  // 诊断串：球的读数在 2D 小圆环的环心（.dot-value）
   r.ballValue = String(
     await exec(
       "document.querySelector('.petball-fallback .dot-value')?.textContent ?? document.querySelector('.petball-value')?.textContent ?? ''"
@@ -901,18 +893,18 @@ export async function runUiTest(
     })()`)
   )
 
-  // ─── 宠物：设置页互动 + 收起态圆环／个性人物 + 鼠标穿透 ─────────────────────
-  // 用户原本是否开着「桌面宠物」（'1' 才算开；默认关闭 = 3D 球形态）
-  const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
+  // ─── 收起态：唯一的形态是 2D 小圆环（人物形态已下线，10-03-remove-human）───
+  //
+  // ui:pet 残留 '1' 的老偏好由主进程 primePrefs 在启动时迁回 '0'；启动期行为在
+  // uitest 运行时测不到，这里只断言形态死键：偏好值不再决定任何形态 —— 写 '1'
+  // 也变不出人物，窗口恒 56×56、无 canvas、无人物 DOM。
   // 面板不再常驻宠物卡（用户要求）：确认已移除
   r.petCardRemoved = (await exec("!!document.querySelector('.pet-card')")) ? 'fail:still-there' : 'ok'
 
-  // 设置页「数字助理」分区：选一位 / 改名 / 两个开关（养成互动已下线）
+  // 设置页「数字助理」分区已随人物形态下线：整个 .pet-sec 不许存在
   await exec(footerClick('设置'))
   await sleep(700)
-  r.petSection = (await exec("!!document.querySelector('.pet-sec') && document.querySelectorAll('.pet-chip').length === 2"))
-    ? 'ok'
-    : 'fail:no-section'
+  r.petSectionGone = (await exec("!!document.querySelector('.pet-sec')")) ? 'fail:still-there' : 'ok'
   // R1（AC1.1）设置侧：那个已删除的用量环开关整行必须已经拆掉。**只记串不报键** ——
   // petRingRemoved 是「设置页 + 右键菜单」两半合成的一条断言（拆开就把 14 条对不上），
   // 菜单那一半要到球上才截得到（菜单标签在主进程现拼，渲染层读不到），最后统一合报。
@@ -920,42 +912,13 @@ export async function runUiTest(
   // 死开关文案由两段拼出来：步 8 的门要求 `grep -rn "<该文案>" src/ README.md DESIGN.md`
   // **零命中**（产品代码不许再出现这串字），而这条断言恰恰要证明它不存在 —— 拼接在
   // 运行时与整串完全等价，grep 则匹配不到连续字面量。
+  //
+  // 分区已整体删除：设置页一半的判据是「分区缺席」（.pet-sec 不存在即 ok）。
   const deadRingLabel = '显示' + '用量环'
-  const ringRowGone = String(
-    await exec(`(()=>{
-      const sec=document.querySelector('.pet-sec')
-      if(!sec) return 'fail:no-pet-sec'
-      const rows=[...sec.querySelectorAll('.enable-row')].map(r=>(r.textContent||'').trim())
-      return rows.some(t=>t.includes(${JSON.stringify(deadRingLabel)})) ? 'fail:'+rows.join(' | ') : 'ok'
-    })()`)
-  )
-  // 角色缩略图由 3D 素材渲染（异步）：等它们出来
-  for (let i = 0; i < 40; i++) {
-    if ((await exec("document.querySelectorAll('.pet-chip img').length === 2")) === true) break
-    await sleep(400)
-  }
-  r.petThumbs = (await exec("document.querySelectorAll('.pet-chip img').length === 2")) ? 'ok' : 'fail:no-thumbs'
-  // 换一只：形象与默认名一起切换
-  const petIdBefore = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''"))
-  await exec(`[...document.querySelectorAll('.pet-chip')].find(c=>!c.classList.contains('on'))?.click()`)
-  await sleep(600)
-  r.petSwitch = (await exec("document.querySelector('.pet-chip.on')?.textContent?.length > 0")) ? 'ok' : 'fail'
-  void petIdBefore
+  const ringRowGone = ((await exec("!!document.querySelector('.pet-sec')")) === true)
+    ? 'fail:pet-sec-still-there'
+    : 'ok'
 
-  // 桌面宠物开关：关掉 → 收起态退回 2D 圆点（无 WebGL）；再开回来
-  /**
-   * 点「个性人物」开关，并等到偏好真的落定。
-   * 关闭时会先播**退场动作**（挥手告别 + 转身走出窗口）再收成球，所以不能只睡 500ms；
-   * 展开态下没有 3D 场景（PetBall 未挂载）时立即生效，轮询自然也算得出。
-   */
-  const petSwitch = async (want: '1' | '0'): Promise<void> => {
-    await exec("[...document.querySelectorAll('.pet-sec .switch')][0]?.click()")
-    for (let i = 0; i < 30; i++) {
-      const v = await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']??'')")
-      if ((want === '1' && v === '1') || (want === '0' && v === '0')) return
-      await sleep(400)
-    }
-  }
   const gotoView = async (v: 'card' | 'settings' | 'collapse'): Promise<void> => {
     if (v === 'collapse') {
       await exec('window.api.collapse()')
@@ -970,7 +933,7 @@ export async function runUiTest(
     }
   }
 
-  // 从这里开始会反复推夹具（人物形态的滚轮守卫、基线比对，以及球上的 11 条断言），
+  // 从这里开始会反复推夹具（球上断言），
   // 而 60 秒一轮的真实采集随时可能把夹具覆盖掉 —— 那种红查不出原因。
   // ⚠ 改频率会 reconfigure → refreshNow（**推夹具之前**只能做这一件事），等它收尾。
   await exec("window.api.setExtras({refreshInterval:'300'})")
@@ -980,125 +943,38 @@ export async function runUiTest(
     await sleep(300)
   }
 
-  // 开关语义：默认未设置 = 球形态；点一次 → 开启桌面宠物（'1'）；再点 → 关闭（'0'）
-  await petSwitch('1')
-  r.petToggleSaved = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true ? 'ok' : 'fail:not-saved'
-
-  // ── 个性人物形态：窗口是竖版（尺寸见 shared/pet-view 的 FIGURE_VIEW），人物素材就位，穿透生效 ──
+  // 形态死键：ui:pet 写 '1' 也变不出人物（人物形态已下线，偏好不再被任何代码读取）。
+  await exec("window.api.setExtras({\"ui:pet\":\"1\"})")
   await gotoView('collapse')
-  r.petBallOn = (await exec("document.querySelector('.petball')?.dataset.figure === '1'")) ? 'ok' : 'fail:figure-off'
-  r.petFigureWindow = bounds().width === FIGURE_VIEW.width && bounds().height === FIGURE_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
-  r.pet3dCanvas = (await exec("!!document.querySelector('.pet3d-canvas')")) ? 'ok' : 'fail:no-canvas'
-  // ⚠ 窗口从 30×300ms(9s) 放宽到 60×300ms(18s)：`petReady` 现在**必然晚于 three chunk
-  //   的下载与解析**（PetBall 改成动态 import 之后才成立）。原来那 9 秒是在「three 随入口
-  //   chunk 同步解析」的前提下定的，高负载下不够 → `petFigureUnchanged` 偶发报
-  //   `model-not-ready`（2026-10-01 资源占用优化时暴露）。
-  //   只放宽窗口、不改成「ready 后再等一帧」：多等那几帧对判定没有帮助，超时语义更直观。
-  for (let i = 0; i < 60; i++) {
-    if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) break
-    await sleep(300)
-  }
-  r.petModel = (await exec('window.__bd_ball?.()?.petReady === true')) ? 'ok' : 'fail:model-not-loaded'
-  r.petSvgIdle = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''"))
-  // 读数必须在**下方胶囊**里，不在环心 —— 人物形态没有 2D 小圆环，那个环心数字是球形态的东西
-  r.petCenterValue = (await exec("!!document.querySelector('.petball-caption .petball-value')"))
-    ? (await exec("!!document.querySelector('.petball-fallback')"))
-      ? 'fail:2d-dot-in-figure'
-      : 'ok'
-    : 'fail:no-caption-value'
-  // ── R6：人物形态下滚轮**什么都不做**（onWheel 首行的 figure 早退，design §9 标的
-  // 最易漏处）。人物形态没有可见的窗口索引，只能靠 `__bd_ball` 的 idx/winIdx 渲染期
-  // 镜像观测；夹具必须推满「2 位供应商 × 各自多窗口」—— 单供应商/单窗口下推进本来
-  // 就是空操作，这条会**恒绿**（那正是它最容易写废的形态）。
-  await pushFix(FIX_AB)
-  const figBefore = await ballProbe()
-  // 胶囊里的轮播点数 = 供应商数：它 ≥2 才证明「换人」这一轴真的有可推进的东西
-  const figDots = Number(await exec('document.querySelectorAll(".petball-dots i").length'))
-  // 每一步都记投递结果：`no-hit`（压根没派发出去）必须算红 —— 否则「事件没送到」
-  // 和「守卫挡住了」长得一模一样，这条会退化成恒绿（R7）。
-  const figWheels: string[] = []
-  const figWheel = async (dx: number, dy: number): Promise<void> => {
-    figWheels.push(String(await exec(wheelJs(dx, dy))))
-    await sleep(320)
-  }
-  await figWheel(100, 0) // 左右 ×1：换一位供应商（×2 会绕回同一位 → 观测全相等、恒绿）
-  await figWheel(0, 100) // 上下 ×2：切时限窗口
-  await figWheel(0, 100)
-  const figAfter = await ballProbe()
-  let figWhy = ''
-  if (figWheels.some((w) => w !== 'ok')) figWhy = `fail:dispatch=${figWheels.join(',')}`
-  else if (figBefore.err || figAfter.err) figWhy = `fail:probe=${figBefore.err || figAfter.err}`
-  else if (figBefore.winCount <= 1 || figDots < 2)
-    figWhy = `fail:precondition winCount=${figBefore.winCount},dots=${figDots}`
-  else if (figAfter.idx !== figBefore.idx) figWhy = `fail:idx ${figBefore.idx}->${figAfter.idx}`
-  else if (figAfter.winIdx !== figBefore.winIdx) figWhy = `fail:winIdx ${figBefore.winIdx}->${figAfter.winIdx}`
-  else if (figAfter.label !== figBefore.label) figWhy = `fail:label ${figBefore.label}->${figAfter.label}`
-  r.petFigureNoWheel = figWhy || 'ok'
-  // 人物形态的可见集里必须真的有**人物**：FBX 蒙皮网格（dump 里的节点名形如
-  // f014_hipoly_81_bones_opacity，--ballshot 的 diag 实证）。同时球壳/装饰带/用量环那类
-  // 球几何（Sphere/Torus/Tube）一条都不许剩。
-  //
-  // ⚠ 这一条 2026-09-27 重写过：原断言只有后半句（"可见集里没有球几何"），而球形态的
-  // 3D 球被删干净后那条正则**永不可能命中** —— 它会恒绿，是一条假护栏（R7）。
-  // 现在以前半句（人物真的在）为主、后半句为辅，合起来才既能证真也能防球几何复活。
-  const figDump = (await exec('window.__bd_ball?.()?.dump ?? []')) as
-    | { name: string; type: string; visible: boolean }[]
-    | null
-  const humanBits = (figDump ?? []).filter((m) => m.visible && /bones_opacity/.test(m.name))
-  const ballBits = (figDump ?? []).filter((m) => m.visible && /Sphere|Torus|Tube/.test(m.type))
-  r.petFigureOnly =
-    humanBits.length > 0 && ballBits.length === 0
+  r.petUiPetDead =
+    bounds().width === BALL_VIEW.width &&
+    bounds().height === BALL_VIEW.height &&
+    (await exec("!!document.querySelector('.pet3d-canvas')")) !== true &&
+    (await exec("!!document.querySelector('.petball-fallback')")) === true
       ? 'ok'
-      : `fail:human=${humanBits.length},ballBits=${ballBits.map((m) => m.type).join(',') || 'none'}`
-  // 人物要占满竖版窗口（「脸得看得清」的诉求）：命中区与真实 ink box 双口径。
-  // ⚠ 必须等它**静息**再量：人物现在会做动作（走动/张望/伸懒腰），侧身走动时投影自然窄得多，
-  // 拿动作中的帧去量会得到一个跟"脸看不清"无关的小盒子。
-  for (let i = 0; i < 50; i++) {
-    const g = (await exec('window.__bd_ball?.()?.gesture ?? null')) as { cur: string | null } | null
-    if (g && g.cur === null) break
-    await sleep(300)
-  }
-  r.petFigureBig = String(
-    await exec(`(()=>{const b=window.__bd_ball?.(); if(!b) return 'no-handle'
-      const r=b.rect, ink=b.measure?.box
-      return (r && ink && r.width>=140 && r.height>=190 && ink.width>=90 && ink.height>=150)
-        ? 'ok' : 'fail:rect='+JSON.stringify(r&&[Math.round(r.width),Math.round(r.height)])+' ink='+JSON.stringify(ink&&[Math.round(ink.width),Math.round(ink.height)])})()`)
+      : `fail:${bounds().width}x${bounds().height}`
+  // 复位：把探测写的值还原（primePrefs 也会在下次启动时做同样的迁移）
+  await exec("window.api.setExtras({\"ui:pet\":\"0\"})")
+  r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
+
+  // ── 小圆环形态：窗口恒 56×56，纯 2D（无 canvas，有 fallback 环），无人物 DOM ──
+  r.petBallWindow = bounds().width === BALL_VIEW.width && bounds().height === BALL_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  // 小圆环是**纯 2D**：没有 canvas（不创建 WebGL 上下文），有 .petball-fallback 那枚 2D 小圆环。
+  const ballCanvas = await exec("!!document.querySelector('.pet3d-canvas')")
+  const ballDot = await exec("!!document.querySelector('.petball-fallback')")
+  r.petBall3d =
+    !ballCanvas && ballDot ? 'ok' : `fail:canvas=${!!ballCanvas},dot=${!!ballDot}`
+  // 人物 DOM（胶囊 / 调试环 / 改名框）一条都不许剩：JSX 已删，留一条 DOM 级护栏
+  // （CSS 里同名规则还在 —— 它们是惰性的，无 JSX 挂载即无像素；test-structure 的 D6
+  // 改名输入框那条仍钉住那份 CSS 不许长出 outer 阴影）。
+  const figureDom = Number(
+    await exec("document.querySelectorAll('.petball-caption,.petball-debugring,.petball-rename,.pet3d-canvas').length")
   )
-
-  // ── 进出场动作：不是"配置对不对"，而是**人真的动了** ──
-  // 体态 x 的极值由场景自己记录（靠台架 300ms 采样必然漏掉 1.2 秒的走动）：
-  // 进场从场外左侧走来 → minX 明显为负；退场走出窗口右侧 → maxX 明显为正。
-  const travel = (): { minX: number; maxX: number } => ({ minX: 0, maxX: 0 })
-  let enterTravel = travel()
-  for (let i = 0; i < 40; i++) {
-    enterTravel = ((await exec('window.__bd_ball?.()?.travel ?? null')) as { minX: number; maxX: number } | null) ?? travel()
-    if (enterTravel.minX < -10) break
-    await sleep(300)
-  }
-  // 进场是"模型就位那一刻"自动播的（老代码在模型没加载完时就请求，实际从没被看到过）
-  r.petEnterWalk = enterTravel.minX < -10 ? 'ok' : `fail:minX=${enterTravel.minX}`
-  // 退场：收起态下主动驱动一次，人物必须往窗口外走
-  // ⚠ fire-and-forget：playGesture 的 Promise 在动作播完才兑现，而 executeJavaScript 会 await 它
-  await exec("void window.__bd_gesture?.('exit')")
-  let exitMaxX = 0
-  for (let i = 0; i < 30; i++) {
-    const t = ((await exec('window.__bd_ball?.()?.travel ?? null')) as { maxX: number } | null) ?? { maxX: 0 }
-    exitMaxX = t.maxX
-    if (exitMaxX > 10) break
-    await sleep(300)
-  }
-  r.petExitWalk = exitMaxX > 10 ? 'ok' : `fail:maxX=${exitMaxX}`
-
-  // ── 动作编排：每位角色的随机动作池 ≥5、步幅速度来自剪辑、人物出现即进场 ──
-  // 观感不可断言，但"编排"可以：池子、步速、进场是否真的播过。
-  const gest = (await exec('window.__bd_ball?.()?.gesture ?? null')) as
-    | { cur: string | null; step: number; planned: string | null; last: string | null; pool: string[] }
-    | null
-  r.petGesturePool = gest && gest.pool.length >= 5 ? 'ok' : `fail:${JSON.stringify(gest?.pool ?? null)}`
-  const stride = (await exec('window.__bd_ball?.()?.stride ?? 0')) as number
-  // 步幅速度由 walk 剪辑的根位移反算（实测 ≈27）；落在这个区间才算"真的量到了剪辑步幅"，
-  // 而不是退化成按身高估计（退化时会 console.warn，也在 15–45 内，故同时看 rootMotion）
-  r.petStride = stride >= 15 && stride <= 45 ? 'ok' : `fail:${stride}`
+  r.petNoFigureDom = figureDom === 0 ? 'ok' : `fail:${figureDom}`
+  // 无通知、无预警时不该有泡泡（泡泡只承载 notice / 确认气泡，两者此时都为空）
+  r.petBallNoBubble = !(await exec("!!document.querySelector('.petball-bubble')"))
+    ? 'ok'
+    : `fail:bubble=${await exec("document.querySelector('.petball-bubble')?.innerText || ''")}`
   // 置顶开关（默认开；关掉后主进程不再置顶；再开回来）
   const topDefault = (await exec('window.api.debugPetState()')) as { alwaysOnTop: boolean } | null
   r.petTopDefault = topDefault?.alwaysOnTop === true ? 'ok' : 'fail:default-off'
@@ -1111,239 +987,18 @@ export async function runUiTest(
   const watch = petIgnoreState()
   const hb = petHitboxDebug()
   r.petPierce = watch.roaming && hb && hb.width > 20 ? 'ok' : `fail:roaming=${watch.roaming},hb=${JSON.stringify(hb)}`
-  r.petCmdOk = watch.collapsed === true && bounds().width === FIGURE_VIEW.width ? 'ok' : `fail:${bounds().width}`
-  // 收起态必须关掉原生窗口阴影（否则 macOS 会按窗口矩形投一层方框阴影，实机表现为"宠物外面有个四方形框"）
+  r.petCmdOk = watch.collapsed === true && bounds().width === BALL_VIEW.width ? 'ok' : `fail:${bounds().width}`
+  // 收起态必须关掉原生窗口阴影（否则 macOS 会按窗口矩形投一层方框阴影）
   r.petNoWindowShadow = watch.shadow === false ? 'ok' : 'fail:has-shadow'
-  // ⚠️ `rect` / `measure.box` **运行时可以是 null**，类型不能骗人：
-  //   · 球形态根本不建 3D 场景，`__bd_ball()` 的字段全是 null/[]（见 ballshot 的同款说明）
-  //   · 人物形态在场景首帧 `measure()` 之前，`measure.box` 也是 null（`shots.ts` 靠轮询等它）
-  // 原来这里只判了 `ball &&` 就直接 `ball.rect.width` / `ball.measure.box.width` ——
-  // 一次时序抖动就抛 TypeError，而它是**未捕获的 promise rejection**，
-  // 于是**整个 `--uitest` 一条 JSON 都不打印**（实测：崩在 runUiTest，stdout 仅 1.2KB 错误栈）。
-  // 一条纯记录字段把整轮 112 键的证据换成「什么都没跑」，这是最坏的一种脆。
-  // `petDiag` 是**纯诊断**，没有任何断言读它，所以加空值保护不会弱化任何门。
-  const ball = (await exec('window.__bd_ball?.() ?? null')) as
-    | {
-        rect: { x: number; y: number; width: number; height: number } | null
-        measure: { box: { width: number; height: number } | null } | null
-      }
-    | null
-  const bRect = ball?.rect ?? null
-  const bInk = ball?.measure?.box ?? null
+  // 诊断快照（纯记录，无断言读它）：穿透状态 + 命中框尺寸
   r.petDiag = JSON.stringify({
     watch,
-    hb: hb && { w: Math.round(hb.width), h: Math.round(hb.height) },
-    rect: bRect && { w: Math.round(bRect.width), h: Math.round(bRect.height) },
-    ink: bInk && { w: bInk.width, h: bInk.height },
-    // 软化/卡顿现场证据：帧率与最长一帧间隔
-    perf: (ball as { perf?: unknown } | null)?.perf ?? null,
-    stride: (ball as { stride?: unknown } | null)?.stride ?? null,
-    gesture: (ball as { gesture?: unknown } | null)?.gesture ?? null,
-    // 动作解析占用主线程的毫秒数（人物"卡一下"的归因）
-    clipParseMs: (ball as { clipParseMs?: unknown } | null)?.clipParseMs ?? null
+    hb: hb && { w: Math.round(hb.width), h: Math.round(hb.height) }
   })
 
   // 右键菜单关掉之后不许残留"按下"状态（"宠物黏住光标乱跑"的回归）
   r.petNoStickyDrag = consumeDragFired() ? 'fail:drag-started' : 'ok'
-  r.petStillCollapsed = bounds().width === FIGURE_VIEW.width ? 'ok' : `fail:${bounds().width}`
-  // 人物形态下窗口高度也必须保持竖版（长按/右键都不许把窗口改回横向）
-  r.petFigureHeightKept = bounds().height === FIGURE_VIEW.height ? 'ok' : `fail:${bounds().height}`
-
-  // ── AC6.1：人物形态的确定性字段与步 0 基线**逐位**相同（基线比对，这条不弄坏）───
-  //
-  // 基线口径 = `BD_PET=1 BD_PET_ID=aria npx electron . --ballshot` 的 diag，全部是
-  // **窗口坐标系**（canvas 是 [缓冲宽,缓冲高,client宽,client高]，不是屏幕坐标）：
-  //   win[213,293] stage[213,293] canvas[426,586,213,293]
-  //   overlay [["petball-caption",68,245,145,289]]
-  //   rect{x:26.880806326334206,y:39.53742447368828,width:159.23838734733158,height:212.83465409088166}
-  //   center{x:106.5,y:145.9547515191291} stride 26.8 petReady true
-  //   胶囊文案 "13.7% / Claude Code"
-  //
-  // ⚠ overlay 与胶囊文案必须出自**同一帧**（2026-09-27 探针查明，曾经劈叉过）：
-  // ballshot 的 diag 帧在折叠后 ~6s 轮播跳到了 idx1「Claude Code」—— 它的标签实测
-  // 59.28px，+左右 padding 9px → 胶囊 77px → 恰好 68..145；而 idx0「OpenCode Go」
-  // 的标签是 64.24px → 胶囊 82px → 65..148，**永远**落不到基线那个盒。两个环境的
-  // 文字度量完全一致（ballshot 与 uitest 都是 dpr 2、同一套 CSS，探针同值），所以
-  // 这里等轮播跳一位、与 ballshot 基线**同帧同供应商**再量，而不是量刚挂载的 idx0。
-  //
-  // 三个前置，差一个就是**假红**（假红比没断言更糟）：
-  //  ① 角色必须是 Aria —— 上面 petSwitch 已经把默认角色换掉了，ray 的 walk 是
-  //    `m_walk_neutral` 另一套素材，stride 不保证同值，得先换回来；
-  //  ② 数据必须是演示快照 —— 胶囊的宽由「13.7% / Claude Code」撑出来，换个供应商或
-  //    窗口宽度就变；角标同理（演示数据 dataAt 新鲜 → 没有可信度角标）；
-  //  ③ 必须是**收起后的新挂载** —— 轮播的 lastAdvance 才重新起算（6s 一跳），
-  //    等到 idx==1 立即量，在 12s 的下一跳之前完成。
-  // 冷启动时素材解析可能超过 6 秒的轮播窗口，所以留 3 轮重试（第二轮起素材已缓存）。
-  // ⚠ overlay 不与 --ballshot 的 diag 逐字比对，改用**有界检查**（见下面 figOverlayWhy）。
-  //   其余 7 个字段仍逐位钉死。
-  const FIG_BASE = JSON.stringify({
-    win: [213, 293],
-    stage: [213, 293],
-    canvas: [426, 586, 213, 293],
-    rect: {
-      x: 26.880806326334206,
-      y: 39.53742447368828,
-      width: 159.23838734733158,
-      height: 212.83465409088166
-    },
-    center: { x: 106.5, y: 145.9547515191291 },
-    stride: 26.8,
-    petReady: true,
-    idx: 1,
-    pet: 'aria',
-    caption: '13.7% / Claude Code'
-  })
-  // 字段与 --ballshot 的 diag 逐字对齐（那条 diag 就是基线的出处），多出 idx/pet/caption
-  // 三个观测点：前两个决定「这一轮值不值得比」，第三个证明胶囊里是基线那位供应商。
-  const figFieldsJs = `JSON.stringify({
-    win: [window.innerWidth, window.innerHeight],
-    stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
-    canvas: (()=>{const c=document.querySelector('.pet3d-canvas'); return c?[c.width,c.height,c.clientWidth,c.clientHeight]:null})(),
-    overlayRaw: [...document.querySelectorAll('.petball-fallback,.petball-caption,.petball-bubble,.petball-badge,.petball-toast')]
-      .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
-    rect: window.__bd_ball?.()?.rect ?? null,
-    center: window.__bd_ball?.()?.center ?? null,
-    stride: window.__bd_ball?.()?.stride ?? -1,
-    petReady: window.__bd_ball?.()?.petReady === true,
-    idx: window.__bd_ball?.()?.idx ?? -1,
-    pet: document.querySelector('.petball')?.dataset.pet ?? '',
-    caption: (document.querySelector('.petball-caption')?.innerText||'').trim().split('\\n').join(' / ')
-  })`
-  /**
-   * overlay 的**有界检查**（替代逐位比对）。
-   *
-   * 为什么不能用「宽度 77」当硬期望（2026-09-28 实测裁决）：
-   * 胶囊的宽度 = 标签文字宽 + 左右 padding，而标签是**供应商名 + 读数**。R4 让自动轮播
-   * 改成「先走完窗口再换人」，节拍随之改变 —— 同一墙钟时刻会落在**不同的供应商**上：
-   *   · HEAD（R4 前）：diag 帧落 idx1「Claude Code」，标签 59.28px → 胶囊 77px → 68..145
-   *   · R4：        diag 帧落 idx0「OpenCode Go」，标签 64.24px → 胶囊 83px → 65..148
-   * 两边各连跑 3 次，**结果完全确定**（不是 flake，是节拍变化后的稳定新值）。
-   *
-   * 所以宽度从来不是「人物形态」的属性 —— 它是**文案长度**的属性。把 77 钉死，等于
-   * 把人物形态断言耦合到轮播时序：下一次节拍调整就会伪造一个「人物形态回归」。
-   *
-   * 保留的强度（这仍是一条有牙齿的断言，不是「什么都不查」）：
-   *  ① overlay 恰好**一项**，且就是 .petball-caption —— 基线的泡泡/角标必须已散尽，
-   *     多一项说明有残留 UI（曾经真的发生过）
-   *  ② y / h 逐位钉死：245 / 289（胶囊贴着脚、44px 高）—— 这两个与文案无关
-   *  ③ x / w 有界：盒子必须完整落在 213×293 窗内，且宽度在 [60, 120] —— 宽度归零、
-   *     溢出窗口、或窄到只剩一个字，都会红
-   *  ④ caption 文案本身仍逐位钉死（'13.7% / Claude Code'）—— 「是哪个供应商」这个信息
-   *     没丢，只是不再用它**推导**宽度
-   */
-  const figOverlayWhy = (ov: unknown, caption: string): string => {
-    if (!Array.isArray(ov)) return `fail:overlay-not-array=${JSON.stringify(ov)}`
-    if (ov.length !== 1) return `fail:overlay-items=${ov.length}（基线只有胶囊一项：${JSON.stringify(ov)}）`
-    const it = ov[0]
-    if (!Array.isArray(it) || it.length !== 5) return `fail:overlay-shape=${JSON.stringify(it)}`
-    const [cls, left, top, right, bottom] = it as OverlayBox
-    if (cls !== 'petball-caption') return `fail:overlay-class=${cls}`
-    // 绝对坐标 → 尺寸（差值，不是直接读 right/bottom）
-    const w = right - left
-    const h = bottom - top
-    if (top !== 245 || h !== 44) return `fail:overlay-yh=top${top}/h${h}（基线 245/44）`
-    if (left < 0 || right > FIGURE_VIEW.width) return `fail:overlay-xw=${left}..${right} 溢出 ${FIGURE_VIEW.width}`
-    if (w < 60 || w > 120) return `fail:overlay-width=${w}（应在 60–120：太窄只剩一个字，太宽说明 padding 跑飞）`
-    if (caption !== '13.7% / Claude Code') return `fail:caption=${caption}`
-    return ''
-  }
-
-  let needAria = String(await exec("document.querySelector('.petball')?.dataset.pet ?? ''")) !== 'aria'
-  let figGot = ''
-  let figWhy2 = ''
-  for (let attempt = 1; attempt <= 3 && !figGot; attempt++) {
-    await exec('window.api.expand()')
-    await sleep(800)
-    if (needAria) {
-      // 设置页的「换一位」按 PETS 顺序渲染，Aria 恒为第一个；用 title 兜底下标漂移
-      await exec("[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()")
-      await sleep(700)
-      await exec("[...document.querySelectorAll('.pet-chip')].find(c=>/^Aria/.test(c.title||''))?.click()")
-      await sleep(600)
-      await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
-      await sleep(500)
-      needAria = false
-    }
-    await pushFix(demoSnapshot()) // 推空再推：winCount 归零会把 winIdx 夹回 0
-    await exec('window.api.collapse()')
-    await sleep(1400)
-    let ready = false
-    for (let i = 0; i < 25; i++) {
-      if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) {
-        ready = true
-        break
-      }
-      await sleep(400)
-    }
-    // 自报家门泡泡必须散尽：基线的 overlay 里只有胶囊这一项
-    for (let i = 0; i < 20; i++) {
-      if (!(await exec("!!document.querySelector('.petball-bubble')"))) break
-      await sleep(300)
-    }
-    // 等轮播跳到基线那一帧（idx1 Claude Code，见 FIG_BASE 上方的探针结论）：
-    // 新挂载 lastAdvance 归零 → 6s 一跳，每 500ms 观测一次，[6s,12s) 内必然看到 idx==1
-    let idxNow = -1
-    for (let i = 0; i < 30; i++) {
-      idxNow = Number(await exec('window.__bd_ball?.()?.idx ?? -1'))
-      if (idxNow === 1) break
-      await sleep(500)
-    }
-    if (idxNow !== 1) {
-      // 一直没到基线帧（素材解析拖过了一个轮播窗口）→ 下一轮重来
-      figWhy2 = `retry:idx=${idxNow}@${attempt}`
-      continue
-    }
-    const raw = await exec(figFieldsJs)
-    if (typeof raw !== 'string') {
-      figWhy2 = `fail:exec-failed@${attempt}`
-      continue
-    }
-    if (!ready) {
-      figWhy2 = `fail:model-not-ready@${attempt}`
-      continue
-    }
-    let obj: { idx?: number; pet?: string } = {}
-    try {
-      obj = JSON.parse(raw) as { idx?: number; pet?: string }
-    } catch {
-      figWhy2 = `fail:parse@${attempt}:${raw.slice(0, 60)}`
-      continue
-    }
-    if (obj.pet !== 'aria') {
-      // 角色没换成（或这一轮还挂着旧角色）：下一轮从设置页再换一次
-      figWhy2 = `retry:pet=${obj.pet}`
-      needAria = true
-      continue
-    }
-    if (obj.idx !== 1) {
-      // 取数与量帧之间又跳了一位 → 胶囊里不是基线帧那个供应商，这轮作废
-      figWhy2 = `retry:idx=${obj.idx}`
-      continue
-    }
-    figGot = raw
-  }
-  // 7 个字段逐位 + overlay 有界（见 figOverlayWhy 的裁决理由）
-  let figFail = figWhy2 || 'no-capture'
-  if (figGot) {
-    let parsed: Record<string, unknown> | null = null
-    try {
-      parsed = JSON.parse(figGot) as Record<string, unknown>
-    } catch {
-      parsed = null
-    }
-    if (!parsed) {
-      figFail = `fail:unparsed=${figGot.slice(0, 80)}`
-    } else if (parsed.idx !== 1 || parsed.pet !== 'aria') {
-      figFail = `fail:frame idx=${parsed.idx} pet=${parsed.pet}`
-    } else {
-      // 7 个几何/时序字段仍逐位钉死（把 overlayRaw 摘掉再比）
-      const { overlayRaw, ...rest } = parsed
-      void overlayRaw
-      if (JSON.stringify(rest) !== FIG_BASE) figFail = `fail:base=${figGot}`
-      else figFail = figOverlayWhy(parsed.overlayRaw, String(parsed.caption ?? ''))
-    }
-  }
-  r.petFigureUnchanged = figFail ? (figFail === 'no-capture' ? 'fail:no-capture' : figFail) : 'ok'
+  r.petStillCollapsed = bounds().width === BALL_VIEW.width ? 'ok' : `fail:${bounds().width}`
 
   // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
   await exec(`(()=>{
@@ -1356,31 +1011,6 @@ export async function runUiTest(
   await exec(`(()=>{ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})) })()`)
   await sleep(600)
 
-  await gotoView('settings')
-  await petSwitch('0')
-  r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
-  await gotoView('collapse')
-  r.petBallOff = (await exec("document.querySelector('.petball')?.dataset.figure === '0'")) ? 'ok' : 'fail:figure-on'
-  // 球形态**不该**冒出人物的自报家门泡泡（2026-09-27 用户反馈的 bug 的回归护栏）。
-  //
-  // 必须紧贴 `petBallOff` —— 上面那行读到 data-figure 翻成 0 的那一刻，PetBall 的
-  // 自报家门 effect（依赖 [pet.id, figure]）刚好跑过，泡泡是**新生**的。此处离它
-  // 不到一次 exec，稳。
-  //
-  // 别挪到收尾：曾经那版靠收尾处的 setExtras「触发」，实测是假的 —— 探针显示泡泡在
-  // setExtras **之前**就在了，data-pet 也早就是 ray（uitest 前面点角色卡片换的，
-  // App 只在挂载时读一次 extras，setExtras 根本推不进 React）。那一版真正生效的是
-  // 「恰好落在 4.2s 存活期尾部」，删掉一行 IPC 就永真了。假护栏比没护栏更糟。
-  r.petBallNoBubble = !(await exec("!!document.querySelector('.petball-bubble')"))
-    ? 'ok'
-    : `fail:bubble=${await exec("document.querySelector('.petball-bubble')?.innerText || ''")}`
-  r.petBallWindow = bounds().width === BALL_VIEW.width && bounds().height === BALL_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
-  // 球形态是**纯 2D**：没有 canvas（不创建 WebGL 上下文），有 .petball-fallback 那枚 2D 小圆环。
-  // 这一条 2026-09-27 反转过：原断言要求球形态**有** canvas（那时是 3D 球），与新设计正好相反。
-  const ballCanvas = await exec("!!document.querySelector('.pet3d-canvas')")
-  const ballDot = await exec("!!document.querySelector('.petball-fallback')")
-  r.petBall3d =
-    !ballCanvas && ballDot ? 'ok' : `fail:canvas=${!!ballCanvas},dot=${!!ballDot}`
   // 环心有读数 + 环按 kind 分流（本任务第 2 步把环拆成「套餐才有环」）：
   //   · plan  —— track 的 stroke 必须真的算出来（不是 SVG 默认的 none），有百分比读数时
   //              fill 的 stroke 与 dasharray 都要查：dasharray 承载弧长，为 0 就等于没画弧。
@@ -1474,7 +1104,7 @@ export async function runUiTest(
           }
         })()
 
-  // ─── 09-27-dot-ring-scroll：球上的 12 条断言（另 2 条人物形态的在上面）────────
+  // ─── 09-27-dot-ring-scroll：球上断言 ────────────────────────────────────────
   //
   // 纪律：每条都必须能被「先弄坏一次」弄红 —— 所以断言一律自带前置条件（探针报错、
   // data-ring 不对、winCount 不够、句柄缺 idx 都算红），不写恒绿兜底。夹具按
@@ -1956,15 +1586,8 @@ export async function runUiTest(
   await sleep(1000)
   r.petBallExpand = bounds().width > 300 ? 'ok' : `fail:${bounds().width}`
 
-  // 还原用户的桌面宠物偏好（默认：关闭）
-  if (petWasOn) {
-    await exec(footerClick('设置'))
-    await sleep(600)
-    await petSwitch('1')
-    await sleep(300)
-    await exec(footerClick('返回'))
-    await sleep(400)
-  }
+  // 还原探测写入的偏好（测试期间写过 ui:pet='1' 验证形态死键，已恢复 '0'；
+  // 即便残留，primePrefs 也会在下次启动时做同样的迁移）
   // 开机自启：沙箱目录内往返（true → plist 落地且结构正确；false → 文件删除），不碰真实登录项
   const agentFile = join(autostartDir, 'dev.zhouri.balancedeck.plist')
   const autoOn = (await exec('window.api.setAutostart(true)')) === true

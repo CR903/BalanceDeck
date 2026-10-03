@@ -693,3 +693,28 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
 - [x] **文档与截图**：`README.md` / `DESIGN.md` / `CONTEXT.md` 已同步；`docs/pet-dot.png`
       换成新实拍（放大确认 9px 的 `5H` 短标签**不压环**，余量 1.3px），
       `docs/pet-3d.png` 未动
+
+## 2026-10-03 第二十四轮：人物形态下线（`10-03-remove-human`）
+
+个性人物形态（Aria / Ray）整体移除，收起态只剩 2D 小圆环。PRD / 设计 / 执行计划在
+`.trellis/tasks/10-03-remove-human/`。
+
+- [x] **断流再删代码**：先删 `PetBall.tsx` 的 `./pet3d/scene` 动态 import 块、
+      `fetch-human-pets.mjs` 与 `predist` 人物钩子，再删 `pet3d/` 整目录（scene / human /
+      gesture / rig / tokens / clips）、`human-assets.ts`（`bd-asset://` 协议）、
+      `shared/pet.ts`（`PetId` / `PetState` / `PETS` / `petGender`）、`PetSection.tsx`
+- [x] **主进程恒 56×56**：`petFigure` / `setPetFigure` / `COLLAPSED_FIGURE` /
+      `pet:mode` 通道删除；`primePrefs` 把老用户 `ui:pet === '1'` 迁回 `'0'`；
+      `pet:menu` 去掉换一位/改名，只剩开关与导航；`PetMenuModel.pets` 字段删除
+- [x] **渲染层环-only**：`PetBall` 去掉 `pet` / `figure` / `onRename` props 与场景、
+      泡泡问候、胶囊、调试环、改名框；`__bd_ball` 只剩轮播索引；`App` 的换人/改名/
+      形态开关与 `petScene` 编排删除；系统语音回退固定女声（原默认助理 Aria 的性别）
+- [x] **依赖与打包**：`three` + `@types/three`、`manualChunks`、`extraResources`
+      human-pets 条目删除；`test:pet` / `test:gesture` / `test:resource` 套件与
+      `fetch:humans` 脚本删除（`test:voice` 的 F 节 petGender 一并删除）
+- [x] **QA 去人物键**：uitest 人物形态块（`petBallOn` / `petFigureWindow` / `petModel` /
+      `petFigureUnchanged` 基线等）替换为环-only 断言（`petSectionGone` /
+      `petUiPetDead` / `petNoFigureDom`）；shots / ballshot 人物流程删除，
+      退役环境变量（`BD_PET` 等）只打说明行
+- [x] **文档四件套**：README / CONTEXT / DESIGN 去人物章节（DESIGN 管线两节转为
+      历史引用块）；TASKS 补本轮

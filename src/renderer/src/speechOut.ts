@@ -94,10 +94,10 @@ export interface FlushOptions {
   fallback: boolean
   /**
    * 系统语音的音色性别。回退路径必须透传它 ——
-   * 漏掉就落回 voice.speak() 的默认 'any'，助理的性别被作废（改播报链路时丢过）。
+   * 漏掉就落回 voice.speak() 的默认 'any'，性别偏好被作废（改播报链路时丢过）。
    *
-   * 值的来源是**助理身份**（shared/pet.ts 的 petGender），不再有用户手选的那一项：
-   * ui:voiceGender 已下线（FR8），每轮从 pet.id 现算。
+   * 值的来源是 App 的 DEFAULT_VOICE_GENDER（固定 'female'，人物形态下线前由助理身份现算）：
+   * ui:voiceGender 已下线（FR8），不再有用户手选的那一项。
    */
   gender?: 'female' | 'male' | 'any'
   /** 视觉通知回调。与音频通道独立：频率闸门只拦音频，视觉通知照发 */

@@ -142,11 +142,9 @@ const api = {
   /** 系统登录项里是否残留本应用（本开关无法移除，需用户手动清理） */
   hasForeignLoginItem: (): Promise<boolean> => ipcRenderer.invoke('autostart:foreign'),
 
-  // ─── 收起态 3D 悬浮物（球 / 个性人物）──────────────────────────────────────
+  // ─── 收起态 2D 小圆环悬浮球 ──────────────────────────────────────────────
   /** 右键菜单：把菜单模型交给主进程弹原生菜单，回传选中项 id（未选中返回 null） */
   petMenu: (model: PetMenuModel): Promise<string | null> => ipcRenderer.invoke('pet:menu', model),
-  /** 收起态形态：true = 个性人物（人物独立站着），false = 2D 小圆环 */
-  setPetFigure: (figure: boolean): void => ipcRenderer.send('pet:mode', figure === true),
   /** 总在最前开关 */
   setAlwaysOnTop: (on: boolean): void => ipcRenderer.send('ui:always-on-top', on !== false),
   /** 贴边自动隐藏开关（缺省开；关掉即回现行行为） */
@@ -184,12 +182,11 @@ const api = {
     /** 光标轮询是否在跑（= 收起态） */
     roaming: boolean
     shadow: boolean
-    figure: boolean
     alwaysOnTop: boolean
   }> =>
     ipcRenderer.invoke('debug:pet-state'),
   /** 测试观测点：设置置顶（仅测试模式注册） */
-  debugSetTop: (on: boolean): Promise<{ figure: boolean; alwaysOnTop: boolean }> =>
+  debugSetTop: (on: boolean): Promise<{ alwaysOnTop: boolean }> =>
     ipcRenderer.invoke('debug:set-top', on),
   /** 测试观测点：贴边隐藏状态机（仅测试模式注册） */
   debugDockState: (): Promise<{ phase: string; edge: string | null; hidden: boolean }> =>

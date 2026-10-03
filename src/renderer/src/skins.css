@@ -42,9 +42,9 @@
        一个没有底的球比一个浅色的球更糟。 */
   --ball-bg: rgba(246, 246, 248, 0.86);
   --ball-rim: rgba(0, 0, 0, 0.16);
-  /* 收起态浮在**用户任意壁纸**上的「角色浮层」底：固定深底半透明 + 白字，**不随皮肤变**。
-     .petball-bubble / .petball-caption / .petball-confirm 都属这一族 —— 它们是角色的气泡与
-     脚标，要**同场**（压在角色与壁纸上），不是像卡片面板那样跟着皮肤的颜色走。
+  /* 收起态浮在**用户任意壁纸**上的浮层底：固定深底半透明 + 白字，**不随皮肤变**。
+     .petball-bubble / .petball-confirm 都属这一族 —— 它们是压在小圆环与壁纸上的
+     临时提示，不是像卡片面板那样跟着皮肤的颜色走。
      为什么不复用 --surface-*：那是随皮肤的半透明表面，配同皮肤的 --fg（浅色皮肤是深字）
      在浅壁纸上会糊成一片；深色皮肤的 0.08 alpha 在浅壁纸上整个看不见。固定的深底 + 固定
      的白字在任何壁纸上都可读。这里只定义一次（写在 :root），不逐皮肤重写：它按**壁纸**而非
@@ -1803,7 +1803,7 @@ textarea {
 /* 互动反馈（撸一把 / 升级 / 吃饱了）—— 已删（2026-09-27）：@keyframes petball-pop
    随养成互动下线就没有任何 animation 引用了（全项目零命中）。 */
 
-/* 真人系语音泡泡（打招呼 / 余额播报）：比 toast 大一号、最多两行，锚在球上方。
+/* 语音提醒的视觉通知泡泡（TTS 回声）：比 toast 大一号、最多两行，锚在环上方。
    底色与 .petball-confirm 共用 --bubble-bg（同族同深）—— 两条气泡挨着出现时深浅必须一致，
    否则用户会以为是两个不同来源的浮层。 */
 .petball-bubble {
@@ -1842,21 +1842,22 @@ textarea {
 /* 预警确认气泡（AC7「重复提醒直到确认」）
    ⚠ 它是 .petball-bubble 的**兄弟节点**，不是泡泡的一部分 —— 泡泡带 aria-hidden="true"，
       纯装饰；交互元素藏在里面对辅助技术不可见。
-   位置由 PetBall 内联给（confirmAnchor）。人物形态贴角色**头顶**、尖角朝下，和 .petball-bubble
-   同族同位，读作「角色在说」；那一支落在主体投影**之外**，所以命中区必须由 reportHit 并进
+   位置由 PetBall 内联给（confirmAnchor）。贴环**上方**、尖角朝下，和 .petball-bubble
+   同族同位，读作临时的提示；它落在圆环主体矩形**之外**，所以命中区必须由 reportHit 并进
    气泡的矩形（主进程只按上报的那一个矩形决定窗口哪块收鼠标，越界就是画得出、点不动）。
-   底色走 --bubble-*：这是「角色浮层」族令牌，按**壁纸**而非按皮肤适配（见 :root 那条注释）。 */
+   底色走 --bubble-*：这是浮在壁纸上的浮层族令牌，按**壁纸**而非按皮肤适配（见 :root 那条注释）。 */
 .petball-confirm {
   position: absolute;
-  /* 锚点是气泡**底边**（同 .petball-bubble）；尖角在左下角指向角色 */
+  /* 锚点是气泡**底边**（同 .petball-bubble）；尖角在左下角指向圆环 */
   transform: translate(-50%, -100%);
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  /* 高度是算出来的，不是随手写的：人物形态里角色头顶离窗口顶只有 39.5px（实测投影
-     rect.y=39.5），气泡再高就会从发冠一路压到脸上。所以 4+13.2+2+24+5 = 48.2 封顶，
+  /* 高度是算出来的，不是随手写的：4+13.2+2+24+5 = 48.2 封顶，
      其中 24 是操作行的按钮高度（WCAG 2.2 的 AA 点击目标下限，压不下去）。
+     （这笔账沿用人物形态存续期的实测：当时角色头顶离窗口顶 39.5px，超高会从发冠压到脸上；
+     现 56×56 环窗里气泡是外溢浮层，高度仍由同一组构成项钉住，外溢部分由命中区并入覆盖。）
      ⚠ 改这三个数之一时，test-alert-orchestration.mjs 的 L77 会按同一份加法验一遍。 */
   padding: 4px 11px 5px;
   max-width: 190px;
@@ -1875,14 +1876,14 @@ textarea {
   /* ⚠ .petball 整体是 pointer-events: none（容器不吃事件），交互控件必须自己开回来，
      否则按钮画得出来却收不到点击。 */
   pointer-events: auto;
-  /* 不放 outer box-shadow：气泡最宽 190px、人物窗口只有 213px，锚点夹在窗内时它两端正好
-     贴窗口边，外阴影会被窗口裁成方框（与 .petball-fallback 同一条纪律）。
+  /* 不放 outer box-shadow：气泡是外溢浮层（CSS 最宽 190px、窗口只有 56×56，
+     内联再按命中区夹到 62 以内），外阴影会被窗口裁成方框（与 .petball-fallback 同一条纪律）。
      也不复用 petball-bubble-in 的入场动画 —— 那条 keyframe 的终态带 translate(-50%,-100%)，
      会顶掉这里的锚点 transform。 */
 }
 .petball-confirm-text {
-  /* 只放一行：气泡总高 48.2px 是角色头顶到窗口顶那段 39.5px 换来的（见上面 .petball-confirm
-     的 padding 注释），两行文案会把它顶到 61.4px、直接从发冠压到脸上。
+  /* 只放一行：气泡总高 48.2px（见上面 .petball-confirm 的 padding 注释），
+     两行文案会把它顶到 61.4px、顶出命中区并入的覆盖范围。
      超了静默截断而非加省略号 —— 加回来就变回那个吓人的截断感；而 confirmLine 已按
      CONFIRM_LINE_WIDTH（168px）把文案收进一行，正常走不到这条截断。 */
   white-space: nowrap;
@@ -1932,11 +1933,10 @@ textarea {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-/* 球形态（56×56 窗口，命中区是整块窗口）：横向只剩 48px、纵向要留给读数，
+/* 小圆环（56×56 窗口，命中区是整块窗口）：横向只剩 48px、纵向要留给读数，
    所以只留按钮，文案与倒计时退给语音与那 15 分钟窗口本身。
-   人物形态 WebGL 失败时也是这一支 —— 此时的命中区是居中 56 宽的环，同样放不下整行。
    这一支回到**贴环心**的锚点（transform 只有水平居中，vertical 用 top 定位），
-   底色也换回随皮肤的 --bg-solid：球窗口没有壁纸可谈，要的是跟环的对比度。 */
+   底色也换回随皮肤的 --bg-solid：环窗口没有壁纸可谈，要的是跟环的对比度。 */
 .petball.no3d .petball-confirm {
   transform: translateX(-50%);
   gap: 0;
