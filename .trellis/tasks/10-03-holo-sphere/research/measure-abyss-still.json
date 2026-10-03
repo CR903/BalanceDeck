@@ -1,0 +1,36 @@
+{
+  "skin": "abyss",
+  "still": true,
+  "window": {
+    "w": 232,
+    "h": 444,
+    "transparent": true
+  },
+  "particles": {
+    "shell": 1500,
+    "orbitA": 350,
+    "orbitB": 300
+  },
+  "frames": 0,
+  "fpsAvg": null,
+  "fpsP50": null,
+  "fpsP95": null,
+  "fpsMin": null,
+  "geometries": 6,
+  "textures": 2,
+  "jsHeapMB": 10,
+  "contrastRatio": 17.48,
+  "dpr": 2,
+  "gpu": "see report (about:gpu / UA)",
+  "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) holo-prototype/0.0.0 Chrome/138.0.7204.251 Electron/37.10.3 Safari/537.36",
+  "summary": {
+    "fpsP50": null,
+    "fpsP95": null,
+    "fpsMin": null,
+    "geometries": 6,
+    "textures": 2,
+    "jsHeapMB": 10,
+    "contrastRatio": 17.48
+  },
+  "procMemMB": 264
+}

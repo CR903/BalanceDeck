@@ -73,3 +73,29 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 贴边隐藏 + 流体水满 + 移除数字真人 + 全息球原型
+<!-- trellis-session: v=2 fp=0f105e2a7c44f20a -->
+
+**Date**: 2026-10-03
+**Task**: 贴边隐藏 + 流体水满 + 移除数字真人 + 全息球原型
+**Branch**: `main`
+
+### Summary
+
+交付三件并归档四任务。feat(dock) 落 SVG gooey 流体吸入/汇聚 + 渐变3D球 + 水满进度（液位=percent），新增 shared/fluid.ts 纯函数 + dockHide 状态机 + dock:fluid 相位通道，morph 期命中并集，reduced-motion 走 slide 回退。修复主进程 setPosition undefined 崩溃（hiddenBounds/peekHitbox 非法输入回 null + 定时器回调全 try/catch + Number.isFinite 守卫），弄坏验证复现同签名 Timeout._onTimeout。feat(pet) 移除数字真人 -4651 行：删 pet3d 整目录/Rocketbox 管线/test:pet-gesture/three+@types/three，老用户 ui:pet=1 迁回环，typecheck/npm test 2261/build 全绿，入口 -1.19MB。原型 holo-sphere Phase 0 CONDITIONAL GO（macOS Intel 59.9fps/对比度17.5/<5MB 增量），转正缺 Windows+M 系真机取证，未入主干。spec 补主进程定时器回调异常公约。归档 dock-autohide/remove-human/human-realism/vroid-hub 四任务，删 feat/dock-autohide 与 feat/remove-human 两分支。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b2dadc` | feat(dock): 悬浮球贴边自动隐藏 + 流体吸入汇聚与水满进度 |
+| `b6339d1` | docs(spec): 主进程定时器回调异常公约（崩溃复盘） |
+| `f58f10f` | docs(task): 贴边隐藏任务规划与去真人化任务地图 |
+| `a47e4a9` | feat(pet): 移除数字真人，收起态只留2D小圆环 |
+| `da44fae` | Merge branch 'feat/remove-human' |
+
+### Status
+
+[OK] **Completed**
