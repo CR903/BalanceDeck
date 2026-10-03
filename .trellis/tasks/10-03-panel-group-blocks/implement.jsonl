@@ -1,0 +1,6 @@
+{"file": "./prd.md", "reason": "需求与 11 条验收标准"}
+{"file": "./design.md", "reason": "技术设计与决策依据（D1-D9）"}
+{"file": "./implement.md", "reason": "分阶段清单 + 基线 + Review Gates"}
+{"file": "../../spec/frontend/component-guidelines.md", "reason": "组件/props 约定、token CSS 规范"}
+{"file": "../../spec/frontend/quality-guidelines.md", "reason": "测试约定（断言脚本、QA harness、review 清单）"}
+{"file": "../../spec/frontend/state-management.md", "reason": "extras 存储纪律（存量键处理依据）"}
