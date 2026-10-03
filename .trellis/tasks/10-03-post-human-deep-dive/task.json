@@ -1,0 +1,29 @@
+{
+  "id": "post-human-deep-dive",
+  "name": "post-human-deep-dive",
+  "title": "去真人化深挖项目功能",
+  "description": "废除真人相关功能，深挖项目核心功能：贴边隐藏、国内订阅、皮肤市场、成本追踪、CSV导出",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "zhou",
+  "assignee": "zhou",
+  "createdAt": "2026-10-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-03-remove-human",
+    "10-03-dock-autohide"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
