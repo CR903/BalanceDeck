@@ -6,8 +6,15 @@ import {
   dragStop,
   setPetHitbox,
   petIgnoreState,
-  setPetFigure,
   setAlwaysOnTopPref,
+  setDockHideEnabled,
+  setReducedMotionPref,
+  dockDebugState,
+  dockTestToEdge,
+  dockTestCursor,
+  dockTestFreezeCursor,
+  dockTestFreezeFluid,
+  dockTapPeek,
   petWindowState
 } from './overlay'
 import { refreshNow, currentState, resort, reconfigure, debugPush, loadUsageHistory, pruneUsageHistory } from './scheduler'
@@ -433,10 +440,11 @@ export function registerIpc(): void {
   // 系统里是否有本开关管不到的旧登录项（提示用户手动清理）
   ipcMain.handle('autostart:foreign', () => hasSystemLoginItem())
 
-  // ─── 悬浮球（数字助理 / 球形态）：原生右键菜单 + 鼠标穿透命中框 ─────────────
+  // ─── 悬浮球（2D 小圆环）：原生右键菜单 + 鼠标穿透命中框 ───────────────────
   //
-  // 菜单模型由渲染层给出（它才是助理身份的唯一持有者），主进程只负责渲染原生菜单
-  // 并回传选中项 id；动效、落盘、皮肤等业务动作仍在渲染层执行。
+  // 菜单模型由渲染层给出（它才是读数摘要的持有者），主进程只负责渲染原生菜单
+  // 并回传选中项 id；落盘、皮肤等业务动作仍在渲染层执行。
+  // 人物形态已下线（10-03-remove-human）：不再有换一位/改名，菜单只剩开关与导航。
 
   ipcMain.handle('pet:menu', (_e, model: PetMenuModel): Promise<string | null> => {
     return new Promise((resolve) => {
@@ -445,28 +453,18 @@ export function registerIpc(): void {
         const m: PetMenuModel = {
           title: String(model?.title ?? ''),
           status: String(model?.status ?? ''),
-          pets: Array.isArray(model?.pets) ? model.pets : [],
           alwaysOnTop: model?.alwaysOnTop !== false,
-          hideBalance: model?.hideBalance === true
+          hideBalance: model?.hideBalance === true,
+          dockHide: model?.dockHide !== false
         }
         let picked: string | null = null
         const items: Electron.MenuItemConstructorOptions[] = [
-          { label: m.title || '数字助理', enabled: false },
+          { label: m.title || 'BalanceDeck', enabled: false },
           ...(m.status ? [{ label: m.status, enabled: false } as Electron.MenuItemConstructorOptions] : []),
-          { type: 'separator' },
-          { label: '换一位', enabled: false },
-          ...m.pets.map(
-            (p): Electron.MenuItemConstructorOptions => ({
-              label: p.name,
-              type: 'radio',
-              checked: p.checked,
-              click: () => (picked = `pet:${p.id}`)
-            })
-          ),
-          { label: '改名…', click: () => (picked = 'rename') },
           { type: 'separator' },
           { label: '总在最前', type: 'checkbox', checked: m.alwaysOnTop, click: () => (picked = 'toggle-top') },
           { label: '隐藏余额', type: 'checkbox', checked: m.hideBalance, click: () => (picked = 'toggle-balance') },
+          { label: '贴边自动隐藏', type: 'checkbox', checked: m.dockHide, click: () => (picked = 'toggle-dock') },
           { type: 'separator' },
           { label: '展开面板', click: () => (picked = 'expand') },
           {
@@ -485,11 +483,16 @@ export function registerIpc(): void {
     })
   })
 
-  // 收起态形态：球（默认） ↔ 个性人物（人物独立站着，窗口更大）
-  ipcMain.on('pet:mode', (_e, figure: unknown) => setPetFigure(figure === true))
-
   // 总在最前：关闭后窗口不再悬浮于其它窗口之上
   ipcMain.on('ui:always-on-top', (_e, on: unknown) => setAlwaysOnTopPref(on !== false))
+
+  // 贴边自动隐藏开关（设置页 + 右键菜单双入口，R7）：extras 落盘在渲染层，
+  // 即时生效走这条（setExtras 本身不通知主进程）
+  ipcMain.on('ui:dock-hide', (_e, on: unknown) => setDockHideEnabled(on !== false))
+  // prefers-reduced-motion（渲染层 matchMedia 上报，R5：只降级动画，不降级计时）
+  ipcMain.on('ui:reduced-motion', (_e, on: unknown) => setReducedMotionPref(on === true))
+  // 痕迹点击（无 hover 设备）：直接滑出（R3）
+  ipcMain.on('dock:reveal', () => dockTapPeek())
 
   ipcMain.on('pet:hitbox', (_e, rect: { x: number; y: number; width: number; height: number } | null) => {
     if (!rect || typeof rect.x !== 'number' || typeof rect.y !== 'number') {
@@ -523,6 +526,29 @@ export function registerIpc(): void {
     ipcMain.handle('debug:set-top', (_e, on: unknown) => {
       setAlwaysOnTopPref(on !== false)
       return petWindowState()
+    })
+    // 贴边隐藏状态机（uitest 用；生产走真实拖拽/光标路径）
+    ipcMain.handle('debug:dock-state', () => dockDebugState())
+    ipcMain.handle('debug:dock-edge', (_e, edge: unknown) => {
+      const placed =
+        edge === 'left' || edge === 'right' || edge === 'top' || edge === 'bottom'
+          ? dockTestToEdge(edge)
+          : { x: 0, y: 0 }
+      return { docked: placed, ...dockDebugState() }
+    })
+    ipcMain.handle('debug:dock-cursor', (_e, over: unknown) => {
+      dockTestCursor(over === true)
+      return dockDebugState()
+    })
+    // 真光标翻转冻结（uitest dock 段用；穿透与本通道的喂送不受影响，见 overlay 注释）
+    ipcMain.handle('debug:dock-freeze', (_e, frozen: unknown) => {
+      dockTestFreezeCursor(frozen === true)
+      return dockDebugState()
+    })
+    // 流体相位推送冻结（uitest dock 段 / shots 取帧用；只拦 dock:fluid，状态机照常走）
+    ipcMain.handle('debug:dock-fluid-freeze', (_e, frozen: unknown) => {
+      dockTestFreezeFluid(frozen === true)
+      return dockDebugState()
     })
   }
 }

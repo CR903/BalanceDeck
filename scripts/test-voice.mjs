@@ -1,4 +1,4 @@
-// 语音模块测试（src/renderer/src/voice.ts + src/shared/pet.ts + src/shared/tts-preset.ts）
+// 语音模块测试（src/renderer/src/voice.ts + src/shared/tts-preset.ts）
 // 用法：node scripts/test-voice.mjs
 //
 // ⚠ 加载的是**真实源码**（esbuild 打包 src 下的 .ts），不在这里抄一份 voiceGender /
@@ -12,7 +12,6 @@
 import { loadTs } from './lib/load-ts.mjs'
 
 const { voiceGender, pickVoice, stopVoice } = await loadTs('src/renderer/src/voice.ts')
-const { PETS, PET_GENDER, petGender } = await loadTs('src/shared/pet.ts')
 const { TTS_VOICES, TTS_STYLES, DEFAULT_TTS_VOICE, DEFAULT_TTS_STYLE } = await loadTs(
   'src/shared/tts-preset.ts'
 )
@@ -280,35 +279,7 @@ console.log('\nE. stopVoice：两个通道的停法由 speechOut 兜着，这里
   }
 }
 
-console.log('\nF. petGender：系统语音性别由助理身份决定（ui:voiceGender 已下线）')
-
-// 为什么放在这个文件：这一节和上面的 voiceGender 问的是**同一个事实**（谁算男声、谁算女声），
-// 只是判的是两张不同的表 —— voiceGender 判**系统**音色，petGender 判**助理身份**。
-// 上一轮把 Yu-Shu 判成男声的教训就在上面那节：性别是外部事实，必须有出处，
-// 光「代码符合测试」证明不了任何东西。
-
-{
-  eq(petGender('aria'), 'female', 'Aria → 女声（AC3）')
-  eq(petGender('ray'), 'male', 'Ray → 男声（AC3）')
-  // AC4：换助理即时生效 —— 因为是**现算**的，不读 state、不读 extras。
-  // 这条同时钉住「别把它改回持久化偏好」：那正是 ui:voiceGender 走过的老路。
-  eqJson(
-    [petGender('aria'), petGender('ray'), petGender('aria')],
-    ['female', 'male', 'female'],
-    '连续现算，每次都跟着 pet.id 走（AC4 切换即时生效）'
-  )
-  // 未知 id 不抛：与本文件其它入口（normalizePetId）一致，回落到第一位助理
-  eq(petGender('nope'), petGender(PETS[0].id), '未知助理 id → 归一后取第一位的性别，不抛')
-  // 穷举性：PET_GENDER 是 Record<PetId, …>，新增助理忘了填性别会是**编译错误**；
-  // 这条把「编译错误」管不到的另一半（键与 PETS 一一对应）也钉住
-  eqJson(
-    Object.keys(PET_GENDER).sort(),
-    PETS.map((p) => p.id).sort(),
-    'PET_GENDER 的键与 PETS 的助理一一对应（不多不少）'
-  )
-}
-
-console.log('\nG. TTS 音色 / 风格清单（抄自服务页面，不臆造）')
+console.log('\nF. TTS 音色 / 风格清单（抄自服务页面，不臆造）')
 
 {
   eq(TTS_VOICES.length, 21, '21 个音色')

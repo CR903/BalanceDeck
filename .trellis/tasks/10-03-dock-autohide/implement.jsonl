@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "隐藏偏移（主进程）与命中区/穿透判定（渲染层上报）必须同源，隐藏态下主进程覆盖命中区为痕迹条"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "隐藏/唤出/取消断言走uitest既有JSON契约，纯函数单测先弄坏验证"}

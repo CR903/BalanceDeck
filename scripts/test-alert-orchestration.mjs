@@ -1130,34 +1130,34 @@ ok(
 )
 ok(
   confirmBlock != null && />\s*好的\s*</.test(confirmBlock),
-  'L62 按钮文案是「好的」（「知道了」是系统弹窗口吻，放在真人形象旁边格格不入）'
+  'L62 按钮文案是「好的」（「知道了」是系统弹窗口吻，放在 2D 小圆环旁边格格不入）'
 )
 ok(
   confirmBlock != null && /不再提示/.test(confirmBlock),
   'L63 倒计时有语义（原先只写「15 分」，没人知道那是什么意思；现在说清「X 分钟后不再提示」）'
 )
-// 命中区并入：确认气泡在角色**头顶**、落在主体投影矩形之外。主进程只按上报的那一个
-// 矩形决定窗口哪块收鼠标（overlay.ts 的 cursorInsideHit），不并进就是「画得出、点不动」
-// —— 与 2D 环那支当年踩过的是同一个坑（原注释里那一条）。
+// 命中区并入：确认气泡在环**上方**、落在圆环主体矩形之外。主进程只按上报的那一个
+// 矩形决定窗口哪块收鼠标（overlay.ts 的 cursorInsideHit），不并进就是「画得出、点不动」。
 const reportAt = petSrc.indexOf('const reportHit = useCallback')
 const reportEnd = reportAt < 0 ? -1 : petSrc.indexOf('}, [])', reportAt)
 const reportBlock = reportAt < 0 || reportEnd < 0 ? null : petSrc.slice(reportAt, reportEnd)
 ok(reportBlock != null, 'L64 前置：取得到 reportHit 的源码')
 ok(
   reportBlock != null && /confirmRef\.current/.test(reportBlock) && /getBoundingClientRect\(\)/.test(reportBlock),
-  'L65 命中区会读确认条的实测矩形（它超出角色投影，不并进就点不动）'
+  'L65 命中区会读确认条的实测矩形（它超出圆环主体，不并进就点不动）'
 )
 ok(
   reportBlock != null &&
     /Math\.min\(box\.x, o\.x\)/.test(reportBlock) &&
     /Math\.max\(box\.y \+ box\.height/.test(reportBlock) &&
     /setPetHitbox\(box\)/.test(reportBlock),
-  'L66 报给主进程的是**并入**后的矩形（union，不是只报气泡、也不是只报角色）'
+  'L66 报给主进程的是**并入**后的矩形（union，不是只报气泡、也不是只报圆环）'
 )
-// 有确认气泡时不渲染普通语音泡泡：两者共用头顶同一位置，而 notice 的内容就是刚播完那句
+// 有确认气泡时不渲染普通语音泡泡：两者共用同一位置，而 notice 的内容就是刚播完那句
 // TTS 的视觉回声，确认气泡里已经是它的收敛版。一起画会叠在一起。
+// 人物形态下线后问候泡泡（bubble 状态）已删除，只剩 notice。
 ok(
-  /\{\s*!alertText && \(notice \|\| bubble\)\s*&&/.test(petSrc),
+  /\{\s*!alertText && notice\s*&&/.test(petSrc),
   'L67 有确认气泡时普通语音泡泡让位（同一位置，可点的那条优先）'
 )
 ok(
@@ -1186,8 +1186,8 @@ ok(
   btnCss != null && parseFloat((btnCss.match(/min-height:\s*([\d.]+)px/) || [])[1]) >= 24,
   'L71 按钮点击区 ≥ 24×24（WCAG 2.2 最小目标尺寸）'
 )
-// 气泡形态：锚点必须是**底边**（尖角朝下指向角色），和 .petball-bubble 同族同位。
-// 贴回脚边、锚回中线就是改回了那个「白色胶囊横跨角色腿部」的老样子。
+// 气泡形态：锚点必须是**底边**（尖角朝下指向圆环），和 .petball-bubble 同族同位。
+// 锚回中线会让它盖住环心读数 —— 气泡是外溢浮层，读数 crisp 的前提是它不压环。
 ok(
   confirmCss != null &&
     /transform:\s*translate\(-50%\s*,\s*-100%\)/.test(confirmCss) &&
@@ -1222,10 +1222,10 @@ ok(
 )
 // 高度上限：这是这次改设计时最容易被破坏的一条。
 //
-// 2026-09-30 ballshot 实测：人物窗口 213×293，角色投影 rect.y = 39.5 —— 头顶以上只有 39.5px。
-// 气泡高 H 且离窗口顶留 2px 时，它压进头部的量 = H - 37.5。第一版气泡 78px（两行文案），
-// 会把头部从上到下压 40px，直接盖住脸。所以这里把 CSS 的 padding / 文案行高 / 间距 /
-// 操作行高度加起来验一遍，超了就是要把尖角从「压发冠」推到「压五官」。
+// 高度构成沿用 2026-09-30 的实测账（人物形态存续期：窗口 213×293，角色投影 rect.y = 39.5，
+// 头顶以上只有 39.5px —— 第一版 78px 两行文案会从发冠盖到脸上）。形态下线后窗口只剩 56×56，
+// 气泡是外溢浮层，高度仍由同一组构成项钉住：CSS 的 padding / 文案行高 / 间距 /
+// 操作行高度，超了说明有人动过其中之一，少了多半是少算了一项。
 //
 // ⚠ 两处坑，反验都真踩过：① 本文件的 cssBody 会吃进整条注释，`.petball-confirm` 的块里有一整段
 //   注释在写「4+13.2+2+24+5 = 48.2」，用第一个命中去匹配会拿到注释里的 4 和 13.2；② 字号与行高
@@ -1256,7 +1256,7 @@ ok(
     parseFloat(parts.fs) * parseFloat(parts.lh) + parseFloat(parts.btnH)
   ok(
     total > 40 && total <= 49,
-    `L77b 确认气泡高 ${total}px 落在 40~49（人物形态头顶以上只有 39.5px：超 49 就从压发冠变成压脸，` +
+    `L77b 确认气泡高 ${total}px 落在 40~49（构成沿用 2026-09-30 实测账 48.2：超 49 说明 padding/行高/间距有人动过，` +
       `小于 40 多半是又少算了一项 —— 对照浏览器实测应是 48.2）`
   )
 }
@@ -1285,7 +1285,8 @@ ok(
   `L75 确认气泡样式全部走 token，无硬编码颜色（实际硬编码：${hardCoded.join(' / ') || '无'}）`
 )
 // 与球盘同一条纪律：元素与窗口同量级时 outer box-shadow 会被窗口裁成方框。
-// 气泡最宽 190px、人物窗口只有 213px，锚点夹在窗内时它两端正好贴窗口边。
+// 气泡（CSS 最宽 190px，内联按命中区夹到 62 以内）相对 56×56 窗口是外溢浮层，
+// 外阴影会被窗口裁成方框。
 const outerShadows = ['.petball-confirm', '.petball-confirm-btn', '.petball.no3d .petball-confirm', '.petball.no3d .petball-confirm-btn']
   .flatMap((sel) => {
     const body = cssBody(cssSrc, sel)

@@ -6,16 +6,6 @@ import { SettingsView } from './SettingsView'
 import { presetConfig } from './VoiceReminderSection'
 import { PetBall } from './PetBall'
 import { renderTrayIcon } from './ProviderMark'
-import {
-  PETS,
-  decodePetState,
-  defaultPetState,
-  encodePetState,
-  petGender,
-  petMeta,
-  type PetId,
-  type PetState
-} from '../../shared/pet'
 import type { PetMenuModel } from '../../shared/types'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
 import { speakableSnapshots } from './read-model'
@@ -66,6 +56,15 @@ import {
  */
 const ALERT_TICK_MS = 30_000
 
+/**
+ * 系统语音回退的音色性别（固定值，不落盘）。
+ *
+ * 人物形态下线前由所选助理现算（aria=女 / ray=男），默认助理是 Aria；
+ * 下线后固定 'female'，与既有默认一致。只影响 TTS 失败时系统语音的选音，
+ * 不影响 TTS 服务本身的音色（那由 ui:ttsConfig.voice 决定）。
+ */
+const DEFAULT_VOICE_GENDER = 'female' as const
+
 /** 渲染层兜底：任何未捕获渲染异常显示可重载界面，避免"假死"白屏 */
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }
@@ -105,14 +104,23 @@ export default function App(): React.JSX.Element {
   const [hideBalance, setHideBalance] = useState(false)
 
 
-  // ─── 数字助理（身份由 App 统一持有：悬浮球、右键菜单、设置页共用同一份）──────
-  const [pet, setPet] = useState<PetState>(() => defaultPetState())
-  const petRef = useRef(pet)
-  petRef.current = pet
-  /** 收起态形态（ui:pet）：true = 个性人物（人物独立站着），false = 默认的悬浮球 */
-  const [petOn, setPetOn] = useState(true)
+  // ─── 收起态（2D 小圆环，唯一的形态）──────────────────────────────────────
+  // 人物形态已下线（10-03-remove-human）：不再有选人/改名/形态开关。
+  // ui:pet 残留 '1' 的老用户由主进程 primePrefs 迁回 '0'，这里只做防御性归一
+  // （不读 morph 语义，窗口恒 56×56）。
   /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
   const [alwaysTop, setAlwaysTop] = useState(true)
+  /** 贴边自动隐藏（ui:dockHide，默认开；关掉即回现行行为） */
+  const [dockHide, setDockHide] = useState(true)
+  /** 是否已藏到只剩痕迹（主进程推）：此时点击走唤出而非展开 */
+  const [dockHidden, setDockHidden] = useState(false)
+  /**
+   * 流体相位 + 贴边（主进程 dock:fluid 推，渲染层只切 CSS 类）。
+   * 相位不在四项内时按 edge-visible 画整球（preload 已复验，这里再守一次 ——
+   * 渲染层是信任边界之外，默认安全态必须是"看得见的整球"而不是水渍）。
+   */
+  const [fluidPhase, setFluidPhase] = useState('edge-visible')
+  const [fluidEdge, setFluidEdge] = useState<string | null>(null)
   /** 语音播报开关（ui:voiceOn，默认关）—— **已下线**，播报改由 ui:ttsOn 接管。
    *  读一次只为把旧配置迁到 ui:ttsOn（新值优先，键留着不动），不再有 setter：
    *  留一个能写却没人听的开关，就是让用户以为设置生效了。 */
@@ -235,66 +243,17 @@ export default function App(): React.JSX.Element {
   /** 待确认轮询的 setTimeout 句柄（自重排链，与兜底播报那个是两条） */
   const alertTimerRef = useRef<number | null>(null)
 
-  const persistPet = (s: PetState): void => {
-    void window.api.setExtras({ 'ui:petState': encodePetState(s) })
-  }
-
-  /**
-   * 收起态 3D 场景句柄（由 PetBall 创建后挂到 window，见 scene.ts）。
-   * 画面编排（进场/退场/平时随机动作）全在场景里，这里只表达意图。
-   */
-  const petScene = (): { playGesture?: (id: string) => Promise<void> } | undefined =>
-    (window as unknown as { __bd_pet_scene__?: { playGesture?: (id: string) => Promise<void> } })
-      .__bd_pet_scene__
-
-  /** 播一个动作，播完（或场景不存在）后兑现；动画时长由场景按素材算，这里不猜秒数 */
-  const playGesture = async (id: 'enter' | 'exit' | 'wave'): Promise<void> => {
-    try {
-      const scene = petScene()
-      if (scene?.playGesture) await scene.playGesture(id)
-    } catch (e) {
-      console.warn(`[app] ${id} 动作播放失败:`, e)
-    }
-  }
-
-  /** 换一位：换形象与默认名 */
-  const changePet = (id: PetId): void => {
-    const s: PetState = { ...petRef.current, id, name: petMeta(id).name }
-    const swap = (): void => {
-      setPet(s)
-      persistPet(s)
-    }
-    // 先让人退场、**等它真的走完**再换人（换人后场景会自动播进场）：
-    // 老代码在这里 setPet 紧跟 playExitAnim，退场动作实际上从没播出来过。
-    if (!petOn) {
-      swap()
-      return
-    }
-    void playGesture('exit').then(swap)
-  }
-  const renamePet = (name: string): void => {
-    const s = { ...petRef.current, name }
-    setPet(s)
-    persistPet(s)
-  }
-  /** 收起态是否显示个性人物（关闭 = 悬浮球） */
-  const togglePetBall = (on: boolean): void => {
-    const apply = (): void => {
-      setPetOn(on)
-      void window.api.setExtras({ 'ui:pet': on ? '1' : '0' })
-    }
-    // 关掉时先让它退场（挥手告别 + 转身走出窗口）再收成球；开启时场景会在模型就位时自动进场
-    if (on) {
-      apply()
-      return
-    }
-    void playGesture('exit').then(apply)
-  }
   /** 总在最前（关闭后不再悬浮于其它窗口之上） */
   const toggleAlwaysTop = (on: boolean): void => {
     setAlwaysTop(on)
     window.api.setAlwaysOnTop(on)
     void window.api.setExtras({ 'ui:alwaysOnTop': on ? '1' : '0' })
+  }
+  /** 贴边自动隐藏（关掉即回现行行为：主进程取消计时/动画并回到全可见） */
+  const toggleDockHide = (on: boolean): void => {
+    setDockHide(on)
+    window.api.setDockHide(on)
+    void window.api.setExtras({ 'ui:dockHide': on ? '1' : '0' })
   }
   /** 某个供应商要不要播报（写进 ui:voiceMuted 的「不播报」列表） */
   const toggleVoiceFor = (id: string): void => {
@@ -488,24 +447,22 @@ export default function App(): React.JSX.Element {
 
   /** 悬浮球右键菜单：原生菜单由主进程渲染，动作回到这里执行 */
   const petMenu = async (): Promise<string | null> => {
-    const p = petRef.current
     const model: PetMenuModel = {
-      title: p.name,
-      status: petMeta(p.id).desc,
-      pets: PETS.map((x) => ({ id: x.id, name: x.name, checked: x.id === p.id })),
+      title: 'BalanceDeck',
+      status: state.snapshots.length ? `${state.snapshots.length} 位供应商` : '',
       alwaysOnTop: alwaysTop,
-      hideBalance
+      hideBalance,
+      dockHide
     }
     const picked = await window.api.petMenu(model)
     if (!picked) return null
-    if (picked.startsWith('pet:')) {
-      const id = picked.slice(4)
-      if (PETS.some((x) => x.id === id)) changePet(id as PetId)
-    } else if (picked === 'toggle-top') {
+    if (picked === 'toggle-top') {
       const next = !alwaysTop
       setAlwaysTop(next)
       window.api.setAlwaysOnTop(next)
       void window.api.setExtras({ 'ui:alwaysOnTop': next ? '1' : '0' })
+    } else if (picked === 'toggle-dock') {
+      toggleDockHide(!dockHide)
     } else if (picked === 'toggle-balance') {
       const next = !hideBalance
       setHideBalance(next)
@@ -523,32 +480,48 @@ export default function App(): React.JSX.Element {
   }
   useEffect(() => {
     void window.api.getExtras([
-      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted'
+      'ui:hideBalance', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:dockHide'
     ]).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
-      // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
-      setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
+      // 贴边隐藏默认开：extras:get 对缺失键给 ''，判 !== '0'（与主进程 primePrefs 同口径）
+      setDockHide(e['ui:dockHide'] !== '0')
       try {
         const muted = JSON.parse(e['ui:voiceMuted'] || '[]') as unknown
         setVoiceMuted(Array.isArray(muted) ? muted.filter((x): x is string => typeof x === 'string') : [])
       } catch {
         setVoiceMuted([])
       }
-      // ⚠ 这里**不再读** ui:voiceGender：性别改由 petGender(pet.id) 现算（FR3）。
-      //   旧键留在 extras 里不动 —— 读过再用它改写用户选的助理，就是「覆盖用户显式偏好」
-      //   （上一轮集成复核因此还原过一次），而它本来也只是「谁播报」的另一种问法。
-      const st = decodePetState(e['ui:petState'])
-      if (st) setPet(st)
+      // ⚠ 这里**不再读** ui:voiceGender：系统语音回退固定用女声（见 DEFAULT_VOICE_GENDER）。
+      //   旧键留在 extras 里不动。
     })
   }, [])
 
-  // 收起态形态同步给主进程：球（默认，窗口贴合球体）↔ 个性人物（竖版窗口）。
-  // 进场动作不在这里触发 —— 场景在**模型就位**那一刻自己播（模型没加载完就请求等于没播，
-  // 老代码那个 300ms 延迟正是进场动画从来没被看到过的原因）。
+  // prefers-reduced-motion 上报给主进程（R5）：只降级隐藏动画，不降级计时。
+  // matchMedia 读的是系统设置，变了就推一次；主进程侧只存布尔。
   useEffect(() => {
-    window.api.setPetFigure(petOn)
-  }, [petOn])
+    const mq =
+      typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    if (!mq) return
+    window.api.setReducedMotion(mq.matches)
+    const onChange = (ev: MediaQueryListEvent): void => window.api.setReducedMotion(ev.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  // 隐藏态订阅（主进程推）：痕迹态下点击走唤出而非展开
+  useEffect(() => window.api.onDockHidden(setDockHidden), [])
+  // 流体相位订阅（主进程推）：只切呈现类，不算几何
+  useEffect(
+    () =>
+      window.api.onDockFluid((phase, edge) => {
+        setFluidPhase(
+          phase === 'absorbing' || phase === 'hidden' || phase === 'revealing' ? phase : 'edge-visible'
+        )
+        setFluidEdge(edge)
+      }),
+    []
+  )
 
   const toggleHideBalance = (): void => {
     const next = !hideBalance
@@ -591,9 +564,10 @@ export default function App(): React.JSX.Element {
     fallback: true,
     visual: false,
     routine: false,
-    // 性别**每轮从助理现算**，不落盘、不进 state（FR3/FR4）：换助理立刻生效，
-    // 不必重启、也不必去设置页改第二处。代价是这里每轮多一次查表，可以忽略。
-    gender: petGender(petRef.current.id),
+    // 系统语音回退的音色性别（10-03-remove-human 起固定值）：人物形态下线前由
+    // 所选助理现算（aria=女 / ray=男），默认助理是 Aria；下线后固定 'female'，
+    // 保持与既有默认一致，不落盘、不进设置页（仍只有一处真相源）。
+    gender: DEFAULT_VOICE_GENDER,
     // TTS 总开关**必须进镜像**：下面 ① 的数据推送那一路现在也为「只开通知、不开语音」的
     // 用户跑，而那一路要判「该跑哪一半」—— 判据得是本轮的快照值，不能是某个闭包里的旧值。
     ttsOn: false,
@@ -619,7 +593,7 @@ export default function App(): React.JSX.Element {
     fallback: ttsFallback,
     visual: ttsVisual,
     routine: ttsRoutine,
-    gender: petGender(pet.id),
+    gender: DEFAULT_VOICE_GENDER,
     ttsOn,
     notifyOn,
     notifyConfig,
@@ -1047,14 +1021,14 @@ export default function App(): React.JSX.Element {
         {skinCss && <style>{skinCss}</style>}
         {collapsed ? (
           <PetBall
-            pet={pet}
-            figure={petOn}
             hideBalance={hideBalance}
+            dockHidden={dockHidden}
+            fluidPhase={fluidPhase}
+            fluidEdge={fluidEdge}
             onExpand={doExpand}
             onDragStart={(grab) => window.api.dragStart(grab)}
             onDragEnd={() => window.api.dragEnd()}
             onMenu={petMenu}
-            onRename={renamePet}
             notice={ttsVisualText}
             alertText={alertText}
             alertMinutes={alertMinutes}
@@ -1066,13 +1040,10 @@ export default function App(): React.JSX.Element {
             onDataChanged={() => void window.api.refreshNow()}
             voiceMuted={voiceMuted}
             onToggleVoice={toggleVoiceFor}
-            pet={pet}
-            petOn={petOn}
-            onChangePet={changePet}
-            onRenamePet={renamePet}
-            onTogglePetBall={togglePetBall}
             alwaysTop={alwaysTop}
             onToggleAlwaysTop={toggleAlwaysTop}
+            dockHide={dockHide}
+            onToggleDockHide={toggleDockHide}
             ttsOn={ttsOn}
             onToggleTts={toggleTts}
             servicePreset={ttsPreset}

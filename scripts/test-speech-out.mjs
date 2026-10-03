@@ -1578,17 +1578,16 @@ out('\nP. 用户可见文案：说人话 + 给下一步（缺陷 3）')
   )
 }
 {
-  // ── AC3 / AC4 的接线：性别从 pet.id 一路走到 voice.speak ──────────────────
-  // 这一段的三个断言是本轮**补上的**：两侧都测到了、中间没人测 ——
-  //   · petGender 的映射        → test-voice.mjs F 段（行为）
-  //   · flush → speakViaSystem  → 本文件 J4b（行为）
-  //   · App 里的这两跳（本段）  → 之前完全没有
+  // ── 性别的接线：固定值一路走到 voice.speak ───────────────────────────────
+  // 人物形态下线前这里是 `gender: petGender(pet.id)`（AC3/AC4：性别跟助理走）；
+  // 下线后固定为 DEFAULT_VOICE_GENDER（原默认助理 Aria 的女声），仍不落盘。
   // 中间那一段被改回 `gender: 'any'` 的话全仓套件照样全绿，而用户听到的是不挑性别的
-  // 系统音色 —— AC3 静默失效，正是「校验守卫能失败」这条纪律要挡的东西。
+  // 系统音色 —— 静默失效，正是「校验守卫能失败」这条纪律要挡的东西。
   const appSrc = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
   ok(
-    /alertCtxRef\.current\s*=\s*\{[\s\S]{0,900}?gender:\s*petGender\(pet\.id\)/.test(appSrc),
-    'P11 ctx.gender 每轮由 petGender(pet.id) 现算（AC3/AC4：性别跟助理走，不落盘）'
+    /const DEFAULT_VOICE_GENDER = 'female'/.test(appSrc) &&
+      /gender:\s*DEFAULT_VOICE_GENDER/.test(appSrc),
+    'P11 ctx.gender 取固定值 DEFAULT_VOICE_GENDER（人物下线后不再跟助理走，仍不落盘）'
   )
   ok(
     /void flush\(\{[\s\S]{0,300}?gender:\s*ctx\.gender/.test(appSrc),

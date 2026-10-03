@@ -681,5 +681,131 @@ eq2(
   'H3 preload 暴露的托盘 debug 通道都有主进程 handler（否则渲染层 await 会 reject）'
 )
 
+// ─── I. 贴边自动隐藏（10-03-dock-autohide）───────────────────────────────────
+//
+// 几何唯一来源是 shared/dock-hide.ts（主进程状态机与单测共用）；overlay.ts 只做
+// 转接（三个调用点：dragStop 尾 / dragStart 头 / 显示器重定位处）。
+// 隐藏态命中区覆盖为痕迹条 —— 渲染层常规上报在隐藏态下不被采信（跨层契约）。
+console.log('\nI. 贴边自动隐藏的单一几何来源')
+
+const DOCK_SHARED = 'src/shared/dock-hide.ts'
+const DOCK_MAIN = 'src/main/dockHide.ts'
+const FLUID_SHARED = 'src/shared/fluid.ts'
+ok(existsSync(resolve(ROOT, DOCK_SHARED)), `I0a 前置：${DOCK_SHARED} 存在`)
+ok(existsSync(resolve(ROOT, DOCK_MAIN)), `I0b 前置：${DOCK_MAIN} 存在`)
+ok(existsSync(resolve(ROOT, FLUID_SHARED)), `I0a2 前置：${FLUID_SHARED} 存在`)
+const dockSharedBody = stripTsComments(read(DOCK_SHARED))
+const dockMainBody = stripTsComments(read(DOCK_MAIN))
+const fluidSharedBody = stripTsComments(read(FLUID_SHARED))
+ok(dockSharedBody.length > 0 && dockMainBody.length > 0, 'I0c 前置：两模块剥注释后非空（负向断言不能空洞通过）')
+ok(
+  !/\belectron\b|\bdocument\.|window\.|navigator\./.test(dockSharedBody),
+  'I1 几何模块是纯函数（无 electron / DOM —— 主进程与单测共用同一实现）'
+)
+ok(
+  !/\belectron\b/.test(dockMainBody),
+  'I1b 状态机不直接 import electron（窗口/屏幕经 overlay 注入，否则单测加载不了）'
+)
+// 阈值与痕迹的数值字面量只允许出现在几何模块一处（两处各写一个 8/4 必然漂移）。
+// fluid.ts 是几何的共同拥有者（水渍 pill 与痕迹条同源）：它可以**引用**，
+// 但不许自立第二个数 —— 下一条 I2c 单独钉住它，扫描时先排除。
+const dockScanned = [
+  ...sharedFiles.map((f) => `src/shared/${f}`),
+  ...mainTs.map((f) => `src/main/${f}`)
+].filter((f) => f !== DOCK_SHARED && f !== DOCK_MAIN && f !== FLUID_SHARED)
+const dupDock = dockScanned.filter((f) => {
+  const code = stripTsComments(read(f))
+  return /EDGE_THRESHOLD|PEEK(?![A-Z_])/.test(code)
+})
+eq2(dupDock, [], 'I2 EDGE_THRESHOLD / PEEK 只在几何模块命名（别处硬编码 8/4 会漂移）')
+ok(
+  /from '\.\/dock-hide'/.test(fluidSharedBody) &&
+    !/(const|let)\s+(EDGE_THRESHOLD|PEEK|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(fluidSharedBody),
+  'I2c 流体模块经 shared/dock-hide 取几何常量（引用不断、不自立第二个数）'
+)
+ok(
+  !/\belectron\b|\bdocument\.|window\.|navigator\./.test(fluidSharedBody),
+  'I2d 流体模块是纯函数（无 electron / DOM —— 主进程、渲染层与单测共用同一实现）'
+)
+ok(
+  /from '\.\.\/shared\/dock-hide'/.test(dockMainBody) &&
+    !/(const|let)\s+(EDGE_THRESHOLD|PEEK|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(dockMainBody),
+  'I2b 状态机经 shared/dock-hide 取常量（不自立第二个数）'
+)
+// overlay 的三个调用点都在（删掉任何一处，隐藏/取消/显示器路径就静默少一条）
+const overlayCode = stripTsComments(read('src/main/overlay.ts'))
+ok(/dock\.onDragStop\(\)/.test(overlayCode), 'I3a dragStop 尾调 dock.onDragStop（贴边起计时）')
+ok(/dock\.onDragStart\(\)/.test(overlayCode), 'I3b dragStart 头调 dock.onDragStart（与拖拽计时器互斥）')
+ok(/dock\.onDisplayChange\(\)/.test(overlayCode), 'I3c 显示器重定位处调 dock.onDisplayChange（重算偏移）')
+ok(/dock\.resetToVisible\(\)/.test(overlayCode), 'I3d 展开/收起切换调 dock.resetToVisible（不残留隐藏偏移）')
+ok(/function tickCursorWatch/.test(overlayCode), 'I3e 前置：找得到 tickCursorWatch（下面的调用形状断言不能空洞通过）')
+ok(
+  /cursorInsideHit\(cursor,\s*b,\s*peekOverride/.test(overlayCode),
+  'I3e 命中决策点以痕迹条覆盖为准（调用形状，不是"某处出现过"——petHitboxDebug 那个只是 debug 读数，删掉这里必须红）'
+)
+// ─── J. 流体隐藏的单一口径（10-03-dock-autohide 步 5/6/7）───────────────────
+//
+// goo 三元素 + 液位 + 相位映射各自只能有一处真相源：
+//   · 时序/液位/水渍几何/相位映射归 shared/fluid.ts（I2c/I2d 已守住它的纯度与引用）；
+//   · 状态机只许经 setPhase 改相位（改了就推 dock:fluid，不存在"变了没推"的分支）；
+//   · 渲染层只消费（切类 + 读 level），不自立第二套数；
+//   · CSS 的降级（hidden 暂停波浪 / reduced-motion 跳 morph）必须真实存在，不是注释。
+console.log('\nJ. 流体隐藏的单一口径')
+
+// J1 · 相位唯一出口：直接写 `phase = '…'` 的只能是 0 处（setPhase 里的 `phase = p` 不匹配这条）。
+// 漏网的直接赋值 = "变了没推 dock:fluid" 的分支，渲染层会停在旧 morph 帧。
+const directPhaseAssign = (dockMainBody.match(/^\s*phase = '/gm) || []).length
+eq2(directPhaseAssign, 0, 'J1 状态机改相位只走 setPhase（直接赋值 0 处 —— 赋值即推送，无静默分支）')
+ok(/function setPhase\(/.test(dockMainBody) && /emitFluid\(\)/.test(dockMainBody) &&
+  /phase = p\s*\n\s*emitFluid\(\)/.test(dockMainBody),
+  'J1b 前置：setPhase 内赋值即推送（删掉那行调用就红 —— J1 只数直接赋值，看不见"走了 setPhase 但没推"）')
+
+// J2 · 渲染层消费 fluid，不自立第二套数
+const petBallSrc = read('src/renderer/src/PetBall.tsx')
+const petBallCode = stripTsComments(petBallSrc)
+ok(/from '\.\.\/\.\.\/shared\/fluid'/.test(petBallCode), 'J2a 前置：PetBall 真的 import shared/fluid')
+ok(/fluidLevel\(/.test(petBallCode), 'J2 液位经 shared/fluid.level（不用内联公式）')
+ok(!/(const|let)\s+(ABSORB_|REVEAL_MS|PILL_LEN)\s*=/.test(petBallCode),
+  'J2b 渲染层不自立时序/水渍常量（时序唯一口径在 shared/fluid.ts）')
+ok(/data-fluid=/.test(petBallCode) && /data-edge=/.test(petBallCode),
+  'J2c 相位与贴边落在 DOM 属性上（--uitest 不靠猜样式读状态）')
+
+// J3 · CSS 的三条降级必须真实存在（剥注释后判生效声明，不是"注释里写过"）
+const skinCss = read('src/renderer/src/skins.css').replace(/\/\*[\s\S]*?\*\//g, '')
+ok(/\.petball-goo\s*\{[^}]*filter:\s*url\(#petball-goo\)/.test(skinCss),
+  'J3a goo 容器挂滤镜（不挂 elaborate 的 morph 全是散的）')
+ok(/\[data-fluid='hidden'\][^{]*\.fluid-wave[^}]*animation-play-state:\s*paused/.test(skinCss),
+  'J3b hidden 态暂停波浪（PRD R9 —— 一直转等于在痕迹上烧电；必须判作用域规则，裸判 paused 会被别处兜底）')
+ok(/prefers-reduced-motion/.test(skinCss) && /\.fluid-bridge/.test(skinCss),
+  'J3c reduced-motion 下跳 morph（PRD R5 —— 只降级 motion，不降级 dwell 计时）')
+
+// J4 · E2E 覆盖存在（uitest 状态序列 + shots 取帧），不是"写了代码没断言"
+const uitestCode = stripTsComments(read('src/main/qa/uitest.ts'))
+const shotsCode = stripTsComments(read('src/main/qa/shots.ts'))
+ok(/dockFluid/.test(uitestCode), 'J4a 前置：uitest 真的有 dockFluid 断言键')
+ok(/__bd_fluid_freeze|dataset\.fluid|data-fluid/.test(uitestCode), 'J4 uitest 读流体相位（状态序列不断就等于没测 morph）')
+ok(/__bd_fluid_freeze/.test(shotsCode), 'J4b shots 经 __bd_fluid_freeze 取拉伸/桥接/水渍三帧')
+
+// J5 · 推送不抛：dock 通道一律走 safeSend（reload / GPU 崩溃恢复时裸 send 会抛
+// `Render frame was disposed`，而调用方一半在定时器回调里 —— 抛出来就是主进程
+// 未捕获异常。--shots 实机抓到过一次，见 overlay safeSend 注释）。
+ok(!/webContents\.send\('dock:/.test(overlayCode),
+  'J5 dock 通道没有裸 webContents.send（定时器回调里抛 = 主进程崩溃，必须走 safeSend）')
+ok(/safeSend\('dock:hidden'/.test(overlayCode) && /safeSend\('dock:fluid'/.test(overlayCode),
+  'J5b 前置：safeSend 真的在推 dock:hidden 与 dock:fluid（J5 不是空洞通过）')
+
+// debug:dock-* 与托盘 debug 通道同一隔离级别：门内才有，生产不暴露
+const dockDebugChannels = [...ipcCode.matchAll(/ipcMain\.handle\('(debug:dock-[a-z-]+)'/g)].map((m) => m[1])
+eq2(
+  dockDebugChannels.filter((c) => insideGate.includes(isReg(c))),
+  dockDebugChannels.length > 0 ? dockDebugChannels : ['__missing__'],
+  'H4 对照：贴边隐藏 debug 通道都在 QA 门内（证明匹配串写对了，不是空洞通过）'
+)
+eq2(
+  dockDebugChannels.filter((c) => outsideGate.includes(isReg(c))),
+  [],
+  'H4b 门之外没有第二处注册（生产运行时不暴露注入能力）'
+)
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

@@ -10,7 +10,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { demoSnapshot } from './fixtures'
-import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
+import { BALL_VIEW } from '../../shared/pet-view'
 
 export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   const { mkdirSync, writeFileSync } = await import('fs')
@@ -37,8 +37,6 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await sleep(6500)
   // 走查"断网/缓存"形态时需要一个真实快照做底模
   await exec('window.api.getState().then((s) => { window.__bd_state_snapshot = s.snapshots })')
-  // 记录宠物圆点偏好：走查会临时开启，结束时还原
-  const petWasOn = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='1')")) === true
   await exec('window.api.expand()')
   await sleep(900)
   await shoot('1-card')
@@ -94,18 +92,15 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('.advanced')?.scrollIntoView({block:'center'})")
   await sleep(500)
   await shoot('6-settings-advanced')
-  // ─── 收起态：2D 小圆环（默认形态）／个性人物（3D，可选形态）─────────────────
-  const openSettings = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('设置'))?.click()"
+  // ─── 收起态：2D 小圆环（唯一的形态）─────────────────
   const backBtn = "[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()"
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
-  /** 点「个性人物」开关（.pet-sec 里第 1 个开关；文案变了这里要跟着改） */
-  const petToggle = "[...document.querySelectorAll('.pet-sec .switch')][0]?.click()"
   /**
    * 收起/展开后等画面**真的可以拍**再按快门。两个条件缺一不可：
    *   · 窗口尺寸已经落到目标值（setBounds 是异步的，改尺寸后合成器要重画一帧）
-   *   · 画布真的有像素（`measure()` 读 WebGL 缓冲；DOM 覆盖层可能早就画好了）
-   * 少等前者时，抓到的第一张会是空图（实测：5-ball-1 只有泡泡、5b-pet-1 什么都没有，
-   * 而同组的第 2、3 帧正常）—— 那是合成器还没把新尺寸的第一帧画出来，不是场景的问题。
+   *   · 再等**两帧真正合成**。capturePage 抓的是**合成结果**，measure 式的
+   *     缓冲检查在这里不适用（纯 DOM，无 WebGL 缓冲可读）。
+   * 少了这一步，收起后的第一张就是空的（实测 5-ball-1 只有泡泡；同组第 2 帧正常）。
    */
   const settle = async (expect?: { width: number; height: number }): Promise<void> => {
     if (expect) {
@@ -116,40 +111,14 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
       }
     }
     await sleep(600)
-    // 等 WebGL 首帧**只对人物形态有意义**：球形态是纯 DOM 的 2D 小圆环，没有场景、
-    // `__bd_ball().measure` 恒为 null，硬等 8 秒只会空等并打一条假的「画布迟迟没有像素」。
-    if ((await exec("!!document.querySelector('.pet3d-canvas')")) === true) {
-      for (let i = 0; i < 32; i++) {
-        const box = (await exec('window.__bd_ball?.()?.measure?.box ?? null')) as {
-          width: number
-          height: number
-        } | null
-        if (box && box.width > 4 && box.height > 4) break
-        await sleep(250)
-        if (i === 31) console.log('[shots] 画布迟迟没有像素，可能拍出空图')
-      }
-    }
-    // 再等**两帧真正合成**。关键区别：measure() 是"按需渲染 + 读回缓冲"，它证明缓冲里有像素，
-    // 却不代表页面已经合成过这一帧 —— 而 capturePage 抓的是**合成结果**。
-    // 少了这一步，球形态收起后的第一张就是空的（实测 5-ball-1 只有泡泡；同组第 2 帧正常）。
+    // 再等**两帧真正合成**。
     await exec('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
   }
 
-  /** 驱动一次动作（长按撸一把已随养成体系下线，这里改成直接点名一个动作做观感走查） */
-  const gesture = (id: string): string => `void window.__bd_gesture?.('${id}')`
-
-  await exec(backBtn)
-  await sleep(500)
-  // 设置页「数字助理」分区特写（头像 / 一句话设定 / 两个开关 / 换一位）
-  await exec(openSettings)
-  await sleep(700)
-  await exec("document.querySelector('.pet-sec')?.scrollIntoView({block:'center'})")
-  await sleep(4500) // 等角色缩略图渲染完（软渲染器上要几秒）
-  await shoot('4b-settings-pet')
   await exec(backBtn)
   await sleep(500)
 
-  // ① 球形态（默认）：2D 小圆环（56×56，纯 DOM，不建 WebGL 场景）。
+  // ① 小圆环（56×56，纯 DOM）。
   await exec(collapseBtn)
   await settle(BALL_VIEW)
   await shoot('5-ball', { frames: 3 })
@@ -160,75 +129,55 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
     await shoot(`5c-ball-${id}`)
   }
 
-  // ② 个性人物形态：出场走入 + 站定挥手 + 右键菜单
+  // ③ 贴边自动隐藏走查：贴边停留 → 滑入边框只留痕迹 → 悬停唤出（10-03-dock-autohide）
+  // ⚠ capturePage 拍的是窗口内容，不是桌面合成 —— 藏起来的窗口内容里球还是完整的，
+  //   这两张证明的是"离屏 excursion + 滑回后渲染无损"（GPU 合成没被屏外定位搞坏），
+  //   痕迹本身（屏上只剩 4px）的证据在 uitest 的 bounds 断言（dockHide/dockEdges），不在 PNG 里。
+  //   对着 5g 数像素说"只剩一条"就是 ballshot 教训的重演。解码验证见 check 报告。
+  // 真光标冻结：走查机上鼠标若停在痕迹条附近，2500ms 里足够唤回一次，截图就错过隐藏态
+  await exec('window.api.debugDockFreeze(true)')
+  await exec("window.api.debugDockEdge('left')")
+  await sleep(2500) // 真实计时：1000ms 停留 + 300ms 隐藏动画
+  await shoot('5g-dock-hidden')
+  await exec('window.api.debugDockCursor(true)')
+  await sleep(1500) // 真实计时：300ms 唤出停留 + 200ms 滑出动画
+  await shoot('5h-dock-revealed')
+  // 流体三帧（10-03-dock-autohide 步 6/7）：拉伸中 / 桥接中 / 水渍 ——
+  // __bd_fluid_freeze 把 goo 定在某一 morph 帧并暂停动画（呈现层冻结，不动状态机）。
+  // capturePage 拍的是窗口内容：这三张证明 morph 帧的形状渲染无损（与 5g 同口径：
+  // 痕迹本身的证据在 uitest 的 bounds 断言，不在 PNG 里）。
+  await exec(`window.__bd_fluid_freeze?.('stretch')`)
+  await sleep(600)
+  await shoot('5i-fluid-stretch')
+  await exec(`window.__bd_fluid_freeze?.('bridge')`)
+  await sleep(600)
+  await shoot('5j-fluid-bridge')
+  await exec(`window.__bd_fluid_freeze?.('stain')`)
+  await sleep(600)
+  await shoot('5k-fluid-stain')
+  await exec(`window.__bd_fluid_freeze?.('off')`)
+  await exec('window.api.debugDockFreeze(false)')
   await exec('window.api.expand()')
   await sleep(700)
-  await exec(openSettings)
-  await sleep(600)
-  await exec(petToggle)
-  await sleep(400)
-  await exec(backBtn)
-  await sleep(400)
-  await exec(collapseBtn)
-  await settle(FIGURE_VIEW)
-  await shoot('5b-pet', { frames: 2 })
-  // 鼓掌（原"撸一把"的反馈动作，现在是普通随机小动作）做一张动作走查。
-  // 不能固定睡：这条剪辑是**按需加载**的（首次要解析几百毫秒），睡着了还在站桩。
-  await exec(gesture('clap'))
-  for (let i = 0; i < 15; i++) {
-    const g = (await exec('window.__bd_ball?.()?.gesture ?? null')) as { cur: string | null } | null
-    if (g?.cur === 'clap') break
-    await sleep(250)
-  }
-  await sleep(700) // 进到动作中段再拍（起手几帧还在垂手）
-  await shoot('5d-pet-happy')
-  await sleep(400)
+
+  // 右键菜单走查：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活。
+  // 菜单本身是原生窗口，capturePage 抓不到它 —— 这张证明菜单弹出前后渲染层无损。
   await exec(`(()=>{
     const b=document.querySelector('.petball-hit'); if(!b) return
     const rc=b.getBoundingClientRect()
     b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
   })()`)
   await sleep(900)
-  await shoot('5e-pet-menu')
+  await shoot('5e-ball-menu')
   await exec("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
   await sleep(500)
 
-  // 逐位角色各拍一张（3D 素材观感）
-  const species = ['aria', 'ray']
-  for (let i = 0; i < species.length; i++) {
-    await exec('window.api.expand()')
-    await sleep(700)
-    await exec(openSettings)
-    await sleep(700)
-    await exec(`document.querySelectorAll('.pet-chip')[${[0, 1][i]}]?.click()`)
-    await sleep(500)
-    await exec(backBtn)
-    await sleep(400)
-    await exec(collapseBtn)
-    // ⚠ 必须等到 petReady：收起会重建场景，未缓存过的角色要解析 5 个 FBX
-    //   （软渲染器上远超固定等待），拍早了就是一张只有脚下阴影的空画布。
-    let ready = false
-    for (let w = 0; w < 25; w++) {
-      if ((await exec('window.__bd_ball?.()?.petReady === true')) === true) {
-        ready = true
-        break
-      }
-      await sleep(400)
-    }
-    if (!ready) console.log(`[shots] ${species[i]} 未就位（拍到的可能是空画布）`)
-    await sleep(900) // 模型就位后再等一拍，让 idle 剪辑进入循环
-    await shoot(`5f-pet-${species[i]}`)
-  }
-
-  // 还原：关掉个性人物（默认球形态），回到卡片视图
+  // 回到卡片视图
   await exec('window.api.expand()')
   await sleep(700)
-  await exec(openSettings)
+  // 回到卡片视图
+  await exec('window.api.expand()')
   await sleep(700)
-  await exec(petToggle)
-  await sleep(400)
-  await exec(backBtn)
-  await sleep(500)
 
   // 断网 / 缓存态（数据诚实性的设计走查）：注入 cached 快照 + offline
   await exec('window.api.expand()')

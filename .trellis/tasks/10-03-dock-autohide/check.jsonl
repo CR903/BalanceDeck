@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核查新增dock断言是否真加载源码、是否逐条弄坏验证、退出码不参与判定契约是否遵守"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查隐藏偏移与痕迹命中区是否端到端同源，缺失降级（无隐藏偏移信息）时是否保持可见不断连"}

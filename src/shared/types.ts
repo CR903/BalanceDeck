@@ -233,14 +233,14 @@ export interface PetHitbox {
 
 /** 悬浮球右键菜单模型（原生菜单由主进程渲染，业务动作由渲染层执行） */
 export interface PetMenuModel {
-  /** 标题行（助理名） */
+  /** 标题行（应用名） */
   title: string
-  /** 状态行（一句话设定） */
+  /** 状态行（当前主供应商读数摘要） */
   status: string
-  /** 可切换的数字助理列表 */
-  pets: { id: string; name: string; checked: boolean }[]
   /** 是否总在最前 */
   alwaysOnTop: boolean
   /** 是否打码余额 */
   hideBalance: boolean
+  /** 是否开贴边自动隐藏（缺省开） */
+  dockHide: boolean
 }

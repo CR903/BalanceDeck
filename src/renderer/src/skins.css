@@ -42,9 +42,9 @@
        一个没有底的球比一个浅色的球更糟。 */
   --ball-bg: rgba(246, 246, 248, 0.86);
   --ball-rim: rgba(0, 0, 0, 0.16);
-  /* 收起态浮在**用户任意壁纸**上的「角色浮层」底：固定深底半透明 + 白字，**不随皮肤变**。
-     .petball-bubble / .petball-caption / .petball-confirm 都属这一族 —— 它们是角色的气泡与
-     脚标，要**同场**（压在角色与壁纸上），不是像卡片面板那样跟着皮肤的颜色走。
+  /* 收起态浮在**用户任意壁纸**上的浮层底：固定深底半透明 + 白字，**不随皮肤变**。
+     .petball-bubble / .petball-confirm 都属这一族 —— 它们是压在小圆环与壁纸上的
+     临时提示，不是像卡片面板那样跟着皮肤的颜色走。
      为什么不复用 --surface-*：那是随皮肤的半透明表面，配同皮肤的 --fg（浅色皮肤是深字）
      在浅壁纸上会糊成一片；深色皮肤的 0.08 alpha 在浅壁纸上整个看不见。固定的深底 + 固定
      的白字在任何壁纸上都可读。这里只定义一次（写在 :root），不逐皮肤重写：它按**壁纸**而非
@@ -1803,7 +1803,7 @@ textarea {
 /* 互动反馈（撸一把 / 升级 / 吃饱了）—— 已删（2026-09-27）：@keyframes petball-pop
    随养成互动下线就没有任何 animation 引用了（全项目零命中）。 */
 
-/* 真人系语音泡泡（打招呼 / 余额播报）：比 toast 大一号、最多两行，锚在球上方。
+/* 语音提醒的视觉通知泡泡（TTS 回声）：比 toast 大一号、最多两行，锚在环上方。
    底色与 .petball-confirm 共用 --bubble-bg（同族同深）—— 两条气泡挨着出现时深浅必须一致，
    否则用户会以为是两个不同来源的浮层。 */
 .petball-bubble {
@@ -1842,21 +1842,22 @@ textarea {
 /* 预警确认气泡（AC7「重复提醒直到确认」）
    ⚠ 它是 .petball-bubble 的**兄弟节点**，不是泡泡的一部分 —— 泡泡带 aria-hidden="true"，
       纯装饰；交互元素藏在里面对辅助技术不可见。
-   位置由 PetBall 内联给（confirmAnchor）。人物形态贴角色**头顶**、尖角朝下，和 .petball-bubble
-   同族同位，读作「角色在说」；那一支落在主体投影**之外**，所以命中区必须由 reportHit 并进
+   位置由 PetBall 内联给（confirmAnchor）。贴环**上方**、尖角朝下，和 .petball-bubble
+   同族同位，读作临时的提示；它落在圆环主体矩形**之外**，所以命中区必须由 reportHit 并进
    气泡的矩形（主进程只按上报的那一个矩形决定窗口哪块收鼠标，越界就是画得出、点不动）。
-   底色走 --bubble-*：这是「角色浮层」族令牌，按**壁纸**而非按皮肤适配（见 :root 那条注释）。 */
+   底色走 --bubble-*：这是浮在壁纸上的浮层族令牌，按**壁纸**而非按皮肤适配（见 :root 那条注释）。 */
 .petball-confirm {
   position: absolute;
-  /* 锚点是气泡**底边**（同 .petball-bubble）；尖角在左下角指向角色 */
+  /* 锚点是气泡**底边**（同 .petball-bubble）；尖角在左下角指向圆环 */
   transform: translate(-50%, -100%);
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  /* 高度是算出来的，不是随手写的：人物形态里角色头顶离窗口顶只有 39.5px（实测投影
-     rect.y=39.5），气泡再高就会从发冠一路压到脸上。所以 4+13.2+2+24+5 = 48.2 封顶，
+  /* 高度是算出来的，不是随手写的：4+13.2+2+24+5 = 48.2 封顶，
      其中 24 是操作行的按钮高度（WCAG 2.2 的 AA 点击目标下限，压不下去）。
+     （这笔账沿用人物形态存续期的实测：当时角色头顶离窗口顶 39.5px，超高会从发冠压到脸上；
+     现 56×56 环窗里气泡是外溢浮层，高度仍由同一组构成项钉住，外溢部分由命中区并入覆盖。）
      ⚠ 改这三个数之一时，test-alert-orchestration.mjs 的 L77 会按同一份加法验一遍。 */
   padding: 4px 11px 5px;
   max-width: 190px;
@@ -1875,14 +1876,14 @@ textarea {
   /* ⚠ .petball 整体是 pointer-events: none（容器不吃事件），交互控件必须自己开回来，
      否则按钮画得出来却收不到点击。 */
   pointer-events: auto;
-  /* 不放 outer box-shadow：气泡最宽 190px、人物窗口只有 213px，锚点夹在窗内时它两端正好
-     贴窗口边，外阴影会被窗口裁成方框（与 .petball-fallback 同一条纪律）。
+  /* 不放 outer box-shadow：气泡是外溢浮层（CSS 最宽 190px、窗口只有 56×56，
+     内联再按命中区夹到 62 以内），外阴影会被窗口裁成方框（与 .petball-fallback 同一条纪律）。
      也不复用 petball-bubble-in 的入场动画 —— 那条 keyframe 的终态带 translate(-50%,-100%)，
      会顶掉这里的锚点 transform。 */
 }
 .petball-confirm-text {
-  /* 只放一行：气泡总高 48.2px 是角色头顶到窗口顶那段 39.5px 换来的（见上面 .petball-confirm
-     的 padding 注释），两行文案会把它顶到 61.4px、直接从发冠压到脸上。
+  /* 只放一行：气泡总高 48.2px（见上面 .petball-confirm 的 padding 注释），
+     两行文案会把它顶到 61.4px、顶出命中区并入的覆盖范围。
      超了静默截断而非加省略号 —— 加回来就变回那个吓人的截断感；而 confirmLine 已按
      CONFIRM_LINE_WIDTH（168px）把文案收进一行，正常走不到这条截断。 */
   white-space: nowrap;
@@ -1932,11 +1933,10 @@ textarea {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-/* 球形态（56×56 窗口，命中区是整块窗口）：横向只剩 48px、纵向要留给读数，
+/* 小圆环（56×56 窗口，命中区是整块窗口）：横向只剩 48px、纵向要留给读数，
    所以只留按钮，文案与倒计时退给语音与那 15 分钟窗口本身。
-   人物形态 WebGL 失败时也是这一支 —— 此时的命中区是居中 56 宽的环，同样放不下整行。
    这一支回到**贴环心**的锚点（transform 只有水平居中，vertical 用 top 定位），
-   底色也换回随皮肤的 --bg-solid：球窗口没有壁纸可谈，要的是跟环的对比度。 */
+   底色也换回随皮肤的 --bg-solid：环窗口没有壁纸可谈，要的是跟环的对比度。 */
 .petball.no3d .petball-confirm {
   transform: translateX(-50%);
   gap: 0;
@@ -2161,6 +2161,313 @@ textarea {
 .petball.no3d .petball-value {
   color: var(--fg);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* ─── 流体隐藏三元素（10-03-dock-autohide 步 5/6：R8 渐变球 + R9 水满 + goo 吸入/汇聚）───
+ *
+ * 结构（PetBall.tsx）：.petball-goo（挂 goo 滤镜，只融合形状）内三元素 ——
+ *   ① .fluid-disc（渐变球盘）② .fluid-waves（水满波浪，仅套餐类）③ .fluid-bridge（液桥）
+ *   ④ .fluid-pill（贴边水渍）。环/数字/标记在 goo 容器之外，读数永远 crisp。
+ * 时序（shared/fluid.ts 唯一口径）：吸入 150 拉伸 → 300 合并 → 80 定形（关键帧 % 即 28/85/100），
+ * 汇聚反向 400ms。位移走主进程 setPosition 步进，morph 与位移串行不重叠。
+ * 滤镜区裁到 56×56 内（filter x/y/width/height），避免全屏 blur 开销。
+ * reduced-motion 下无 morph（直接显隐，计时器保留）；hidden 态波浪暂停。
+ * ⚠ D6 纪律：这几个元素一律不许有 outer box-shadow（尺寸贴窗，见 D6 注释）。 */
+.petball.no3d .petball-goo {
+  position: absolute;
+  inset: 0;
+  filter: url(#petball-goo);
+}
+/* 常态（整球）不挂滤镜：正常态渲染与 slide 基线逐像素一致，
+   goo 只在 morph/水渍三态融合形状（回退 slide 时这里就是"没开"的样子）。
+   取帧冻结时强制挂上（data-freeze 不改变 data-fluid，常态下 freeze 也要看到融合）。 */
+.petball.no3d .petball-fallback[data-fluid='edge-visible'] .petball-goo {
+  filter: none;
+}
+.petball.no3d .petball-fallback[data-freeze] .petball-goo {
+  filter: url(#petball-goo);
+}
+.petball.no3d .goo-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+/* 桥的方向变量：pill 侧（左贴边 → pill 在窗口右侧 → 桥向 +x） */
+.petball.no3d .petball-fallback[data-edge='left'] {
+  --dx: 1;
+  --dy: 0;
+}
+.petball.no3d .petball-fallback[data-edge='right'] {
+  --dx: -1;
+  --dy: 0;
+}
+.petball.no3d .petball-fallback[data-edge='top'] {
+  --dx: 0;
+  --dy: 1;
+}
+.petball.no3d .petball-fallback[data-edge='bottom'] {
+  --dx: 0;
+  --dy: -1;
+}
+/* R8 渐变 3D 球：径向渐变球体 + 顶部高光 + 底部内阴影。
+   颜色全部取自既有球令牌（--dot-top 高光 / --dot-bottom 内阴影），中间透明露出
+   底盘的 --ball-bg —— 5 套皮肤各自生效，新增皮肤零代码，不引入新令牌。 */
+.petball.no3d .fluid-disc {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 26%, var(--dot-top), transparent 46%),
+    radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%);
+}
+/* R9 水满波浪：球内 clip 圆（r=17）+ 双层错速正弦（3.2s vs 2s = 1:1.6），液位 = percent。
+   颜色跟随等级（--ok/--warn/--danger，与环同源）；余额类不挂波浪（JSX 里根本不渲染）。 */
+.petball.no3d .fluid-waves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.petball.no3d .fluid-wave {
+  fill: var(--ok);
+  opacity: 0.45;
+  animation: fluid-drift-a 3.2s linear infinite;
+}
+.petball.no3d .fluid-wave-b {
+  opacity: 0.3;
+  animation: fluid-drift-b 2s linear infinite;
+}
+.petball.no3d.lvl-warn .fluid-wave {
+  fill: var(--warn);
+}
+.petball.no3d.lvl-danger .fluid-wave {
+  fill: var(--danger);
+}
+.petball.no3d.lvl-muted .fluid-wave {
+  fill: var(--fg-faint);
+}
+@keyframes fluid-drift-a {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-28px);
+  }
+}
+@keyframes fluid-drift-b {
+  from {
+    transform: translateX(-28px);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+/* hidden 态暂停波浪（PRD R9）；数字仍居中压在液面上（沿用环心读数样式） */
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-wave {
+  animation-play-state: paused;
+}
+/* 液桥 blob：平时 scale(0) 藏在球心，吸入时向贴边侧拉伸长大 */
+.petball.no3d .fluid-bridge {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ball-bg);
+  transform: translate(-50%, -50%) scale(0);
+}
+/* 水渍 pill：沿边沿 20px × 探出 4px（与 shared/fluid.pillBox 同形，圆角水滴形）。
+   位置按 data-edge 贴边，平时 scale(0)，吸入终态留下。
+   ⚠ 显隐走独立的 `scale` 属性（与定位的 `transform` 分开）：四个边的定位 transform
+   各不相同（translateY vs translateX），关键帧若写完整 transform 就得分边写四套；
+   用 `scale` 属性后一套关键帧通吃四边（Chromium 104+，Electron 37 可用）。 */
+.petball.no3d .fluid-pill {
+  position: absolute;
+  background: var(--ball-bg);
+  border-radius: 2px;
+  scale: 0;
+}
+.petball.no3d .petball-fallback[data-edge='left'] .fluid-pill {
+  right: 0;
+  top: 50%;
+  width: 4px;
+  height: 20px;
+  transform: translateY(-50%);
+}
+.petball.no3d .petball-fallback[data-edge='right'] .fluid-pill {
+  left: 0;
+  top: 50%;
+  width: 4px;
+  height: 20px;
+  transform: translateY(-50%);
+}
+.petball.no3d .petball-fallback[data-edge='top'] .fluid-pill {
+  bottom: 0;
+  left: 50%;
+  width: 20px;
+  height: 4px;
+  transform: translateX(-50%);
+}
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill {
+  top: 0;
+  left: 50%;
+  width: 20px;
+  height: 4px;
+  transform: translateX(-50%);
+}
+/* 吸入 morph（530ms = 150 拉伸 → 300 合并 → 80 定形；关键帧 28%/85% 即分段点） */
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-disc {
+  animation: disc-absorb 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-bridge {
+  animation: bridge-absorb 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-pill {
+  animation: pill-absorb 530ms var(--ease) forwards;
+}
+@keyframes disc-absorb {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  28% {
+    transform: translate(calc(-50% + var(--dx) * 4px), calc(-50% + var(--dy) * 4px)) scale(1.08);
+  }
+  85% {
+    transform: translate(calc(-50% + var(--dx) * 12px), calc(-50% + var(--dy) * 12px)) scale(0.55);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
+  }
+}
+@keyframes bridge-absorb {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+  }
+  28% {
+    transform: translate(calc(-50% + var(--dx) * 8px), calc(-50% + var(--dy) * 8px)) scale(0.8);
+  }
+  85% {
+    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.5);
+  }
+}
+@keyframes pill-absorb {
+  0%,
+  80% {
+    scale: 0;
+    opacity: 0;
+  }
+  100% {
+    scale: 1;
+    opacity: 1;
+  }
+}
+/* 水渍态：球与桥收尽，只留 pill（沿边沿 20px × 探出 4px） */
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc,
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-bridge {
+  transform: translate(-50%, -50%) scale(0);
+  animation: none;
+}
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-pill {
+  scale: 1;
+  opacity: 1;
+  animation: none;
+}
+/* 汇聚 morph 反向 400ms：pill 收起 → 桥拉出 → 球回弹成形（末段微过冲 = elastic 观感） */
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-disc {
+  animation: disc-reveal 400ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-bridge {
+  animation: bridge-reveal 400ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-pill {
+  animation: pill-reveal 400ms var(--ease) forwards;
+}
+@keyframes disc-reveal {
+  0% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
+  }
+  60% {
+    transform: translate(calc(-50% + var(--dx) * 6px), calc(-50% + var(--dy) * 6px)) scale(0.9);
+  }
+  80% {
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes bridge-reveal {
+  0% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.5);
+  }
+  60% {
+    transform: translate(calc(-50% + var(--dx) * 10px), calc(-50% + var(--dy) * 10px)) scale(1);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(0);
+  }
+}
+@keyframes pill-reveal {
+  0% {
+    scale: 1;
+    opacity: 1;
+  }
+  40%,
+  100% {
+    scale: 0;
+    opacity: 0;
+  }
+}
+/* 取帧冻结（--shots 用，window.__bd_fluid_freeze 设 data-freeze）：
+   定在某一 morph 帧并暂停一切动画，拍完 'off' 恢复 live。 */
+.petball.no3d .petball-fallback[data-freeze] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze] .fluid-bridge,
+.petball.no3d .petball-fallback[data-freeze] .fluid-pill,
+.petball.no3d .petball-fallback[data-freeze] .fluid-wave {
+  animation: none;
+}
+.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc {
+  transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(1.1);
+}
+.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-bridge {
+  transform: translate(calc(-50% + var(--dx) * 9px), calc(-50% + var(--dy) * 9px)) scale(0.55);
+}
+.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-disc {
+  transform: translate(calc(-50% + var(--dx) * 12px), calc(-50% + var(--dy) * 12px)) scale(0.55);
+}
+.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-bridge {
+  transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1);
+}
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-bridge {
+  transform: translate(-50%, -50%) scale(0);
+}
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-pill {
+  scale: 1;
+  opacity: 1;
+}
+/* prefers-reduced-motion：跳过流体与滑动，直接显隐（计时器保留，PRD R5）。
+   桥永不出现；pill 只在 hidden 态静态留痕；波浪只显示静态液位。 */
+@media (prefers-reduced-motion: reduce) {
+  .petball.no3d .fluid-bridge {
+    display: none;
+  }
+  .petball.no3d .fluid-disc,
+  .petball.no3d .fluid-pill,
+  .petball.no3d .fluid-wave {
+    animation: none;
+  }
+  .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc {
+    transform: translate(-50%, -50%) scale(0);
+  }
 }
 
 /* ─── 设置页「宠物 / 语音提醒」分区 ────────────────────────────────────────── */
