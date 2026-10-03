@@ -658,6 +658,19 @@ verbatim to assert its absence while the gate forbids it in `src/`. Build it in 
 **Required proof**: with the feature restored, the grep gate *and* the assertion must go red in
 the **same** run. Concatenate only in the test, never in product code.
 
+**主进程定时器回调里抛异常 = 未捕获异常弹窗，主进程不死但用户看到崩溃对话框。**
+渲染层定时器抛错最多烂一帧，主进程 `setInterval`/`setTimeout` 回调抛错直接弹
+`A JavaScript error occurred in the main process`（2026-10-04 实机：dockHide 动画步进
+`setPosition(undefined)`，栈顶 `Timeout._onTimeout` —— 与 NaN 同族不同因：
+NaN 是 number 能进调用，`undefined` 报 `conversion failure from undefined`）。
+根因链：`shared/dock-hide.ts` 的 switch 无 default、运行时回 `undefined` 却把类型写成 `Rect` →
+定时器回调内读 `to.x` 抛 → 四个定时器回调全无 try/catch。
+公约：主进程每个定时器回调整体 try/catch（异常只记一次日志，状态机回 idle，fail-closed），
+进原生调用（`setPosition`/`setBounds`）的参数先 `Number.isFinite` 守卫，纯函数永不返回
+`undefined`（非法输入回 `null` + 类型写出来）。
+弄坏验证的特征签名：去掉步进 try/catch 后**测试进程被杀死**（栈顶同样是
+`Timeout._onTimeout`）—— 这才是复现了崩溃机制，普通红 1 条不算。
+
 ### `test-adapters.mjs` — the injected-request suite
 
 Two layers: `makeCtx()` (`:79-92`) builds a `CollectContext`-shaped object with a **frozen
