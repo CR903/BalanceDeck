@@ -1,2 +1,2 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核查原型独立性（主干零改动）、测量数据是否真实取证而非估算"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查原型未引用pet3d等待删模块、无双向依赖"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核查holo断言真加载源码、弄坏验证、WebGL兜底有效、5皮肤逐个取证"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查三层口径一致：HOLO_VIEW尺寸/命中区/dock-hide在holo形态下端到端通"}

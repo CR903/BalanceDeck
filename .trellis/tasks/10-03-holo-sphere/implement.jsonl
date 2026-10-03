@@ -1,2 +1,2 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "原型只在真机双平台取证才算数（沙盒SwiftShader仅参考）；out非src、DPR逐位比对等取证纪律同样适用"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "HUD浮层与WebGL场景分层（DOM屏幕空间vs场景图），命中/穿透口径留给主干化阶段"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "主干化需走查帧率/显存封顶；WebGL失败兜底；改src后必须build再跑electron QA"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "holo跨主进程(窗口尺寸)/渲染层(场景+HUD)/共享层(pet-view)三层，命中/穿透口径需同步"}
