@@ -718,3 +718,39 @@ source: 控制台（精确） + API · 本机凭据(…9dFe)
       退役环境变量（`BD_PET` 等）只打说明行
 - [x] **文档四件套**：README / CONTEXT / DESIGN 去人物章节（DESIGN 管线两节转为
       历史引用块）；TASKS 补本轮
+
+## 2026-10-04 第二十五轮：全息球删除 + 收起态全屏水满（`10-03-holo-sphere` 水满 pivot）
+
+分支上已落地的全息球（`src/renderer/src/holo/` + three 依赖 + `HOLO_VIEW` 双形态判定 +
+相关 uitest/shots）**整体删除**（Q1 拍板），回到干净 56 小球再做水满；用户实测原话：
+"太大、脱离产品、不起重要意义"。进度改由球内全屏水体表达，外圈进度环退役。
+PRD / 设计 / 执行计划在 `.trellis/tasks/10-03-holo-sphere/`。
+
+- [x] **步 0 holo 删除**：`holo/` 整目录、`test-holo.mjs`、`three`/`@types/three`、
+  three chunk、`HOLO_VIEW`/`petFormFor`/`viewFor` 双形态判定、`ui:pet-form` 通道、
+  相关 uitest/shots/ballshot 键帧、`--holo-*` 令牌一并删除（holo 在结构侧
+  未留专节：HEAD 的 `test-structure.mjs` 止于 J，本轮新增的 K 门是水满的新断言）；
+  `grep -ri "holo\|three" src/ scripts/` 零残留（`prototype/holo/` 仅留作原型参考）；
+  `typecheck` + `npm test`（19 套件）绿
+- [x] **步 1 水满主体**：删 `dot-ring` SVG + 环色规则（`data-ring` kind 探针保留）；
+  球盘内全屏水体（clip 圆 r=17 → r=27，液面公式 `45-level×34` → `55-level×54`）；
+  水色按 `lvl-*` 走 `--ok/--warn/--danger`（与托盘/卡片同一套 `shared/levels` 阈值）；
+  读数/角标保留；`!isPlan`/`pct==null` 画素盘（绝不画假水位）
+- [x] **步 2 波浪真实化**：三层错速波（2.2/28 快 / 1.6/36 慢反向 / 0.9/18 细纹，
+  位移取波长整数倍无缝）+ 液面 1px 高光线（与 A 层同参数同动画）+ 水底深度罩
+  （`--water-deep`，深底浅顶）；CSS 位移循环（不逐帧重算 `d`）；
+  暂停仅三处：hidden 相位 / 页面不可见（`doc-hidden` + `visibilitychange`）/ reduced-motion
+- [x] **步 3 贴边水柱**：隐藏态水渍 pill 改为水柱 —— 左右 4×56 竖柱（液高从底起）/
+  上下 56×4 横槽（液宽从左起），几何归 `shared/fluid.waterColumn`（与 `peekHitbox`
+  逐位一致，命中区即柱体）；柱内液 = 同一液位 + 柱顶小波浪（周期 4px 正弦，
+  横槽透过 3px 竖缝看前缘涌动）+ 水色跟 `lvl`；morph 关键帧与计时沿用 dock-hide
+- [x] **步 4 皮肤水体令牌**：`--water-foam/--water-deep` 逐皮肤调色 + `:root` 兜底
+  （外部皮肤没写时退化成平涂，不断水）；5 皮肤走查截图各异
+- [x] **步 5 测试与文档**：`test-fluid` 44 → 56 项（水柱几何 + 同源，弄坏验证 4 红）；
+  `test-structure` 新增 K 门 27 项（环退役/三层波/位移无缝/令牌/水柱同形/三处暂停/clip+液面公式，
+  逐条弄坏验证）；uitest 球心/液面/水柱断言改查水（`petWaterLevel` 液面=percent 逐值 +
+  水色=lvl 令牌逐位，`petWaterColumn` 隐藏态柱高/波浪/唤出）；DESIGN / TASKS / CONTEXT 补词条
+- [x] **验证**：`typecheck`、`npm test` 全绿；`--ballshot` 5 皮肤出图走查；
+  `--uitest`（`BD_DOCK_FAST=1`）水相关键全绿（`petBallCenterValue` / `petRingAlwaysOn` /
+  `petWaterLevel` / `petWaterColumn` / `dockFluidLevel` / `dockFluidHidden` /
+  `petNoRingOnBalance` / `petWinLabelBelow` / `petWindowCycle`）

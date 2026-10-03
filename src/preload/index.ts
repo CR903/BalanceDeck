@@ -142,7 +142,7 @@ const api = {
   /** 系统登录项里是否残留本应用（本开关无法移除，需用户手动清理） */
   hasForeignLoginItem: (): Promise<boolean> => ipcRenderer.invoke('autostart:foreign'),
 
-  // ─── 收起态 2D 小圆环悬浮球 ──────────────────────────────────────────────
+  // ─── 收起态 2D 小水球悬浮球 ──────────────────────────────────────────────
   /** 右键菜单：把菜单模型交给主进程弹原生菜单，回传选中项 id（未选中返回 null） */
   petMenu: (model: PetMenuModel): Promise<string | null> => ipcRenderer.invoke('pet:menu', model),
   /** 总在最前开关 */

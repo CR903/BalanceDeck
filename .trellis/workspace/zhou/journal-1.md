@@ -99,3 +99,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 水球 pivot：全屏水满 + 贴边水柱
+<!-- trellis-session: v=2 fp=528064ee9ba946e6 -->
+
+**Date**: 2026-10-04
+**Task**: 水球 pivot：全屏水满 + 贴边水柱
+**Branch**: `feat/holo-sphere`
+
+### Summary
+
+holo 全息球太大下掉，收起态回 56 小球：删 holo/ + three + HOLO_VIEW 双形态，去外圈进度环改全屏水满（液位=percent，水色跟 lvl，数字/图标保可读），三层错速波常翻滚（hidden/不可见/reduced-motion 暂停），贴边水渍改竖柱/横槽水柱（几何与 peekHitbox 同源），5 皮肤水体令牌各异。校验通过：uitest 160/160，npm test 全绿（fluid 56/structure 144），变异抽查有牙，shots 29 张。usagePredict.ts 改动排除在提交外另起任务；prototype/ 仅参考不进构建。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f7fb0d1` | feat(ball): 小圆球全屏水满 + 贴边水柱 |
+| `11b3313` | docs(task): 水球 pivot 规划 |
+
+### Status
+
+[OK] **Completed**

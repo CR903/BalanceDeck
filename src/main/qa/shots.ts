@@ -92,7 +92,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('.advanced')?.scrollIntoView({block:'center'})")
   await sleep(500)
   await shoot('6-settings-advanced')
-  // ─── 收起态：2D 小圆环（唯一的形态）─────────────────
+  // ─── 收起态：2D 小水球（唯一的形态）─────────────────
   const backBtn = "[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()"
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
   /**
@@ -118,11 +118,11 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(backBtn)
   await sleep(500)
 
-  // ① 小圆环（56×56，纯 DOM）。
+  // ① 小水球（56×56，纯 DOM，球内水体 + 环心读数）。
   await exec(collapseBtn)
   await settle(BALL_VIEW)
   await shoot('5-ball', { frames: 3 })
-  // 各皮肤下的圆环（环色/底色都走令牌，逐皮肤必须都对）
+  // 各皮肤下的小水球（水色/底色都走令牌，逐皮肤必须都对）
   for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
     await exec(`window.api.setSkin('${id}')`)
     await sleep(1100)

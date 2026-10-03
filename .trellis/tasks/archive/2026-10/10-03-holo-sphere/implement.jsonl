@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "主干化需走查帧率/显存封顶；WebGL失败兜底；改src后必须build再跑electron QA"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "holo跨主进程(窗口尺寸)/渲染层(场景+HUD)/共享层(pet-view)三层，命中/穿透口径需同步"}

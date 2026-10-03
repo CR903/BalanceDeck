@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核查原型独立性（主干零改动）、测量数据是否真实取证而非估算"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查原型未引用pet3d等待删模块、无双向依赖"}

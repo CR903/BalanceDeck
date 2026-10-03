@@ -5,7 +5,7 @@ import { BALL_VIEW } from '../shared/pet-view'
 import { createDockHide, type DockPersisted } from './dockHide'
 import type { DockEdge } from '../shared/dock-hide'
 
-// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 2D 小圆环。
+// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 2D 小水球。
 // 位置持久化在 userData/state.json。
 //
 // 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view）：
@@ -16,12 +16,12 @@ import type { DockEdge } from '../shared/dock-hide'
 // 人物形态已下线（10-03-remove-human）：窗口恒 56×56，不再有形态分支。
 
 const EXPANDED = { width: 384, height: 600 }
-/** 收起态：2D 小圆环（唯一的收起形态；56×56，环心一个数，无 WebGL） */
+/** 收起态：2D 小水球（唯一的收起形态；56×56，全屏水体 + 环心一个数，无 WebGL） */
 const COLLAPSED_BALL = BALL_VIEW
 /** 是否总在最前（可关闭；关闭后不再悬浮于其他窗口之上） */
 let alwaysOnTop = true
 
-/** 收起态目标尺寸：恒为 2D 小圆环（人物形态已下线，不再有形态分支） */
+/** 收起态目标尺寸：恒为 2D 小水球（人物形态已下线，不再有形态分支） */
 function collapsedTarget(): { width: number; height: number } {
   return COLLAPSED_BALL
 }
@@ -353,7 +353,7 @@ export function createOverlay(): BrowserWindow {
       // 隐藏/非聚焦窗口的 setTimeout 会做 intensive throttling（1 分钟以上的
       // 定时器被降到最低频率）。定时播报的间隔是 1 小时，被节流后就无法保证
       // 「到点播报」——而且这个失败是静默的：定时器仍会触发，只是可能晚很多，
-      // 界面上看不出任何异常。收起态小圆环的数字动画走 rAF（切窗口时暂停重排），
+      // 界面上看不出任何异常。收起态小水球的数字动画走 rAF（切窗口时暂停重排），
       // 语音提醒走的是 setTimeout 自重排，且触发后要发网络请求，时序不能被压。
       backgroundThrottling: false
     }

@@ -1,4 +1,4 @@
-// --ballshot：只拍收起态 2D 小圆环，十几秒出图。
+// --ballshot：只拍收起态 2D 小水球，十几秒出图。
 //
 // 人物形态已下线（10-03-remove-human）：BD_PET / BD_PET_ID / BD_PETS / BD_ONLY /
 // BD_ISOLATE / BD_TOGGLE / BD_DEBUG_RING / BD_SETTINGS 全部退役 —— 它们都读 3D 场景
@@ -24,7 +24,7 @@ export async function runBallshot(): Promise<void> {
     })
     for (const k of RETIRED) {
       if (process.env[k] !== undefined) {
-        process.stdout.write(`⚠ ${k} 已随人物形态下线（10-03-remove-human），本次忽略，只拍 2D 小圆环。\n`)
+        process.stdout.write(`⚠ ${k} 已随人物形态下线（10-03-remove-human），本次忽略，只拍 2D 小水球。\n`)
       }
     }
     await new Promise((r) => setTimeout(r, 9000))
@@ -63,7 +63,7 @@ export async function runBallshot(): Promise<void> {
                win: [window.innerWidth, window.innerHeight],
                stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
                // 覆盖层实际占位（R8）：任一元素越出窗口就是被 .petball 的 overflow:hidden 切了
-               // 2D 小圆环是 56×56 窗口里的唯一内容，也列进来核对它没被切
+               // 2D 小水球是 56×56 窗口里的唯一内容，也列进来核对它没被切
                // .petball-confirm 是最容易越界的一个
                overlay: [...document.querySelectorAll('.petball-fallback,.petball-bubble,.petball-confirm,.petball-badge,.petball-toast')]
                  .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),

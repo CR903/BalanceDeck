@@ -108,3 +108,50 @@ export function pillBox(
       return { x: (w - len) / 2, y: 0, width: len, height: peek }
   }
 }
+
+/**
+ * 贴边水柱（10-03-holo-sphere 水满 pivot：隐藏态的水渍 pill 改为水柱）。
+ *
+ * 水柱占满整条可见痕迹 —— 几何与 dock-hide.ts 的 peekHitbox **逐位一致**
+ * （左右边：PEEK 宽 × 满高竖柱；上下边：满宽 × PEEK 高横槽），柱内液高/液宽 =
+ * 同一 fluidLevel(pct)，柱顶一条小波浪（渲染层），水色同样跟 `lvl`。
+ * 命中区仍是主进程按 peekHitbox 覆盖的那一条：看得见的柱子整根可点，
+ * 不存在「柱子宽、能点的窄」的半态。
+ *
+ * 为什么另起一个函数而不是让渲染层直接调 peekHitbox：方向是视图才需要的
+ * 信息（竖柱的液高从底起、横槽的液宽从左起，CSS 按 `vertical` 分两套摆），
+ * 而「柱子占满痕迹」这句口径要有单测钉住 —— 钉在共用实现上，不钉在 CSS 声明上。
+ *
+ * 非法输入回 null（与 pillBox 同纪律）：调用方回退到「不画柱子只留命中区」，
+ * 不凭空摆一个错位水柱。
+ */
+export interface WaterColumn {
+  x: number
+  y: number
+  width: number
+  height: number
+  /** true = 左右边的竖柱（液高从底起）；false = 上下边的横槽（液宽从左起） */
+  vertical: boolean
+}
+
+export function waterColumn(
+  edge: DockEdge,
+  size: Size,
+  peek: number = PEEK
+): WaterColumn | null {
+  const w = size?.width
+  const h = size?.height
+  if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return null
+  if (!Number.isFinite(peek) || !(peek > 0)) return null
+  switch (edge) {
+    case 'left':
+      return { x: w - peek, y: 0, width: peek, height: h, vertical: true }
+    case 'right':
+      return { x: 0, y: 0, width: peek, height: h, vertical: true }
+    case 'top':
+      return { x: 0, y: h - peek, width: w, height: peek, vertical: false }
+    case 'bottom':
+      return { x: 0, y: 0, width: w, height: peek, vertical: false }
+  }
+  return null
+}
