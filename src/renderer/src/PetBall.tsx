@@ -3,6 +3,7 @@ import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/ty
 import { type PetId, type PetState } from '../../shared/pet'
 import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
+import { level as fluidLevel, type FluidPhase } from '../../shared/fluid'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank, worstWindow } from './read-model'
@@ -56,6 +57,22 @@ const COUNTUP_MS = 600
 const CONFIRM_BUBBLE_H = 49
 
 /**
+ * 波浪路径（水满进度的液面）：56 viewBox 内一条正弦液面 + 两侧下沉封口。
+ * 幅 2.2 / 波长 28；phase 错开的两层以 1:1.6 的速度反向漂（PRD R9 双层错速）。
+ * 纯视图构造（SVG 形状），共享契约（液位/相位/水渍几何）归 shared/fluid.ts。
+ */
+function waveD(surfaceY: number, phase: number): string {
+  const A = 2.2
+  const L = 28
+  const parts: string[] = [`M -4 ${surfaceY.toFixed(2)}`]
+  for (let x = -4; x <= 60; x += 4) {
+    parts.push(`L ${x} ${(surfaceY + A * Math.sin(((x + phase) / L) * Math.PI * 2)).toFixed(2)}`)
+  }
+  parts.push('L 60 60 L -4 60 Z')
+  return parts.join(' ')
+}
+
+/**
  * 中心读数的两态（R5 的核心分离：**显示值 ≠ 目标值**）：
  *   · `lit` —— 非数值（`!` 采集失败 / `—` 无数据 / `…` 快照未到位 / `••••` 打码余额）
  *              直接落定，**结构上**进不了数字动画 —— hideBalance 的余额在构造 reading
@@ -95,6 +112,19 @@ export interface PetBallProps {
   alertMinutes?: number
   /** 点「好的」：确认最近播的那一批，停止重复 */
   onConfirmAlert?: () => void
+  /**
+   * 是否已藏到只剩痕迹（主进程推，App 订阅 dock:hidden）。
+   * 痕迹态下单击 = 唤出（dock:reveal）而不是展开 —— 痕迹上没有可读内容，
+   * 直接展开会跳过"滑出确认"这一步，而触屏/无 hover 设备靠的就是这次点击。
+   */
+  dockHidden?: boolean
+  /**
+   * 流体相位 + 贴边（主进程 dock:fluid 推，App 订阅后透传）。
+   * 渲染层只切 CSS 类、不算几何（几何唯一来源仍是 shared/dock-hide + shared/fluid）；
+   * 非法值按 edge-visible 画整球 —— 默认安全态必须是"看得见的整球"而不是水渍。
+   */
+  fluidPhase?: string
+  fluidEdge?: string | null
 }
 
 export function PetBall({
@@ -109,7 +139,10 @@ export function PetBall({
   notice,
   alertText,
   alertMinutes = 0,
-  onConfirmAlert
+  onConfirmAlert,
+  dockHidden = false,
+  fluidPhase = 'edge-visible',
+  fluidEdge = null
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const hitRef = useRef<HTMLDivElement | null>(null)
@@ -529,6 +562,41 @@ export function PetBall({
    */
   const dot2d = !figure || failed
 
+  // ─── 流体隐藏的呈现相位（R8/R9 + design Fluid 节）─────────────────────────
+  //
+  // 主进程 dockHide 状态机经 dock:fluid 推送相位，这里只切 CSS 类 ——
+  // 几何（边/偏移/水渍矩形）与时序（150/300/80/400）归 shared/fluid.ts，
+  // 位移仍走主进程 setPosition 步进（OS 级遮挡正确），morph 与位移串行不重叠。
+  const fluid: FluidPhase =
+    fluidPhase === 'absorbing' || fluidPhase === 'hidden' || fluidPhase === 'revealing'
+      ? fluidPhase
+      : 'edge-visible'
+  const fluidEdgeAttr =
+    fluidEdge === 'right' || fluidEdge === 'top' || fluidEdge === 'bottom' ? fluidEdge : 'left'
+  /** 水满只在套餐类挂波浪（余额类保持素盘）；算不出比例（pct == null）也不挂假液位 */
+  const showWaves = !figure && !!s && isPlan(s) && pct != null
+  const fluidLvl = showWaves ? fluidLevel(pct) : 0
+  // 液面在 56 viewBox 里的高度：clip 圆 r=17（圆心 28,28）→ 顶 11 / 底 45
+  const surfaceY = 45 - fluidLvl * 34
+  const waveA = useMemo(() => waveD(surfaceY, 0), [surfaceY])
+  const waveB = useMemo(() => waveD(surfaceY, 14), [surfaceY])
+
+  // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
+  // 把 goo 定在某一 morph 帧并暂停动画，`'off'` 恢复 live。纯呈现层冻结 ——
+  // 返回值是 void（结构化克隆安全），与 __bd_ball 的数据钩子分开。
+  useEffect(() => {
+    const w = window as unknown as { __bd_fluid_freeze?: (stage: string) => void }
+    w.__bd_fluid_freeze = (stage: string) => {
+      const goo = document.querySelector('.petball-fallback')
+      if (!goo) return
+      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain') goo.setAttribute('data-freeze', stage)
+      else goo.removeAttribute('data-freeze')
+    }
+    return () => {
+      delete w.__bd_fluid_freeze
+    }
+  }, [])
+
   // ─── 数字递增（R5）：显示值 ≠ 目标值 ───────────────────────────────────────
   /** 当前显示值（**渲染就读它**）；数值动画逐帧改写它 */
   const display = useRef(0)
@@ -729,6 +797,11 @@ export function PetBall({
     press.current = { down: false, moved: false, x: 0, y: 0 }
     if (wasMoved || cancel) onDragEnd()
     else if (!renaming) {
+      // 痕迹态下单击 = 唤出（主进程滑出到贴边全可见），不展开（R3：无 hover 设备靠点击唤出）
+      if (dockHidden) {
+        window.api.dockReveal()
+        return
+      }
       // 点击 = 立即展开。挥手动画**不阻塞**：等 1.5s 动画播完再展开，既是体验问题
       // （点一下要等一秒半），也会让 UI 断言在 700ms 的等待窗口里读不到展开后的窗口。
       // 球形态没有人可挥（2026-09-27 修：原来无条件挥手），但**展开照常**。
@@ -828,8 +901,10 @@ export function PetBall({
           count > 1 || winCount > 1 ? ' · 滚轮：上下切时限，左右切供应商' : ''
         }`
 
-  const tooltip = s
-    ? `${s.name}${ballHint}${pct != null ? ` · ${fmtPercent(pct)}` : ''}${
+  const tooltip = dockHidden
+    ? '悬浮球已贴边隐藏 · 单击唤出 · 拖动移动'
+    : s
+      ? `${s.name}${ballHint}${pct != null ? ` · ${fmtPercent(pct)}` : ''}${
         isStale(s)
           ? `（${s.dataQuality === 'cached' ? '缓存数据 · ' + (dataTime(s) ? new Date(dataTime(s)!).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '') : '本机估算'}）`
           : ''
@@ -876,7 +951,55 @@ export function PetBall({
         // ⚠ 没有快照时是 ''（既非套餐也非余额 —— 此时 L1 本来就不画 SVG），不是 'balance'：
         //   写成 'balance' 会让断言在「一个供应商都没有」时照样绿（track 本来就没有），
         //   那是标签与机制对不上的永真兜底。
-        <div className="petball-fallback" ref={fallbackRef} data-ring={s ? (isPlan(s) ? 'plan' : 'balance') : ''}>
+        <div
+          className="petball-fallback"
+          ref={fallbackRef}
+          data-ring={s ? (isPlan(s) ? 'plan' : 'balance') : ''}
+          data-fluid={fluid}
+          data-edge={fluidEdgeAttr}
+        >
+          {/* 流体三元素（R2/R3 + design Fluid 节）：渐变球盘 + 液桥 blob + 贴边水渍 pill。
+              挂 filter: url(#petball-goo) 的只有这一层 —— 环/数字/标记在它之外，
+              读数永远 crisp（goo 只融合形状，不糊文字）。
+              滤镜区裁到 56×56 内（filter x/y/width/height），避免全屏 blur 开销。 */}
+          <div className="petball-goo" aria-hidden="true">
+            <svg className="goo-defs" width="0" height="0" aria-hidden="true">
+              <defs>
+                <filter
+                  id="petball-goo"
+                  x="0"
+                  y="0"
+                  width="56"
+                  height="56"
+                  filterUnits="userSpaceOnUse"
+                  colorInterpolationFilters="sRGB"
+                >
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
+                  <feColorMatrix
+                    in="blur"
+                    mode="matrix"
+                    values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7"
+                    result="goo"
+                  />
+                  <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+                </filter>
+                <clipPath id="fluid-clip">
+                  <circle cx="28" cy="28" r="17" />
+                </clipPath>
+              </defs>
+            </svg>
+            <div className="fluid-disc" />
+            {showWaves && (
+              <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
+                <g clipPath="url(#fluid-clip)">
+                  <path d={waveA} className="fluid-wave fluid-wave-a" />
+                  <path d={waveB} className="fluid-wave fluid-wave-b" />
+                </g>
+              </svg>
+            )}
+            <div className="fluid-bridge" />
+            <div className="fluid-pill" />
+          </div>
           {/* 环的三层判定（缺一层就少画一层，不合并成一个大布尔）：
               L1 只有**套餐**（plan）供应商有环 —— 充值余额连轨道都不画，只留素圆盘 + 金额
                  （判定与主卡片同一个 isPlan()，卡片说余额、球不会说套餐）

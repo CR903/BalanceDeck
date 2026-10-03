@@ -113,6 +113,17 @@ export default function App(): React.JSX.Element {
   const [petOn, setPetOn] = useState(true)
   /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
   const [alwaysTop, setAlwaysTop] = useState(true)
+  /** 贴边自动隐藏（ui:dockHide，默认开；关掉即回现行行为） */
+  const [dockHide, setDockHide] = useState(true)
+  /** 是否已藏到只剩痕迹（主进程推）：此时点击走唤出而非展开 */
+  const [dockHidden, setDockHidden] = useState(false)
+  /**
+   * 流体相位 + 贴边（主进程 dock:fluid 推，渲染层只切 CSS 类）。
+   * 相位不在四项内时按 edge-visible 画整球（preload 已复验，这里再守一次 ——
+   * 渲染层是信任边界之外，默认安全态必须是"看得见的整球"而不是水渍）。
+   */
+  const [fluidPhase, setFluidPhase] = useState('edge-visible')
+  const [fluidEdge, setFluidEdge] = useState<string | null>(null)
   /** 语音播报开关（ui:voiceOn，默认关）—— **已下线**，播报改由 ui:ttsOn 接管。
    *  读一次只为把旧配置迁到 ui:ttsOn（新值优先，键留着不动），不再有 setter：
    *  留一个能写却没人听的开关，就是让用户以为设置生效了。 */
@@ -295,6 +306,12 @@ export default function App(): React.JSX.Element {
     setAlwaysTop(on)
     window.api.setAlwaysOnTop(on)
     void window.api.setExtras({ 'ui:alwaysOnTop': on ? '1' : '0' })
+  }
+  /** 贴边自动隐藏（关掉即回现行行为：主进程取消计时/动画并回到全可见） */
+  const toggleDockHide = (on: boolean): void => {
+    setDockHide(on)
+    window.api.setDockHide(on)
+    void window.api.setExtras({ 'ui:dockHide': on ? '1' : '0' })
   }
   /** 某个供应商要不要播报（写进 ui:voiceMuted 的「不播报」列表） */
   const toggleVoiceFor = (id: string): void => {
@@ -494,7 +511,8 @@ export default function App(): React.JSX.Element {
       status: petMeta(p.id).desc,
       pets: PETS.map((x) => ({ id: x.id, name: x.name, checked: x.id === p.id })),
       alwaysOnTop: alwaysTop,
-      hideBalance
+      hideBalance,
+      dockHide
     }
     const picked = await window.api.petMenu(model)
     if (!picked) return null
@@ -506,6 +524,8 @@ export default function App(): React.JSX.Element {
       setAlwaysTop(next)
       window.api.setAlwaysOnTop(next)
       void window.api.setExtras({ 'ui:alwaysOnTop': next ? '1' : '0' })
+    } else if (picked === 'toggle-dock') {
+      toggleDockHide(!dockHide)
     } else if (picked === 'toggle-balance') {
       const next = !hideBalance
       setHideBalance(next)
@@ -523,12 +543,14 @@ export default function App(): React.JSX.Element {
   }
   useEffect(() => {
     void window.api.getExtras([
-      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted'
+      'ui:hideBalance', 'ui:pet', 'ui:petState', 'ui:alwaysOnTop', 'ui:voiceMuted', 'ui:dockHide'
     ]).then((e) => {
       setHideBalance(e['ui:hideBalance'] === '1')
       // 默认是 2D 小圆环；只有用户显式开启（'1'）才是个性人物形态
       setPetOn(e['ui:pet'] === '1')
       setAlwaysTop(e['ui:alwaysOnTop'] !== '0')
+      // 贴边隐藏默认开：extras:get 对缺失键给 ''，判 !== '0'（与主进程 primePrefs 同口径）
+      setDockHide(e['ui:dockHide'] !== '0')
       try {
         const muted = JSON.parse(e['ui:voiceMuted'] || '[]') as unknown
         setVoiceMuted(Array.isArray(muted) ? muted.filter((x): x is string => typeof x === 'string') : [])
@@ -549,6 +571,32 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     window.api.setPetFigure(petOn)
   }, [petOn])
+
+  // prefers-reduced-motion 上报给主进程（R5）：只降级隐藏动画，不降级计时。
+  // matchMedia 读的是系统设置，变了就推一次；主进程侧只存布尔。
+  useEffect(() => {
+    const mq =
+      typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    if (!mq) return
+    window.api.setReducedMotion(mq.matches)
+    const onChange = (ev: MediaQueryListEvent): void => window.api.setReducedMotion(ev.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  // 隐藏态订阅（主进程推）：痕迹态下点击走唤出而非展开
+  useEffect(() => window.api.onDockHidden(setDockHidden), [])
+  // 流体相位订阅（主进程推）：只切呈现类，不算几何
+  useEffect(
+    () =>
+      window.api.onDockFluid((phase, edge) => {
+        setFluidPhase(
+          phase === 'absorbing' || phase === 'hidden' || phase === 'revealing' ? phase : 'edge-visible'
+        )
+        setFluidEdge(edge)
+      }),
+    []
+  )
 
   const toggleHideBalance = (): void => {
     const next = !hideBalance
@@ -1050,6 +1098,9 @@ export default function App(): React.JSX.Element {
             pet={pet}
             figure={petOn}
             hideBalance={hideBalance}
+            dockHidden={dockHidden}
+            fluidPhase={fluidPhase}
+            fluidEdge={fluidEdge}
             onExpand={doExpand}
             onDragStart={(grab) => window.api.dragStart(grab)}
             onDragEnd={() => window.api.dragEnd()}
@@ -1073,6 +1124,8 @@ export default function App(): React.JSX.Element {
             onTogglePetBall={togglePetBall}
             alwaysTop={alwaysTop}
             onToggleAlwaysTop={toggleAlwaysTop}
+            dockHide={dockHide}
+            onToggleDockHide={toggleDockHide}
             ttsOn={ttsOn}
             onToggleTts={toggleTts}
             servicePreset={ttsPreset}

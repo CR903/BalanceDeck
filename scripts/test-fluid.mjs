@@ -1,0 +1,104 @@
+// shared/fluid.ts 行为测试（纯函数，node 直接跑）
+// 用法：node scripts/test-fluid.mjs
+//
+// 悬浮球流体隐藏：时序常量/液位映射/水渍几何/相位映射（吸入/汇聚/水渍三元素与
+// dock:fluid 通道的唯一口径。渲染层与主进程状态机共用同一实现，不各自硬编码）。
+
+import { loadTs } from './lib/load-ts.mjs'
+
+const fluid = await loadTs('src/shared/fluid.ts')
+const {
+  ABSORB_STRETCH_MS,
+  ABSORB_MERGE_MS,
+  ABSORB_SETTLE_MS,
+  ABSORB_TOTAL_MS,
+  REVEAL_MS,
+  PILL_LEN,
+  FLUID_PHASES,
+  isFluidPhase,
+  fluidForPhase,
+  level,
+  pillBox
+} = fluid
+
+let pass = 0
+let fail = 0
+function eq(actual, expected, label) {
+  const a = JSON.stringify(actual)
+  const e = JSON.stringify(expected)
+  if (a === e) {
+    pass++
+    console.log(`  ✓ ${label}`)
+  } else {
+    fail++
+    console.log(`  ✗ ${label}\n      实际: ${a}\n      期望: ${e}`)
+  }
+}
+function ok(cond, label) {
+  eq(!!cond, true, label)
+}
+
+console.log('用例 1：时序常量口径（PRD R5 + design Fluid 节）')
+eq(ABSORB_STRETCH_MS, 150, '拉伸 150ms ease-out')
+eq(ABSORB_MERGE_MS, 300, '桥接合并 300ms')
+eq(ABSORB_SETTLE_MS, 80, 'pill 定形 + 微回弹 80ms')
+eq(ABSORB_TOTAL_MS, 530, '吸入总 530ms（≈ PRD ~500ms）')
+eq(ABSORB_TOTAL_MS, ABSORB_STRETCH_MS + ABSORB_MERGE_MS + ABSORB_SETTLE_MS, '总数 = 三段之和（不手算 530）')
+eq(REVEAL_MS, 400, '汇聚反向 400ms')
+ok(REVEAL_MS < ABSORB_TOTAL_MS, '汇聚快于吸入（退出更快，与滑入/滑出同方向）')
+eq(PILL_LEN, 20, '水渍沿边沿约 20px')
+
+console.log('用例 2：液位映射（clamp + 一位小数粒度，无浮点抖动）')
+eq(level(0), 0, '0% → 0')
+eq(level(100), 1, '100% → 1')
+eq(level(10), 0.1, '10% → 0.1')
+eq(level(13.7), 0.137, '13.7% → 0.137（与环心读数逐位一致）')
+eq(level(50), 0.5, '50% → 0.5')
+eq(level(-5), 0, '负数钳到 0')
+eq(level(150), 1, '超 100 钳到 1')
+eq(level(NaN), 0, 'NaN → 0（守卫，不是数据口径）')
+eq(level(Infinity), 0, 'Infinity → 0')
+eq(level('50'), 0, '非数字 → 0')
+eq(level(undefined), 0, '缺失 → 0')
+eq(level(33.35), 0.334, '33.35 → 0.334（一位小数粒度：33.35*10=333.5→334）')
+ok(level(13.7) === level(13.7), '同样输入永远同样输出（CSS 高度不抖）')
+
+console.log('用例 3：水渍几何（56×56 窗口局部坐标，沿边沿居中）')
+eq(pillBox('left', { width: 56, height: 56 }), { x: 52, y: 18, width: 4, height: 20 }, '左：窗口右侧 4×20 居中')
+eq(pillBox('right', { width: 56, height: 56 }), { x: 0, y: 18, width: 4, height: 20 }, '右：窗口左侧 4×20 居中')
+eq(pillBox('top', { width: 56, height: 56 }), { x: 18, y: 52, width: 20, height: 4 }, '上：窗口底部 20×4 居中')
+eq(pillBox('bottom', { width: 56, height: 56 }), { x: 18, y: 0, width: 20, height: 4 }, '下：窗口顶部 20×4 居中')
+// 痕迹条同源：pill 的探出边与 dock-hide.peekHitbox 的痕迹条贴同一条边
+{
+  const shared = await loadTs('src/shared/dock-hide.ts')
+  const left = pillBox('left', { width: 56, height: 56 })
+  const peek = shared.peekHitbox('left', { width: 56, height: 56 })
+  ok(left && left.x === peek.x && left.width === peek.width, '左：pill 探出边与痕迹条同源（x/width 一致）')
+  const bottom = pillBox('bottom', { width: 56, height: 56 })
+  const peekB = shared.peekHitbox('bottom', { width: 56, height: 56 })
+  ok(bottom && bottom.y === peekB.y && bottom.height === peekB.height, '下：pill 探出边与痕迹条同源（y/height 一致）')
+}
+
+console.log('用例 4：水渍几何守卫（坏输入回 null，不摆错位水渍）')
+eq(pillBox('left', { width: NaN, height: 56 }), null, 'NaN 尺寸 → null')
+eq(pillBox('left', { width: 0, height: 56 }), null, '零宽 → null')
+eq(pillBox('left', { width: 56, height: 56 }, NaN), null, 'NaN 长度 → null')
+eq(pillBox('left', { width: 56, height: 56 }, 20, -1), null, '负探出 → null')
+eq(pillBox('left', { width: 56, height: 56 }, 60), null, '长度超窗高 → null（装不下）')
+eq(pillBox('top', { width: 56, height: 56 }, 60), null, '长度超窗宽 → null')
+
+console.log('用例 5：相位映射（DockPhase → FluidPhase，唯一口径）')
+eq(fluidForPhase('hiding'), 'absorbing', 'hiding → absorbing（morph 中，位移未始）')
+eq(fluidForPhase('hidden'), 'hidden', 'hidden → hidden（水渍态）')
+eq(fluidForPhase('dwell-reveal'), 'hidden', 'dwell-reveal → hidden（还在痕迹上）')
+eq(fluidForPhase('revealing'), 'revealing', 'revealing → revealing（已滑回，morph 中）')
+eq(fluidForPhase('idle'), 'edge-visible', 'idle → edge-visible')
+eq(fluidForPhase('dwell-hide'), 'edge-visible', 'dwell-hide → edge-visible（morph 还没开始）')
+eq(fluidForPhase('edge-visible'), 'edge-visible', 'edge-visible → edge-visible')
+eq(fluidForPhase('dwell-rehide'), 'edge-visible', 'dwell-rehide → edge-visible（球在全可见位）')
+eq(fluidForPhase('bogus'), 'edge-visible', '未知相位 → edge-visible（默认画整球）')
+eq(JSON.stringify(FLUID_PHASES), JSON.stringify(['edge-visible', 'absorbing', 'hidden', 'revealing']), '相位全集四项')
+ok(isFluidPhase('absorbing') && !isFluidPhase('hiding') && !isFluidPhase(''), 'isFluidPhase 只认四相位')
+
+console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
+process.exit(fail === 0 ? 0 : 1)

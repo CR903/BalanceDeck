@@ -2,6 +2,8 @@ import { BrowserWindow, screen, app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { BALL_VIEW, FIGURE_VIEW } from '../shared/pet-view'
+import { createDockHide, type DockPersisted } from './dockHide'
+import type { DockEdge } from '../shared/dock-hide'
 
 // 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成小圆环／个性人物。
 // 位置持久化在 userData/state.json。
@@ -28,7 +30,7 @@ function collapsedTarget(): { width: number; height: number } {
 }
 
 /**
- * 读取并应用启动期偏好（收起态形态 + 是否置顶）。
+ * 读取并应用启动期偏好（收起态形态 + 是否置顶 + 贴边隐藏开关）。
  * 在 createOverlay 之前 await 一次，窗口就能按最终尺寸/层级直接创建，避免闪一下。
  */
 export async function primePrefs(): Promise<void> {
@@ -38,8 +40,11 @@ export async function primePrefs(): Promise<void> {
     petFigure = pet === '1'
     const top = await getExtra('ui:alwaysOnTop')
     alwaysOnTop = top !== '0'
+    // ui:dockHide 缺省开：extras:get 对缺失键给 ''，判 !== '0'（R7）
+    const dockPref = await getExtra('ui:dockHide')
+    dockEnabled = dockPref !== '0'
   } catch {
-    // 读不到就用默认值（球形态 + 置顶）
+    // 读不到就用默认值（球形态 + 置顶 + 贴边隐藏开）
   }
 }
 
@@ -67,9 +72,195 @@ export function petWindowState(): { figure: boolean; alwaysOnTop: boolean } {
   return { figure: petFigure, alwaysOnTop }
 }
 
+/** 贴边隐藏位移异常只记一次日志（窗口关闭/退出竞态时原生调用会抛） */
+let dockMoveErrorLogged = false
+/** 贴边自动隐藏开关（extras ui:dockHide，缺省开：值 !== '0' 即开，R7） */
+let dockEnabled = true
+/** prefers-reduced-motion（渲染层 matchMedia 上报）：命中则跳动画、留计时（R5） */
+let reducedMotion = false
+/** 隐藏态命中区覆盖（窗口局部坐标）：非 null 时不采信渲染层常规上报（跨层契约） */
+let peekOverride: { x: number; y: number; width: number; height: number } | null = null
+/**
+ * 流体相位冻结（--uitest / --shots 用）：冻结期间主进程的 dock:fluid 推送被拦住，
+ * 渲染层保持当前呈现相位 —— shots 据此摆拍拉伸/桥接/水渍三帧（复用 debug:dock-freeze 模式）。
+ * 窗口位移与命中判定不受影响（只冻呈现相位，不冻状态机）。
+ */
+let fluidFrozen = false
+/** 最后一次实际推送给渲染层的流体相位（--uitest 读数；冻结时保持旧值） */
+let lastFluid: { phase: string; edge: DockEdge | null } = { phase: 'edge-visible', edge: null }
+
+/**
+ * 向渲染层推送（dock:hidden / dock:fluid / ui:collapsed）。
+ *
+ * 为什么不能裸 `win?.webContents.send`：渲染层 reload / GPU 崩溃恢复期间，
+ * send 会抛 `Render frame was disposed` —— 而调用方一半在定时器回调里
+ * （隐藏动画步进、morph 等待、唤出 morph 尾），抛出来就是主进程未捕获异常
+ * （弹框并终止应用，正是本仓反复修的那一类拖拽定时器崩溃）。
+ * 这里吞掉：推送的是**状态**不是事件 —— 启动由 syncCollapsedState 重推，
+ * 运行中下一次 setPhase 也会重推，不丢状态。
+ */
+function safeSend(channel: string, payload: unknown): void {
+  try {
+    if (!win || win.webContents.isDestroyed()) return
+    win.webContents.send(channel, payload)
+  } catch {
+    // reload / 崩溃恢复窗口：跳过这次推送
+  }
+}
+
+/**
+ * 贴边隐藏控制器（状态机 + 计时 + 动画，见 dockHide.ts）。
+ * electron 依赖全部经这里注入 —— overlay 只做窗口/屏幕/持久化的转接，
+ * 几何决策（边沿判定/隐藏偏移/痕迹命中区）仍归 shared/dock-hide.ts。
+ */
+const dock = createDockHide({
+  getBounds: () =>
+    win?.getBounds() ?? { x: 0, y: 0, width: BALL_VIEW.width, height: BALL_VIEW.height },
+  setPosition: (x: number, y: number) => {
+    // 744 崩溃的 choke 点：dockHide 的计时器链全部经这里动窗口。
+    // undefined/NaN 不得进原生 setPosition（Electron 报 conversion failure
+    // 直接弹主进程对话框）；窗口已销毁时原生调用会抛，也吞掉（只记一次）——
+    // 状态机的 landed() 校验会发现没落位并自行 abort，不停在半态。
+    if (!win || !Number.isFinite(x) || !Number.isFinite(y)) return
+    try {
+      applyingBounds = true
+      win.setPosition(Math.round(x), Math.round(y))
+    } catch (e) {
+      if (!dockMoveErrorLogged) {
+        dockMoveErrorLogged = true
+        console.error('[overlay] 贴边隐藏位移异常（已忽略）:', e)
+      }
+    } finally {
+      applyingBounds = false
+    }
+    // 注意：这里不写 state.x/state.y —— 隐藏动画逐帧走这一路，
+    // 写了就是把屏外隐藏坐标当成用户位置持久化（R6：坐标只存贴边全可见位置）。
+    // docked 全可见坐标由 dockHide 内部记，persist 经 onPersist 只写 dock 字段。
+  },
+  getWorkArea: () => {
+    const b = win?.getBounds()
+    const cx = (b?.x ?? 0) + (b?.width ?? BALL_VIEW.width) / 2
+    const cy = (b?.y ?? 0) + (b?.height ?? BALL_VIEW.height) / 2
+    // 按窗口中心挑显示器：与 snapBackToWorkArea 同一口径
+    return screen.getDisplayNearestPoint({ x: cx, y: cy }).workArea
+  },
+  isActive: () => {
+    if (!win || !state.collapsed || petFigure || !dockEnabled) return false
+    const b = win.getBounds()
+    return b.width === BALL_VIEW.width && b.height === BALL_VIEW.height
+  },
+  reducedMotion: () => reducedMotion,
+  setPeekOverride: (rect) => {
+    peekOverride = rect
+  },
+  onHiddenChange: (hidden: boolean) => {
+    safeSend('dock:hidden', hidden)
+  },
+  onFluidPhase: (phase, edge) => {
+    // morph 期命中区取并集（球起始区 ∪ pill 区）：球形态命中区本就是整窗，
+    // 并集 = 整窗 = 不覆盖（peekOverride 仍为 null，采信渲染层上报）。
+    // 隐藏落定后 enterHidden 才覆盖为痕迹条，唤出开始即清除 —— morph 窗内天然全窗可点。
+    if (fluidFrozen) return
+    lastFluid = { phase, edge }
+    safeSend('dock:fluid', { phase, edge })
+  },
+  onPersist: (d) => {
+    state.dock = d
+    persist()
+  },
+  fast: () => process.env.BD_DOCK_FAST === '1',
+  // 平台约束：macOS 可见窗口不许越过菜单栏 —— 上沿隐藏位（workArea.y - 52 < 0 的部分）
+  // setPosition 会被系统同步夹回（裸窗口探针实测：show:false 时不夹、show:true 时夹；
+  // 所以落点校验 abort 是安全网，但行为上直接拒绝：1s 停留后无事发生，不闪一下）。
+  // Windows/Linux 上沿无此约束（任务栏/顶栏不挡程序化定位），保持支持。
+  isEdgeSupported: (e) => e !== 'top' || process.platform !== 'darwin'
+})
+
+/** 贴边隐藏开关（设置页 + 右键菜单双入口，R7） */
+export function setDockHideEnabled(on: boolean): void {
+  const next = on !== false
+  if (next === dockEnabled) return
+  dockEnabled = next
+  // 关闭 → 取消计时/动画、回到贴边全可见并清 hidden（回滚到现行行为）
+  if (!next) dock.resetToVisible()
+}
+
+/** reduced-motion 上报（渲染层 matchMedia，R5） */
+export function setReducedMotionPref(on: boolean): void {
+  reducedMotion = on === true
+}
+
+/** 测试观测点：贴边隐藏状态（--uitest 用） */
+export function dockDebugState(): { phase: string; edge: DockEdge | null; hidden: boolean; fluid: string; fluidEdge: DockEdge | null } {
+  return { phase: dock.phase(), edge: dock.edge(), hidden: dock.hidden(), fluid: lastFluid.phase, fluidEdge: lastFluid.edge }
+}
+
+/** 测试驱动：把球摆到指定边沿并走真实 dragStop 路径（--uitest 用） */
+export function dockTestToEdge(edge: DockEdge): { x: number; y: number } {
+  if (!win) return { x: 0, y: 0 }
+  // 先按 dragStart 语义复位（隐藏态下回到贴边全可见）：连续摆多边时，
+  // 上一边可能还藏着，直接读隐藏坐标判边会判出 null、可重复调用就断了
+  dock.onDragStart()
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  const w = BALL_VIEW.width
+  const h = BALL_VIEW.height
+  const pos =
+    edge === 'left'
+      ? { x: wa.x, y: Math.round(wa.y + (wa.height - h) / 2) }
+      : edge === 'right'
+        ? { x: wa.x + wa.width - w, y: Math.round(wa.y + (wa.height - h) / 2) }
+        : edge === 'top'
+          ? { x: Math.round(wa.x + (wa.width - w) / 2), y: wa.y }
+          : { x: Math.round(wa.x + (wa.width - w) / 2), y: wa.y + wa.height - h }
+  applyingBounds = true
+  // 744 崩溃同类：裸 win.setPosition 不得吃非有限数（守卫与注入的 setPosition 同口径）
+  if (Number.isFinite(pos.x) && Number.isFinite(pos.y)) win.setPosition(pos.x, pos.y)
+  applyingBounds = false
+  state.x = pos.x
+  state.y = pos.y
+  persist()
+  dock.onDragStop()
+  // 同步返回摆位坐标：fast 模式下 50ms 后窗口已经藏进去了，调用方事后读 bounds
+  // 拿到的是隐藏坐标而非贴边全可见坐标（dockedX 竞态，曾让 dockHide 误红）
+  return pos
+}
+
+/** 测试驱动：喂一次光标命中翻转（--uitest 用，不依赖真实鼠标位置） */
+export function dockTestCursor(over: boolean): void {
+  dock.onCursor(over)
+}
+
+/**
+ * 测试冻结真光标翻转（--uitest dock 段用）。
+ * 合成事件动不了真光标：窗口瞬移到真光标底下时会产生一次真翻转，50ms 的 fast 停留里
+ * 它足以取消一次 dwell、或在痕迹条上直接唤回（sweep-top/dockReveal 曾因此误红）。
+ * 冻结只拦 tick → 状态机这一路；穿透（setIgnoreMouseEvents）与 debug 喂送照常工作。
+ * 真光标在解冻前后的位置不变时不补事件（tick 只在翻转瞬间调一次，本来就这样）。
+ */
+let dockCursorFrozen = false
+export function dockTestFreezeCursor(frozen: boolean): void {
+  dockCursorFrozen = frozen === true
+}
+
+/**
+ * 测试冻结流体相位推送（--uitest dock 段 / --shots 取帧用）。
+ * 冻结只拦 dock:fluid 这一路；状态机照常走（位移/命中/计时都不停），
+ * 渲染层保持当前呈现相位供截图或断言。
+ */
+export function dockTestFreezeFluid(frozen: boolean): void {
+  fluidFrozen = frozen === true
+}
+
+/** 痕迹点击（无 hover 设备）：直接滑出（R3） */
+export function dockTapPeek(): void {
+  dock.onTapPeek()
+}
+
 /** 收起态异步缩放到当前形态的目标尺寸 */
 function resizeCollapsed(): void {
   if (!win || !state.collapsed) return
+  // 形态尺寸变了：隐藏偏移与痕迹命中区都按旧尺寸算的，先复位（R5 取消条件），再按新尺寸摆
+  dock.resetToVisible()
   const b = win.getBounds()
   const target = collapsedTarget()
   const wa = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
@@ -90,6 +281,8 @@ interface PersistedState {
   x?: number
   y?: number
   collapsed?: boolean
+  /** 贴边隐藏：贴边全可见坐标仍记 x/y，这里只记边与隐藏态（R6） */
+  dock?: DockPersisted
 }
 
 let state: PersistedState = {}
@@ -174,6 +367,10 @@ export function createOverlay(): BrowserWindow {
   win.on('moved', () => {
     const b = win?.getBounds()
     if (b) {
+      // 隐藏动画/隐藏态的位置不是用户位置：不采纳（否则 state.x 存的是屏外隐藏坐标，
+      // 下一次启动夹取就按错坐标来，R6）。用户拖拽走 dragTimer 自己的 state 更新，不走这里。
+      const ph = dock.phase()
+      if (ph === 'hidden' || ph === 'hiding' || ph === 'revealing' || ph === 'dwell-reveal') return
       state.x = b.x
       state.y = b.y
       // 展开态下用户拖动卡片后，圆点锚点跟随卡片左上角（收起时圆点出现在卡片原位）
@@ -194,12 +391,20 @@ export function createOverlay(): BrowserWindow {
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'), { query }).then(() => syncCollapsedState())
   }
+  // 启动恢复：持久化的隐藏态按当前 workArea 重算偏移（R6，多显示器断开重连不漂移）
+  dock.restore(state.dock)
   return win
 }
 
 /** 窗口尺寸与渲染层状态同步：加载完成后把持久化的收起态推给渲染层 */
 function syncCollapsedState(): void {
-  win?.webContents.send('ui:collapsed', !!state.collapsed)
+  safeSend('ui:collapsed', !!state.collapsed)
+  // 启动恢复成隐藏态时渲染层刚挂载（dockHidden 默认 false）：把它推准，
+  // 否则痕迹上的单击会走展开而不是唤出
+  safeSend('dock:hidden', dock.hidden())
+  // 流体相位同理：刚挂载的渲染层默认 edge-visible，隐藏恢复后必须推成 hidden，
+  // 否则首帧画整球、一帧后才跳水渍（启动闪一下）
+  safeSend('dock:fluid', { phase: lastFluid.phase, edge: lastFluid.edge })
   // 冷启动就是收起态时，穿透轮询要在这里补上（setCollapsed 不会被调用）
   if (state.collapsed) setPetCursorWatch(true)
 }
@@ -210,6 +415,8 @@ function watchDisplays(): void {
   if (displaysWatched) return
   displaysWatched = true
   const reposition = (): void => {
+    // 显示器变化先取消隐藏计时与动画，再按现有口径回正（R1/R5 取消条件 + R6 重算偏移）
+    dock.onDisplayChange()
     const b = win?.getBounds()
     if (!win || !b) return
     const visible = screen.getAllDisplays().some((d) => {
@@ -217,14 +424,22 @@ function watchDisplays(): void {
       return b.x + b.width > wa.x && b.x < wa.x + wa.width && b.y + b.height > wa.y && b.y < wa.y + wa.height
     })
     if (visible) return
+    // 窗口已漂出所有工作区（多半是旧屏的贴边/隐藏坐标）：先清隐藏态 —— 否则 docked 仍指旧屏，
+    // 下一次唤出会把窗口飞回去；再夹回主屏，最后按新位置重判（若恰在边沿，重新起 1000ms 停留，
+    // 不替用户直接藏；展开态/开关关闭时 onDragStop 内部直接清掉）。
+    dock.resetToVisible()
     const wa = screen.getPrimaryDisplay().workArea
     const target = state.collapsed ? collapsedTarget() : EXPANDED
-    win.setBounds({
-      x: clampToWorkArea(b.x, wa.x, wa.x + wa.width - target.width),
-      y: clampToWorkArea(b.y, wa.y, wa.y + wa.height - target.height),
-      width: target.width,
-      height: target.height
-    })
+    const nb = win.getBounds()
+    const nx = clampToWorkArea(nb.x, wa.x, wa.x + wa.width - target.width)
+    const ny = clampToWorkArea(nb.y, wa.y, wa.y + wa.height - target.height)
+    applyingBounds = true
+    win.setBounds({ x: Math.round(nx), y: Math.round(ny), width: target.width, height: target.height })
+    applyingBounds = false
+    state.x = nx
+    state.y = ny
+    persist()
+    dock.onDragStop()
   }
   screen.on('display-removed', reposition)
   screen.on('display-metrics-changed', reposition)
@@ -256,6 +471,8 @@ function snapBackToWorkArea(): void {
   const nx = Math.round(clampToWorkArea(b.x, wa.x, wa.x + wa.width - b.width))
   const ny = Math.round(clampToWorkArea(b.y, wa.y, wa.y + wa.height - b.height))
   if (nx === b.x && ny === b.y) return
+  // 744 崩溃同类：裸 win.setPosition 不得吃非有限数（与注入的 setPosition 同口径）
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return
   applyingBounds = true
   win.setPosition(nx, ny)
   applyingBounds = false
@@ -270,6 +487,9 @@ let applyingBounds = false
 
 export function setCollapsed(collapsed: boolean): void {
   if (!win) return
+  // 展开/收起切换先取消隐藏计时与动画、不残留隐藏偏移（R1/R5 取消条件）——
+  // 必须在读 bounds 之前：隐藏态下读到的是屏外隐藏坐标，圆点锚点/展开原点都会跟着错。
+  dock.resetToVisible()
   state.collapsed = collapsed
   persist()
   // 收起态才开穿透轮询（球以外点击到桌面）；展开面板必须整体可点，立即停掉
@@ -301,7 +521,7 @@ export function setCollapsed(collapsed: boolean): void {
   state.x = nx
   state.y = ny
   persist()
-  win.webContents.send('ui:collapsed', collapsed)
+  safeSend('ui:collapsed', collapsed)
 }
 
 // —— 小圆点拖拽：主进程以光标位置追踪移动窗口（CSS drag-region 会吞掉 click，不可用）——
@@ -314,6 +534,8 @@ let dragErrorLogged = false
 
 export function dragStart(grab?: { x: number; y: number }): void {
   if (!win || dragTimer) return
+  // 动画与拖拽互斥：先取消隐藏计时/动画并复位到贴边全可见，再按全可见位置算拖拽偏移
+  dock.onDragStart()
   const cursor = screen.getCursorScreenPoint()
   const b = win.getBounds()
   // ⚠️ grab 来自渲染层的指针坐标：必须是有限数（NaN 会让 setPosition 抛
@@ -362,6 +584,8 @@ export function dragStop(): void {
     persist()
   }
   grabPoint = null
+  // 隐藏逻辑接在收回之后：贴边则起 1000ms 隐藏计时（R1；展开态/人物形态/开关关闭时内部直接清掉）
+  dock.onDragStop()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -387,8 +611,12 @@ export function setPetHitbox(rect: { x: number; y: number; width: number; height
 }
 
 /** 命中判定：窗口内 CSS 像素坐标 → 屏幕坐标（窗口无边框，加上窗口位置即可） */
-function cursorInsideHit(cursor: Electron.Point, b: Electron.Rectangle): boolean {
-  if (!hitbox) return false
+function cursorInsideHit(
+  cursor: Electron.Point,
+  b: Electron.Rectangle,
+  box: { x: number; y: number; width: number; height: number } | null
+): boolean {
+  if (!box) return false
   // Electron 的 getBounds / 光标点与渲染层 CSS 像素同为 DIP，直接相减即可
   const x = cursor.x - b.x
   const y = cursor.y - b.y
@@ -396,7 +624,7 @@ function cursorInsideHit(cursor: Electron.Point, b: Electron.Rectangle): boolean
   // 不留这点余量的话，贴着环边点会时灵时不灵。宁可多 3px 也不漏 —— 多出来的部分
   // 本来就在环的透明边距里，点下去仍然展开。
   const pad = 3
-  return x >= hitbox.x - pad && x <= hitbox.x + hitbox.width + pad && y >= hitbox.y - pad && y <= hitbox.y + hitbox.height + pad
+  return x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad
 }
 
 function tickCursorWatch(): void {
@@ -405,10 +633,14 @@ function tickCursorWatch(): void {
     const b = win.getBounds()
     const cursor = screen.getCursorScreenPoint()
     if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) return
-    const over = cursorInsideHit(cursor, b)
+    // 隐藏态下不采信渲染层常规上报，以痕迹条覆盖值为准（跨层契约：与隐藏偏移同源）
+    const over = cursorInsideHit(cursor, b, peekOverride ?? hitbox)
     if (over !== cursorOver) {
       cursorOver = over
       win.webContents.send('pet:cursor', over)
+      // 唤出/重藏/取消的计时都消费这次翻转（进入球体取消隐藏计时、痕迹停留唤出……）
+      // uitest dock 段冻结时拦住（真光标停在痕迹条上会直接唤回，见 dockTestFreezeCursor）
+      if (!dockCursorFrozen) dock.onCursor(over)
     }
     const ignore = !over
     if (ignore !== lastIgnore) {
@@ -446,9 +678,9 @@ export function setPetCursorWatch(on: boolean): void {
   }
 }
 
-/** 测试观测点：当前命中框（窗口内 CSS 像素） */
+/** 测试观测点：当前命中框（窗口内 CSS 像素；隐藏态下为痕迹条覆盖值） */
 export function petHitboxDebug(): { x: number; y: number; width: number; height: number } | null {
-  return hitbox
+  return peekOverride ?? hitbox
 }
 
 /** 测试观测点：穿透状态 + 窗口是否处于收起态 + 原生窗口阴影（收起态必须关，否则会露方框） */

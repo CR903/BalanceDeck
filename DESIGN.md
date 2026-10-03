@@ -228,6 +228,70 @@ GLM Coding Plan、Kimi 会员等多数**无公开余额 API**。策略：能走�
 - 更新：v1 不做自动更新。
 - 隐私：一切数据本地计算与存储，仅余额 API 请求出网；无遥测。
 
+## 7b. 悬浮球贴边自动隐藏（2026-10-03）
+
+收起态 2D 球（56×56）拖到屏幕四边松手停留 1s 后，原生窗口滑出边框、只留 4px 痕迹；
+光标在痕迹区停留 300ms 滑出恢复，离开球体 1.5s 后重藏。展开态卡片不参与。
+
+- **几何唯一来源**：`src/shared/dock-hide.ts`（纯函数：边沿判定/隐藏偏移/痕迹命中区/常量），
+  主进程状态机（`src/main/dockHide.ts`）与单测共用同一实现；渲染层不算几何。
+- **跨层契约**：隐藏态下主进程以痕迹条覆盖命中区，不采信渲染层常规上报；
+  恢复可见后重新采信。命中判定与隐藏偏移同源，否则"看得见点不着"。
+- **三把计时器**（同一时刻最多一把存活）：隐藏停留 1000ms、唤出停留 300ms、离开重藏 1500ms；
+  动画是主进程 16ms 步进（隐藏 300ms / 唤出 200ms，easeOutCubic），与 16ms 拖拽轮询互斥。
+- **取消条件**（任何一条即复位到贴边全可见）：拖拽开始、展开/收起切换、显示器变化、
+  开关关闭、隐藏计时期间光标进入球体、形态尺寸变化。
+- **落点校验**（本机实测）：macOS 上沿（菜单栏）与下沿（Dock 在底部时）都不许窗口越界，
+  对应边的隐藏会被 OS 夹回。动画落点与目标差 >1px 即算隐藏失败，回到贴边全可见 +
+  idle —— 绝不停在"相位说藏了、窗口还在原位"的半态（否则球看得见、大部分点不着）。
+  E2E 因此不断言"哪条边必须藏"（取决于用户 Dock 位置与平台），只断言"藏则位移精确、
+  拒则干净无半态，且至少一边真藏"。左/右沿在本机正常隐藏。
+- **开关默认开**：`extras.ui:dockHide`（缺失键视为开，判 `!== '0'`）+ 设置页"系统"分区 +
+  球右键原生菜单；关闭即回滚到现行行为。`prefers-reduced-motion` 下跳动画、留计时；
+  无 hover 设备点击痕迹唤出（痕迹态下单击走 `dock:reveal` 而非展开）。
+- **持久化**：`state.json` 只增 `dock: {edge, hidden}`，坐标仍存贴边全可见位置；
+  隐藏偏移每次按当前 `workArea` 重算，重启/显示器拔插不漂移。老文件无该字段视为未隐藏，零迁移。
+- **平台约束**：macOS 可见窗口不许越过菜单栏（探针实测同步夹回）——上沿在 darwin 下由
+  `isEdgeSupported` 确定性拒绝（overlay 注入，几何模块保持平台无关）；其它 OS 夹取
+  （如 Dock 摆位）由动画落点校验 `landed()` 兜底 abort。uitest sweep 在 darwin 上沿断言
+  拒绝签名（idle + edge null + 纹丝不动），其余边"藏或干净拒绝、至少一边真藏"（Dock 摆位因机器而异）。
+- **测试**：`scripts/test-dock-hide.mjs`（132 项，纯函数 + 注入依赖的真计时状态机，含 reduced-motion 真计时/逐帧步进/动画期翻转/显示器重判/旧屏恢复/落点 abort/平台拒绝；左右/上下平局各弄坏一次验证红）；
+  `--uitest` 新增 `dock*` 断言（debug 通道摆真实窗口，`BD_DOCK_FAST=1` 压缩计时）；
+  `--shots` 新增 `5g-dock-hidden` / `5h-dock-revealed` 走查图。
+
+## 7c. 流体隐藏（2026-10-03，路线 A：SVG gooey + 渐变 3D，零依赖零 WebGL）
+
+slide 基线（§7b）保留为 reduced-motion 回退路径；全动效路径走本节。决策见任务
+`design.md` Fluid 补充设计：否决 three.js 真 3D 球（+1.2MB chunk、WebGL 常驻、耗电，
+与废除真人瘦身方向直接冲突）。
+
+- **渲染结构**：`.petball-goo` 容器挂 `filter: url(#petball-goo)`
+  （feGaussianBlur + feColorMatrix alpha 对比，滤镜区裁到 56×56 内），内部三元素 ——
+  ① `.fluid-disc`（R8 渐变球）② `.fluid-waves`（R9 水满波浪）③ `.fluid-bridge`（液桥）
+  ④ `.fluid-pill`（贴边水渍）。环/数字/标记在 goo 容器**之外**，读数永远 crisp。
+- **状态驱动**：主进程 dockHide 经 `dock:fluid` 通道推送
+  `edge-visible | absorbing | hidden | revealing`（唯一映射 `shared/fluid.fluidForPhase`），
+  渲染层只切 CSS 类、不算几何。窗口位移仍走主进程 `setPosition` 步进，morph 与位移串行：
+  吸入先播 morph（530ms）再滑，汇聚先滑回再播 morph 尾（400ms）。
+- **R8 球体 3D 观感**：径向渐变（`--ball-bg` 为基、顶部 `--dot-top` 高光、底部
+  `--dot-bottom` 内阴影、边缘 `--ball-rim` 描边），与 09-28 球形态令牌体系同源，换肤零代码。
+- **R9 水满进度**：仅套餐类（`isPlan()` 为真）且算得出比例时挂波浪；球内 `<clipPath>` 圆形 +
+  双层正弦波浪（3.2s vs 2s = 1:1.6 错速），液位 = `shared/fluid.level(percent)`
+  （clamp 0–100 → 0–1，一位小数粒度，与环心读数逐位一致）；余额类保持素盘。
+  波浪在隐藏态暂停，reduced-motion 下只显示静态液位。
+- **morph 期命中区取并集**：球形态命中区本就是整窗，并集 = 整窗 = 不覆盖 ——
+  `peekOverride` 只在隐藏落定后覆盖为痕迹条、唤出开始即清除，morph 窗内天然全窗可点。
+- **取帧**：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')` 把 goo 定在 morph 帧
+  （呈现层冻结，不动状态机），`'off'` 恢复；`debug:dock-fluid-freeze` 拦住主进程的
+  `dock:fluid` 推送（复用 `debug:dock-freeze` 模式）。`--shots` 新增
+  `5i-fluid-stretch` / `5j-fluid-bridge` / `5k-fluid-stain`。
+- **测试**：`scripts/test-fluid.mjs`（44 项：时序/液位/水渍几何/相位映射，先弄坏验证）；
+  `test-dock-hide.mjs` 增至 132 项（流体序列 + 全动效串行 + 左右/上下平局）；`test-structure.mjs` 新增
+  J 门（setPhase 唯一出口 / 渲染层只消费 / CSS 降级真实存在 / E2E 覆盖存在）；
+  `--uitest` 新增 `dockFluid{Goo,Hidden,Level,Reveal}`（落定态主副同源 + 波浪与填充弧同生同灭）。
+- **回滚**：删 goo 容器恢复旧 `.petball-fallback` 即回 slide 版（R8/R9 可独立回滚：
+  关水满只留渐变球）。goo 在透明窗口下合成异常则按走查结论硬开关回退 slide。
+
 ## 8. 界面结构（2026-09-13 全面重设计）
 
 三个视图，共用同一个窗口（悬浮卡片即主视图）：

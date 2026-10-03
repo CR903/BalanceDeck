@@ -110,3 +110,30 @@ alpha ≥ 0.16，深盘配浅 rim 且 ≥ 0.12）—— 这是球在桌面上读
 **托盘**（Tray）：
 macOS 菜单栏 / Windows 系统托盘的图标与标题，展示主供应商的时限窗口。
 _Avoid_：状态栏、菜单栏图标、status bar、menubar
+
+**贴边隐藏**（Dock Autohide）：
+收起态悬浮球拖到屏幕边缘松手停留 1s 后滑入边框、只留一条痕迹的常驻行为。
+几何唯一来源是 `shared/dock-hide.ts`；主进程状态机只做计时与动画，不算几何。
+_Avoid_：自动隐藏、靠边隐藏、auto-hide（单独用时指代不明：展开态卡片不参与）
+
+**痕迹**（Peek）：
+隐藏后留在屏幕内的 4px 可见条。它仍可命中（主进程以痕迹条覆盖命中区），
+悬停 300ms 滑出、无 hover 设备点击唤出。
+_Avoid_：边缘条、残留、残影
+
+**水渍**（Stain / Pill）：
+流体隐藏形态下留在边沿的那枚痕迹 —— 沿边沿 20px × 探出 4px 的圆角水滴形，
+是球被边沿"吸入"后剩下的那滴。几何在 `shared/fluid.pillBox`（与痕迹条同源），
+呈现是 goo 容器的 `.fluid-pill`。
+_Avoid_：水滴、pill（单独用时指代不明：它是贴边剩下的那枚，不是普通药丸按钮）
+
+**液位**（Level）：
+水满进度里液面高度占球的比例 = `shared/fluid.level(percent)`（0–1，一位小数粒度，
+与环心读数逐位一致）。只在套餐类且算得出比例时存在；余额类没有液位（素盘）。
+_Avoid_：水位（与"水渍"混淆）、百分比（那是环心读数，不是液面高度）
+
+**流体相位**（Fluid Phase）：
+`dock:fluid` 通道的四个呈现态 —— `edge-visible`（整球）/ `absorbing`（吸入 morph 中）/
+`hidden`（水渍态）/ `revealing`（汇聚 morph 中）。主进程状态机经
+`shared/fluid.fluidForPhase` 唯一映射后推送，渲染层只切 CSS 类。
+_Avoid_：隐藏状态（那是 dockHide 的八相位状态机，不是这四个呈现态）

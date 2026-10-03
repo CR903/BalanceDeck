@@ -2163,6 +2163,313 @@ textarea {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
+/* ─── 流体隐藏三元素（10-03-dock-autohide 步 5/6：R8 渐变球 + R9 水满 + goo 吸入/汇聚）───
+ *
+ * 结构（PetBall.tsx）：.petball-goo（挂 goo 滤镜，只融合形状）内三元素 ——
+ *   ① .fluid-disc（渐变球盘）② .fluid-waves（水满波浪，仅套餐类）③ .fluid-bridge（液桥）
+ *   ④ .fluid-pill（贴边水渍）。环/数字/标记在 goo 容器之外，读数永远 crisp。
+ * 时序（shared/fluid.ts 唯一口径）：吸入 150 拉伸 → 300 合并 → 80 定形（关键帧 % 即 28/85/100），
+ * 汇聚反向 400ms。位移走主进程 setPosition 步进，morph 与位移串行不重叠。
+ * 滤镜区裁到 56×56 内（filter x/y/width/height），避免全屏 blur 开销。
+ * reduced-motion 下无 morph（直接显隐，计时器保留）；hidden 态波浪暂停。
+ * ⚠ D6 纪律：这几个元素一律不许有 outer box-shadow（尺寸贴窗，见 D6 注释）。 */
+.petball.no3d .petball-goo {
+  position: absolute;
+  inset: 0;
+  filter: url(#petball-goo);
+}
+/* 常态（整球）不挂滤镜：正常态渲染与 slide 基线逐像素一致，
+   goo 只在 morph/水渍三态融合形状（回退 slide 时这里就是"没开"的样子）。
+   取帧冻结时强制挂上（data-freeze 不改变 data-fluid，常态下 freeze 也要看到融合）。 */
+.petball.no3d .petball-fallback[data-fluid='edge-visible'] .petball-goo {
+  filter: none;
+}
+.petball.no3d .petball-fallback[data-freeze] .petball-goo {
+  filter: url(#petball-goo);
+}
+.petball.no3d .goo-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+/* 桥的方向变量：pill 侧（左贴边 → pill 在窗口右侧 → 桥向 +x） */
+.petball.no3d .petball-fallback[data-edge='left'] {
+  --dx: 1;
+  --dy: 0;
+}
+.petball.no3d .petball-fallback[data-edge='right'] {
+  --dx: -1;
+  --dy: 0;
+}
+.petball.no3d .petball-fallback[data-edge='top'] {
+  --dx: 0;
+  --dy: 1;
+}
+.petball.no3d .petball-fallback[data-edge='bottom'] {
+  --dx: 0;
+  --dy: -1;
+}
+/* R8 渐变 3D 球：径向渐变球体 + 顶部高光 + 底部内阴影。
+   颜色全部取自既有球令牌（--dot-top 高光 / --dot-bottom 内阴影），中间透明露出
+   底盘的 --ball-bg —— 5 套皮肤各自生效，新增皮肤零代码，不引入新令牌。 */
+.petball.no3d .fluid-disc {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 26%, var(--dot-top), transparent 46%),
+    radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%);
+}
+/* R9 水满波浪：球内 clip 圆（r=17）+ 双层错速正弦（3.2s vs 2s = 1:1.6），液位 = percent。
+   颜色跟随等级（--ok/--warn/--danger，与环同源）；余额类不挂波浪（JSX 里根本不渲染）。 */
+.petball.no3d .fluid-waves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.petball.no3d .fluid-wave {
+  fill: var(--ok);
+  opacity: 0.45;
+  animation: fluid-drift-a 3.2s linear infinite;
+}
+.petball.no3d .fluid-wave-b {
+  opacity: 0.3;
+  animation: fluid-drift-b 2s linear infinite;
+}
+.petball.no3d.lvl-warn .fluid-wave {
+  fill: var(--warn);
+}
+.petball.no3d.lvl-danger .fluid-wave {
+  fill: var(--danger);
+}
+.petball.no3d.lvl-muted .fluid-wave {
+  fill: var(--fg-faint);
+}
+@keyframes fluid-drift-a {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-28px);
+  }
+}
+@keyframes fluid-drift-b {
+  from {
+    transform: translateX(-28px);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+/* hidden 态暂停波浪（PRD R9）；数字仍居中压在液面上（沿用环心读数样式） */
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-wave {
+  animation-play-state: paused;
+}
+/* 液桥 blob：平时 scale(0) 藏在球心，吸入时向贴边侧拉伸长大 */
+.petball.no3d .fluid-bridge {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ball-bg);
+  transform: translate(-50%, -50%) scale(0);
+}
+/* 水渍 pill：沿边沿 20px × 探出 4px（与 shared/fluid.pillBox 同形，圆角水滴形）。
+   位置按 data-edge 贴边，平时 scale(0)，吸入终态留下。
+   ⚠ 显隐走独立的 `scale` 属性（与定位的 `transform` 分开）：四个边的定位 transform
+   各不相同（translateY vs translateX），关键帧若写完整 transform 就得分边写四套；
+   用 `scale` 属性后一套关键帧通吃四边（Chromium 104+，Electron 37 可用）。 */
+.petball.no3d .fluid-pill {
+  position: absolute;
+  background: var(--ball-bg);
+  border-radius: 2px;
+  scale: 0;
+}
+.petball.no3d .petball-fallback[data-edge='left'] .fluid-pill {
+  right: 0;
+  top: 50%;
+  width: 4px;
+  height: 20px;
+  transform: translateY(-50%);
+}
+.petball.no3d .petball-fallback[data-edge='right'] .fluid-pill {
+  left: 0;
+  top: 50%;
+  width: 4px;
+  height: 20px;
+  transform: translateY(-50%);
+}
+.petball.no3d .petball-fallback[data-edge='top'] .fluid-pill {
+  bottom: 0;
+  left: 50%;
+  width: 20px;
+  height: 4px;
+  transform: translateX(-50%);
+}
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill {
+  top: 0;
+  left: 50%;
+  width: 20px;
+  height: 4px;
+  transform: translateX(-50%);
+}
+/* 吸入 morph（530ms = 150 拉伸 → 300 合并 → 80 定形；关键帧 28%/85% 即分段点） */
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-disc {
+  animation: disc-absorb 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-bridge {
+  animation: bridge-absorb 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-pill {
+  animation: pill-absorb 530ms var(--ease) forwards;
+}
+@keyframes disc-absorb {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  28% {
+    transform: translate(calc(-50% + var(--dx) * 4px), calc(-50% + var(--dy) * 4px)) scale(1.08);
+  }
+  85% {
+    transform: translate(calc(-50% + var(--dx) * 12px), calc(-50% + var(--dy) * 12px)) scale(0.55);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
+  }
+}
+@keyframes bridge-absorb {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+  }
+  28% {
+    transform: translate(calc(-50% + var(--dx) * 8px), calc(-50% + var(--dy) * 8px)) scale(0.8);
+  }
+  85% {
+    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.5);
+  }
+}
+@keyframes pill-absorb {
+  0%,
+  80% {
+    scale: 0;
+    opacity: 0;
+  }
+  100% {
+    scale: 1;
+    opacity: 1;
+  }
+}
+/* 水渍态：球与桥收尽，只留 pill（沿边沿 20px × 探出 4px） */
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc,
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-bridge {
+  transform: translate(-50%, -50%) scale(0);
+  animation: none;
+}
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-pill {
+  scale: 1;
+  opacity: 1;
+  animation: none;
+}
+/* 汇聚 morph 反向 400ms：pill 收起 → 桥拉出 → 球回弹成形（末段微过冲 = elastic 观感） */
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-disc {
+  animation: disc-reveal 400ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-bridge {
+  animation: bridge-reveal 400ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-pill {
+  animation: pill-reveal 400ms var(--ease) forwards;
+}
+@keyframes disc-reveal {
+  0% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
+  }
+  60% {
+    transform: translate(calc(-50% + var(--dx) * 6px), calc(-50% + var(--dy) * 6px)) scale(0.9);
+  }
+  80% {
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes bridge-reveal {
+  0% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.5);
+  }
+  60% {
+    transform: translate(calc(-50% + var(--dx) * 10px), calc(-50% + var(--dy) * 10px)) scale(1);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(0);
+  }
+}
+@keyframes pill-reveal {
+  0% {
+    scale: 1;
+    opacity: 1;
+  }
+  40%,
+  100% {
+    scale: 0;
+    opacity: 0;
+  }
+}
+/* 取帧冻结（--shots 用，window.__bd_fluid_freeze 设 data-freeze）：
+   定在某一 morph 帧并暂停一切动画，拍完 'off' 恢复 live。 */
+.petball.no3d .petball-fallback[data-freeze] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze] .fluid-bridge,
+.petball.no3d .petball-fallback[data-freeze] .fluid-pill,
+.petball.no3d .petball-fallback[data-freeze] .fluid-wave {
+  animation: none;
+}
+.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc {
+  transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(1.1);
+}
+.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-bridge {
+  transform: translate(calc(-50% + var(--dx) * 9px), calc(-50% + var(--dy) * 9px)) scale(0.55);
+}
+.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-disc {
+  transform: translate(calc(-50% + var(--dx) * 12px), calc(-50% + var(--dy) * 12px)) scale(0.55);
+}
+.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-bridge {
+  transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1);
+}
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-bridge {
+  transform: translate(-50%, -50%) scale(0);
+}
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-pill {
+  scale: 1;
+  opacity: 1;
+}
+/* prefers-reduced-motion：跳过流体与滑动，直接显隐（计时器保留，PRD R5）。
+   桥永不出现；pill 只在 hidden 态静态留痕；波浪只显示静态液位。 */
+@media (prefers-reduced-motion: reduce) {
+  .petball.no3d .fluid-bridge {
+    display: none;
+  }
+  .petball.no3d .fluid-disc,
+  .petball.no3d .fluid-pill,
+  .petball.no3d .fluid-wave {
+    animation: none;
+  }
+  .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc {
+    transform: translate(-50%, -50%) scale(0);
+  }
+}
+
 /* ─── 设置页「宠物 / 语音提醒」分区 ────────────────────────────────────────── */
 /* 两个分区同形（一堆开关行装在一张圆角卡片里），故并进同一条规则，
    不复制第二份卡片样式 */

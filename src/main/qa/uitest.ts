@@ -12,6 +12,8 @@ import { join } from 'path'
 import { consumeDragFired } from '../ipc'
 import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
 import { BALL_VIEW, FIGURE_VIEW } from '../../shared/pet-view'
+// 隐藏偏移的断言口径与主进程同一常数（改 PEEK 时这里跟着变，不各自硬编码 56-4=52）
+import { PEEK } from '../../shared/dock-hide'
 import { refreshNow } from '../scheduler'
 import { demoSnapshot } from './fixtures'
 
@@ -2480,6 +2482,271 @@ export async function runUiTest(
       ? 'ok'
       : 'fail:not-cleaned'
   await backToCards()
+
+  // ── 贴边自动隐藏（10-03-dock-autohide）────────────────────────────────────
+  //
+  // 合成事件动不了真光标（见 dragMoved 那条：窗口跟真光标走），所以几何走 debug 通道：
+  // `debugDockEdge` 摆真实窗口并走真实 dragStop 路径，`debugDockCursor` 喂命中翻转。
+  // BD_DOCK_FAST=1 下三把计时器压到 50ms；没设时按真实 1000/300/1500ms 等 ——
+  // 所以一律用 waitFor 轮询而不是固定 sleep（固定值在两种模式下必坏其一）。
+  const dockState = async (): Promise<{ phase: string; edge: string | null; hidden: boolean; fluid?: string; fluidEdge?: string | null }> =>
+    (await exec('window.api.debugDockState()')) as { phase: string; edge: string | null; hidden: boolean; fluid?: string; fluidEdge?: string | null }
+  const dockWait = async (cond: string, label: string): Promise<boolean> => waitFor(cond, 24)
+
+  await exec('window.api.collapse()')
+  await sleep(800)
+  const dockB0 = bounds()
+  r.dockShape =
+    dockB0.width === BALL_VIEW.width && dockB0.height === BALL_VIEW.height
+      ? 'ok'
+      : `fail:${dockB0.width}x${dockB0.height}（仅收起态球形态参与）`
+  // 开关默认开（extras 缺失键给 ''，判 !== '0'；与主进程 primePrefs 同口径）
+  r.dockDefaultOn =
+    ((await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']!=='0')")) as boolean) === true
+      ? 'ok'
+      : 'fail:default-off'
+  // 右键菜单有「贴边自动隐藏」入口（菜单标签主进程现拼，只能在这里截）
+  const dockMenuLabels = await runPetMenu()
+  r.dockMenu = dockMenuLabels.includes('贴边自动隐藏')
+    ? 'ok'
+    : `fail:${dockMenuLabels.join(',')}`
+  // 设置页「系统」分区开关：往返一次，判据是落盘值（与 vrsNotifyOff 同纪律）。
+  // ⚠ 必须先展开：footer 的「设置」按钮只在卡片视图里，收起态下点它等于没点，
+  //   开关断言会读到两个 ''（恒为默认开）而误红 —— dockSettings 那条曾因此红过。
+  await exec('window.api.expand()')
+  await sleep(800)
+  await exec(footerClick('设置'))
+  await sleep(700)
+  const dockWasOn =
+    ((await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']!=='0')")) as boolean) === true
+  const clickDockSwitch = (): Promise<unknown> => exec("document.querySelector('.dock-hide')?.click()")
+  await clickDockSwitch()
+  await sleep(500)
+  const dockFlip1 = await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide'])")
+  await clickDockSwitch()
+  await sleep(500)
+  const dockFlip2 = await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide'])")
+  // 开关必须真的翻转两次（关 → 开回来，不把用户配置带走）
+  r.dockSettings =
+    dockFlip1 === (dockWasOn ? '0' : '1') && dockFlip2 !== '0'
+      ? 'ok'
+      : `fail:was=${dockWasOn} flip1=${dockFlip1} flip2=${dockFlip2}`
+  // 开关状态要同步进主进程（setExtras 本身不通知主进程，生产走 ui:dock-hide 即时生效）
+  await exec(`window.api.setDockHide(${dockFlip2 !== '0' ? 'true' : 'false'})`)
+  await backToCards()
+  await sleep(400)
+  await exec('window.api.collapse()')
+  await sleep(800)
+  // 冻结真光标翻转（整个 dock 段）：合成事件动不了真光标，窗口瞬移到真光标底下会产生真翻转、
+  // 在痕迹条上停留会直接唤回；debug 喂送（debugDockCursor）照常工作，穿透也不受影响。
+  // 解冻在段尾（开关还原之后）。此前两轮误红都是它。
+  await exec('window.api.debugDockFreeze(true)')
+
+  // 摆位 helper：贴边坐标取摆位调用的同步返回值（placed.docked）。
+  // fast 模式下 50ms 后窗口已经藏进去了，事后读 bounds 拿到的是隐藏坐标 —— dockedX 竞态，
+  // 历史上曾让 dockHide/dockEdges 误红；此处之后不再有时序相关的 bounds 读数。
+  const bayEdge = async (e: string): Promise<{ x: number; y: number }> => {
+    const placed = (await exec(`window.api.debugDockEdge('${e}')`)) as {
+      docked: { x: number; y: number }
+    } | null
+    return placed && placed.docked ? { x: placed.docked.x, y: placed.docked.y } : { x: 0, y: 0 }
+  }
+
+  // 摆左沿 → 隐藏（只留 4px 痕迹）。段内真光标已冻结，两次机会只防 dwell 本身的时序抖动。
+  let dockedX = 0
+  let dockedY = 0
+  let hid = false
+  for (let attempt = 0; attempt < 2 && !hid; attempt++) {
+    const p = await bayEdge('left')
+    dockedX = p.x
+    dockedY = p.y
+    hid = await dockWait('window.api.debugDockState().then(s=>s.hidden===true)', 'hide')
+  }
+  // 四边扫一遍：贴边判定/隐藏偏移的符号由单测钉死，这里只验"主进程接线把窗口摆对了边"——
+  // dockTestToEdge 的屏幕坐标数学只活在 E2E 路径里（单测够不着），左右/上下反了这里必红。
+  // 不经过光标（debug 通道先复位再摆位，可重复调用），所以无真光标 flake。
+  //
+  // ⚠ 上/下沿可能被 OS 夹回而干净拒绝（本机实测：顶部菜单栏 + 底部 Dock 都不许窗口越界，
+  //   落点校验 abort 后停在贴边全可见（单测用例 23 同款）；左/右沿则正常隐藏）。
+  //   这取决于用户把 Dock 摆在哪边、跑在哪台机器 —— 所以不断言"哪条边必须藏"，
+  //   只断言"每条边要么正确藏、要么干净拒绝，不许半态"，另加一条"至少一边真藏了"
+  //   （四条全拒 = 功能死了，必须红）。方向数学的逐值锁定在单测，不在这里。
+  const dockStep = BALL_VIEW.width - PEEK // 球宽 56 - 痕迹 4 = 单步位移（与 hiddenBounds 同式）
+  let dockEdges = 'ok'
+  let hidAnyEdge = false
+  for (const e of ['left', 'right', 'top', 'bottom']) {
+    const p = await bayEdge(e)
+    // macOS 上沿是确定性拒绝（isEdgeSupported 平台约束，可见窗口越菜单栏会被同步夹回）：
+    // 不烧 6s 等超时，睡 1300ms（盖过真实 1000ms 停留）后断言"从未开始"的完整签名。
+    // 若实现改成"试藏"，phase/edge 任一项对不上就红；bayEdge 本身失败时 p 回退 (0,0)，
+    // 坐标项也会红 —— 不存在静默放过。
+    if (e === 'top' && process.platform === 'darwin') {
+      await sleep(1300)
+      const stRef = await dockState()
+      const bRef = bounds()
+      const refuseOk =
+        stRef.phase === 'idle' && stRef.hidden === false && stRef.edge === null &&
+        bRef.x === p.x && bRef.y === p.y
+      if (!refuseOk) {
+        dockEdges =
+          `fail:top-refuse phase=${stRef.phase} hidden=${stRef.hidden} edge=${stRef.edge} ` +
+          `x=${bRef.x} y=${bRef.y} want=(${p.x},${p.y})`
+        break
+      }
+      continue
+    }
+    const okEdge = await dockWait(`window.api.debugDockState().then(s=>s.hidden===true&&s.edge==='${e}')`, `hide-${e}`)
+    const bSweep = bounds()
+    const dx = bSweep.x - p.x
+    const dy = bSweep.y - p.y
+    const dirOk =
+      e === 'left' ? dx === -dockStep && dy === 0
+      : e === 'right' ? dx === dockStep && dy === 0
+      : e === 'top' ? dy === -dockStep && dx === 0
+      : dy === dockStep && dx === 0
+    if (okEdge && dirOk) {
+      hidAnyEdge = true
+      continue
+    }
+    const cleanRefuse = !okEdge && (await dockState()).hidden === false && dx === 0 && dy === 0
+    if (!cleanRefuse) {
+      dockEdges = `fail:${e} hide=${okEdge} dx=${dx} dy=${dy}`
+      break
+    }
+  }
+  if (dockEdges === 'ok' && !hidAnyEdge) dockEdges = 'fail:no-edge-hid（四条全拒 = 隐藏功能死了）'
+  r.dockEdges = dockEdges
+  // 回到左沿走完整流程（路过/唤出/重藏/展开取消都以左沿为基准测）
+  hid = false
+  for (let attempt = 0; attempt < 2 && !hid; attempt++) {
+    const p = await bayEdge('left')
+    dockedX = p.x
+    dockedY = p.y
+    hid = await dockWait('window.api.debugDockState().then(s=>s.hidden===true)', 'hide')
+  }
+  const dsHide = await dockState()
+  const bHide = bounds()
+  // 隐藏偏移 = 球宽 - 痕迹（与 shared/dock-hide.hiddenBounds 同式，不手算 52）
+  const wantHideX = dockedX - (BALL_VIEW.width - PEEK)
+  r.dockHide =
+    hid && dsHide.edge === 'left' && bHide.x === wantHideX && bHide.y === dockedY
+      ? 'ok'
+      : `fail:hidden=${hid} edge=${dsHide.edge} x=${bHide.x} want=${wantHideX}`
+  r.dockPeekSize =
+    bHide.width === BALL_VIEW.width && bHide.height === BALL_VIEW.height ? 'ok' : `fail:${bHide.width}x${bHide.height}`
+
+  // ── 流体相位（10-03-dock-autohide 步 6/7）：dock:fluid 状态序列 ──────────
+  //
+  // 主副两路必须同源：主进程 debug:dock-state 的 fluid 与 DOM 的 data-fluid/data-edge
+  // 在落定态一致；水满波浪与填充弧同生同灭（L2/L3"轨道与 pct 解耦"的另一半 ——
+  // 波浪只在"套餐且算得出比例"时挂，余额/无比例时绝不画假液位）。
+  // 定的是**落定态**（hidden / edge-visible），不定 morph 中间帧 —— 中间帧只活
+  // 530/400ms，轮询断言它等于用 flake 换覆盖；中间帧的形状由 --shots 三张走查图看。
+  const fluidDom = async (): Promise<{ fluid: string; edge: string; waves: number; fill: boolean; ring: string }> => {
+    const raw = String(
+      await exec(`(()=>{
+        const d=document.querySelector('.petball-fallback')
+        if(!d) return JSON.stringify({fluid:'?',edge:'?',waves:-1,fill:false,ring:'?'})
+        return JSON.stringify({fluid:d.dataset.fluid||'?',edge:d.dataset.edge||'?',
+          waves:d.querySelectorAll('.fluid-wave').length,
+          fill:!!d.querySelector('.dot-ring-fill'),ring:d.getAttribute('data-ring')||''})
+      })()`)
+    )
+    try {
+      return JSON.parse(raw) as { fluid: string; edge: string; waves: number; fill: boolean; ring: string }
+    } catch {
+      return { fluid: '?', edge: '?', waves: -1, fill: false, ring: '?' }
+    }
+  }
+  // goo 滤镜定义在（形态回退不断言效果，只断言"定义在、区裁对" —— 合成走查看 shots）
+  r.dockFluidGoo = String(
+    await exec(`(()=>{const f=document.querySelector('#petball-goo'); if(!f) return 'fail:no-filter';
+      return f.getAttribute('width')==='56'&&f.getAttribute('height')==='56'
+        ? 'ok' : 'fail:region='+f.getAttribute('width')+'x'+f.getAttribute('height')})()`)
+  )
+  // 隐藏落定：主副同相位 + 贴边一致（仍在 hidden 态内，路过测试之前）
+  await dockWait("window.api.debugDockState().then(s=>s.fluid==='hidden')", 'fluid-hidden')
+  await sleep(400) // 主副两路各走一次 IPC，DOM 切类比 main 落定慢一拍
+  const dsFluidHide = await dockState()
+  const domHide = await fluidDom()
+  r.dockFluidHidden =
+    dsFluidHide.fluid === 'hidden' && domHide.fluid === 'hidden' && domHide.edge === 'left'
+      ? 'ok'
+      : `fail:main=${dsFluidHide.fluid} dom=${domHide.fluid}/${domHide.edge}`
+  // 液位与百分比同生同灭：波浪数恒为 0 或 2（双层），且"有波浪 ⟺ 有填充弧"。
+  // 判据不依赖具体数据（真实快照随机器而变）：plan+有弧 → 2 层波浪；balance/无弧 → 0。
+  const wavesOk =
+    domHide.waves === -1
+      ? `fail:probe`
+      : domHide.ring === 'plan'
+        ? (domHide.fill ? domHide.waves === 2 : domHide.waves === 0)
+          ? 'ok'
+          : `fail:ring=plan fill=${domHide.fill} waves=${domHide.waves}`
+        : domHide.waves === 0
+          ? 'ok'
+          : `fail:ring=${domHide.ring} waves=${domHide.waves}`
+  r.dockFluidLevel = wavesOk
+
+  // 路过不停留 → 不唤出（两次喂送之间无等待：50ms 的 fast 唤出计时也来不及触发）
+  await exec('window.api.debugDockCursor(true)')
+  await exec('window.api.debugDockCursor(false)')
+  await sleep(300)
+  r.dockPassby = (await dockState()).hidden === true ? 'ok' : 'fail:woke-on-passby'
+
+  // 痕迹停留 → 滑出到贴边全可见
+  // ⚠ 等的必须是落定态 edge-visible：hidden===false 在 300ms 唤出停留（dwell-reveal）里就成立，
+  //   轮询若恰好落在停留窗里，returned 的 revealed=true 但窗口还没动（曾让 dockReveal 误红）。
+  await exec('window.api.debugDockCursor(true)')
+  const revealed = await dockWait("window.api.debugDockState().then(s=>s.hidden===false&&s.phase==='edge-visible')", 'reveal')
+  const bReveal = bounds()
+  r.dockReveal =
+    revealed && bReveal.x === dockedX && bReveal.y === dockedY
+      ? 'ok'
+      : `fail:revealed=${revealed} x=${bReveal.x} want=${dockedX}`
+  // 唤出落定：流体相位回到整球（DOM 经 dock:fluid 异步切类，轮询等它）
+  const fluidBack = await dockWait(
+    "window.api.debugDockState().then(s=>s.fluid==='edge-visible')",
+    'fluid-back'
+  )
+  await sleep(400) // 主副两路各走一次 IPC，DOM 切类比 main 落定慢一拍
+  const domReveal = await fluidDom()
+  r.dockFluidReveal =
+    fluidBack && domReveal.fluid === 'edge-visible'
+      ? 'ok'
+      : `fail:main-fluid wait=${fluidBack} dom=${domReveal.fluid}`
+
+  // 离开球体 → 重藏（跳过 1000ms 停留，直接藏）
+  await exec('window.api.debugDockCursor(false)')
+  const rehid = await dockWait('window.api.debugDockState().then(s=>s.hidden===true)', 'rehide')
+  r.dockRehide = rehid ? 'ok' : 'fail:no-rehide'
+
+  // 展开 → 取消隐藏回到全可见，不残留隐藏偏移
+  await exec('window.api.expand()')
+  await sleep(800)
+  const dsExp = await dockState()
+  const bExp = bounds()
+  r.dockExpandCancel =
+    dsExp.hidden === false && bExp.width > 300 ? 'ok' : `fail:hidden=${dsExp.hidden} w=${bExp.width}`
+  await exec('window.api.collapse()')
+  await sleep(800)
+
+  // 开关关闭 → 取消计时/动画、回到全可见并清 hidden（R7 回滚语义）
+  await exec("window.api.debugDockEdge('left')")
+  const hid2 = await dockWait('window.api.debugDockState().then(s=>s.hidden===true)', 'hide2')
+  await exec('window.api.setDockHide(false)')
+  await exec("window.api.setExtras({'ui:dockHide':'0'})")
+  await sleep(400)
+  const dsOff = await dockState()
+  r.dockSwitchOff =
+    hid2 && dsOff.hidden === false ? 'ok' : `fail:hid2=${hid2} hidden=${dsOff.hidden}`
+  // 还原：开关开回来（不把用户配置带走），窗口回到卡片
+  await exec('window.api.setDockHide(true)')
+  await exec(`window.api.setExtras({'ui:dockHide':'${dockWasOn ? '1' : '0'}'})`)
+  if (!dockWasOn) await exec('window.api.setDockHide(false)')
+  await exec('window.api.expand()')
+  await sleep(800)
+  // 解冻真光标翻转（dock 段结束；冻结期间穿透轮询一直在跑，解冻后位置不变则不补事件）
+  await exec('window.api.debugDockFreeze(false)')
 
   r.consoleErrors = consoleErrors.length === 0 ? 'none' : consoleErrors.join(' | ').slice(0, 300)
   r.execErrors = execErrors.length === 0 ? 'none' : execErrors.join(' | ').slice(0, 300)

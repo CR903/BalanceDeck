@@ -39,6 +39,53 @@
 - [ ] 额度阈值提醒（>80% 弹通知）
 - [ ] 皮肤目录 / 主题包导入导出
 
+## 2026-10-03 悬浮球贴边自动隐藏（用户需求）
+
+- [x] **纯函数几何**：`src/shared/dock-hide.ts`（贴边阈值 8px / 痕迹 4px / 隐藏停留 1000ms /
+      唤出停留 300ms / 离开重藏 1500ms / 隐藏 300ms easeOut / 唤出 200ms），角落平局按左/右/上/下，
+      NaN 与小屏负区间守卫；`scripts/test-dock-hide.mjs` 132 项（阈值/平局/痕迹/reduced-motion/调用形状/落点 abort/平台拒绝各弄坏一次验证红）
+- [x] **主进程状态机**：`src/main/dockHide.ts`（三计时器同一时刻最多一把 + 16ms 动画步进，
+      与拖拽计时器互斥；动画期光标翻转落定消费；落点校验防半态；macOS 上沿平台拒绝）；`overlay.ts` 只增三处调用（dragStop 尾 / dragStart 头 / 显示器重定位处）
+      + 展开收起复位 + 隐藏态命中区覆盖为痕迹条；`state.json` 只增 `dock` 字段
+      （注：macOS 可见窗口越菜单栏会被同步夹回，上沿确定性不藏，其余三边正常）
+- [x] **开关与无障碍**：`ui:dockHide` 默认开 + 设置页"系统"分区 + 球右键菜单；
+      `prefers-reduced-motion` 跳动画留计时；无 hover 点击痕迹唤出
+- [x] **测试与文档**：uitest 新增 `dock*` 12 键（debug 通道摆真实窗口，逐条先弄坏验证，
+      含四边 sweep；上/下沿被菜单栏/Dock 夹回即干净拒绝，断言"藏则位移精确、拒则无半态、
+      至少一边真藏"）；shots 新增 `5g-dock-hidden` / `5h-dock-revealed`；
+      `DESIGN.md` §7b + `CONTEXT.md` 词汇
+- [x] **验证**：`npm run typecheck` ✓ `npm test` ✓（新增 dock-hide 单测 + structure I/H4 门，均逐条弄坏验证）
+      `BD_DOCK_FAST=1 npx electron . --uitest` 171 键 0 fail（dock* 12 键全绿；另做 `detectEdge→null`
+      变异轮：恰好隐藏依赖的 6 键红、其余 165 键绿）
+
+- [x] **流体隐藏（路线 A，2026-10-03）**：`src/shared/fluid.ts`（吸入 150/300/80、
+      汇聚 400ms、水渍 pill 几何、液位映射、相位映射，`scripts/test-fluid.mjs` 44 项，
+      液位取反/水渍镜像各弄坏验证红）+ 主进程 `dockHide.ts` 经 `setPhase` 唯一出口推
+      `dock:fluid`（morph 与位移串行：吸入先 morph 后滑、汇聚先滑后 morph 尾；
+      reduced-motion / `BD_DOCK_FAST` 跳 morph 走旧路）+ 渲染层 `.petball-goo`
+      三元素（渐变球盘 R8 + 双层波浪水满 R9 + 液桥 + 水渍 pill，环/数字在 goo 之外保持 crisp；
+      隐藏态暂停波浪；reduced-motion 跳 morph）+ `__bd_fluid_freeze` 取帧
+      （`5i-fluid-stretch` / `5j-fluid-bridge` / `5k-fluid-stain`）
+      + uitest `dockFluid{Goo,Hidden,Level,Reveal}`（落定态主副同源 + 波浪与填充弧同生同灭）
+      + structure J 门（setPhase 唯一出口/渲染层只消费/CSS 降级/E2E 覆盖，均弄坏验证）
+      + `DESIGN.md` §7c + `CONTEXT.md` 水渍/液位/流体相位
+      （注：slide 基线保留为 reduced-motion 回退路径；macOS 上沿确定性不藏保持注记）
+- [x] **线上崩溃修复（744：dockHide 定时器链 Uncaught Exception）**：根因——`hiddenBounds`/
+      `peekHitbox` 对非法边回 `undefined`（switch 无 default，类型却写 `Rect`），调用方读
+      `to.x` 或把 `undefined`/`NaN` 送进 `setPosition`，抛在无 try/catch 的 16ms 步进/setTimeout
+      回调里即主进程对话框。修复——纯函数层非法一律回 `null`（hidden 回 null=不动+idle
+      fail-closed，peek 回 null=跳过覆盖 fail-open）；状态机层 `later()` 与动画步进全部
+      try/catch + `recoverToIdle`（停一切计时回 idle，`landed()` 校验 + `abortToDocked` 防半态，
+      异常 log-once）；`overlay.ts` 注入的 `setPosition` 与 `dockTestToEdge`/`snapBackToWorkArea`
+      裸调用加 `Number.isFinite` 守卫（与拖拽定时器既有口径一致；全仓 grep 确认其余
+      `win.setPosition`/`setBounds` 均为同步路径、输入有限，无定时器漏网）。单测
+      `test-dock-hide.mjs` 用例 27（纯函数 fuzz 72 组无 undefined）/28a（步进抛→idle）/
+      28b（计时回调抛→idle）/28c（bounds 不可读→不动），均 `loadTs` 真源码、三轮弄坏重演
+      红（纯函数 4 红；去步进守卫/去 later 守卫均直接杀死测试进程，与线上对话框同构）
+- [x] **验证（崩溃修复轮，2026-10-03）**：`typecheck` ✓ `npm test` 全绿 ✓ `npm run build` ✓；
+      `BD_DOCK_FAST=1 npx electron . --uitest` 175 键 152 ok / 0 fail（dock* 16 键全绿，
+      另 23 键为非断言信息值；进程按已知 flake 未自退，键齐 + execErrors 到齐后手动杀）
+
 ## 2026-09-06 第二轮优化（用户反馈）
 
 - [x] 界面重设计：参考 iStat 桌面组件风格——染色指标块网格 + 大号百分比 + 粗进度条 + 渐变主按钮；点击指标块展开明细

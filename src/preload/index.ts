@@ -149,6 +149,32 @@ const api = {
   setPetFigure: (figure: boolean): void => ipcRenderer.send('pet:mode', figure === true),
   /** 总在最前开关 */
   setAlwaysOnTop: (on: boolean): void => ipcRenderer.send('ui:always-on-top', on !== false),
+  /** 贴边自动隐藏开关（缺省开；关掉即回现行行为） */
+  setDockHide: (on: boolean): void => ipcRenderer.send('ui:dock-hide', on !== false),
+  /** prefers-reduced-motion 上报（主进程据此跳过隐藏动画，计时保留） */
+  setReducedMotion: (on: boolean): void => ipcRenderer.send('ui:reduced-motion', on === true),
+  /** 痕迹点击（无 hover 设备）：直接滑出 */
+  dockReveal: (): void => ipcRenderer.send('dock:reveal'),
+  /** 隐藏态变化（主进程推）：true = 已藏到只剩痕迹，此时点击走唤出而非展开 */
+  onDockHidden: (cb: (hidden: boolean) => void): (() => void) => {
+    const l = (_e: unknown, hidden: boolean): void => cb(hidden === true)
+    ipcRenderer.on('dock:hidden', l)
+    return () => ipcRenderer.removeListener('dock:hidden', l)
+  },
+  /**
+   * 流体相位（主进程推）：edge-visible | absorbing | hidden | revealing。
+   * 渲染层只切 CSS 类、不算几何（几何唯一来源仍是 shared/dock-hide + shared/fluid）。
+   * 载荷逐字段复验：相位不在四项内就按 edge-visible 画整球（默认安全态）。
+   */
+  onDockFluid: (cb: (phase: string, edge: string | null) => void): (() => void) => {
+    const l = (_e: unknown, v: unknown): void => {
+      const o = (v ?? {}) as { phase?: unknown; edge?: unknown }
+      cb(typeof o.phase === 'string' ? o.phase : 'edge-visible',
+        o.edge === 'left' || o.edge === 'right' || o.edge === 'top' || o.edge === 'bottom' ? o.edge : null)
+    }
+    ipcRenderer.on('dock:fluid', l)
+    return () => ipcRenderer.removeListener('dock:fluid', l)
+  },
   /** 命中框（窗口内 CSS 像素）：主体以外的区域由主进程设为鼠标穿透 */
   setPetHitbox: (rect: PetHitbox): void => ipcRenderer.send('pet:hitbox', rect),
   /** 测试观测点：穿透/光标轮询状态（仅测试模式注册） */
@@ -165,6 +191,21 @@ const api = {
   /** 测试观测点：设置置顶（仅测试模式注册） */
   debugSetTop: (on: boolean): Promise<{ figure: boolean; alwaysOnTop: boolean }> =>
     ipcRenderer.invoke('debug:set-top', on),
+  /** 测试观测点：贴边隐藏状态机（仅测试模式注册） */
+  debugDockState: (): Promise<{ phase: string; edge: string | null; hidden: boolean }> =>
+    ipcRenderer.invoke('debug:dock-state'),
+  /** 测试驱动：摆到指定边沿并走真实 dragStop 路径（仅测试模式注册） */
+  debugDockEdge: (edge: string): Promise<{ docked: { x: number; y: number }; phase: string; edge: string | null; hidden: boolean }> =>
+    ipcRenderer.invoke('debug:dock-edge', edge),
+  /** 测试驱动：喂一次光标命中翻转（仅测试模式注册） */
+  debugDockCursor: (over: boolean): Promise<{ phase: string; edge: string | null; hidden: boolean }> =>
+    ipcRenderer.invoke('debug:dock-cursor', over),
+  /** 测试冻结真光标翻转（仅测试模式注册；dock 段防真光标停在痕迹条上唤回） */
+  debugDockFreeze: (frozen: boolean): Promise<{ phase: string; edge: string | null; hidden: boolean }> =>
+    ipcRenderer.invoke('debug:dock-freeze', frozen),
+  /** 测试冻结流体相位推送（仅测试模式注册；shots 取帧用） */
+  debugDockFluidFreeze: (frozen: boolean): Promise<{ phase: string; edge: string | null; hidden: boolean }> =>
+    ipcRenderer.invoke('debug:dock-fluid-freeze', frozen),
   /** 光标是否悬停在球上（主进程轮询回传） */
   onPetCursor: (cb: (over: boolean) => void): (() => void) => {
     const l = (_e: unknown, over: boolean): void => cb(over)

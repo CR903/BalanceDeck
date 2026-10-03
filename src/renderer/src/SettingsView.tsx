@@ -326,6 +326,8 @@ export function SettingsView({
   onToggleVoice,
   alwaysTop,
   onToggleAlwaysTop,
+  dockHide,
+  onToggleDockHide,
   ...sectionProps
 }: {
   onBack: () => void
@@ -336,6 +338,9 @@ export function SettingsView({
   /** 悬浮球是否总在最前（ui:alwaysOnTop） */
   alwaysTop: boolean
   onToggleAlwaysTop: (on: boolean) => void
+  /** 贴边自动隐藏（ui:dockHide，默认开） */
+  dockHide: boolean
+  onToggleDockHide: (on: boolean) => void
   // 「数字助理」与「语音提醒」两个分区的 props 在同一个解构里只能有一个 rest，
   // 所以合成一份 sectionProps 一起透传：两套接口都在类型上并了进来，少传任何一个
   // prop 仍是编译错误；TS 不对 JSX 的变量展开做多余属性检查，两个分区各取自己那份即可。
@@ -792,6 +797,20 @@ export function SettingsView({
             className={'switch' + (alwaysTop ? ' on' : '')}
             title={alwaysTop ? '关闭后不再悬浮于其它窗口之上' : '开启后始终显示在最前面'}
             onClick={() => onToggleAlwaysTop(!alwaysTop)}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+        <div className="enable-row">
+          <span>
+            贴边自动隐藏
+            <em className="tag env">贴边 1 秒后只留一条痕迹</em>
+          </span>
+          <button
+            type="button"
+            className={'switch dock-hide' + (dockHide ? ' on' : '')}
+            title={dockHide ? '关闭后悬浮球不再自动隐藏' : '开启后拖到屏幕边缘会滑入边框、悬停痕迹可唤出'}
+            onClick={() => onToggleDockHide(!dockHide)}
           >
             <span className="knob" />
           </button>

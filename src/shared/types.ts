@@ -243,4 +243,6 @@ export interface PetMenuModel {
   alwaysOnTop: boolean
   /** 是否打码余额 */
   hideBalance: boolean
+  /** 是否开贴边自动隐藏（缺省开） */
+  dockHide: boolean
 }
