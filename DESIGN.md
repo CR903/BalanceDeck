@@ -49,13 +49,13 @@
 │  CardView     主页卡片网格（点击进详情）          │
 │  DetailView   单供应商用量统计（窗口/剩余/tokens/模型）│
 │  SettingsView 供应商增删改 + 外观 + 频率 + 系统    │
-│  PetBall 收起态 2D 小圆环（SVG 环 + 轮播 + 流体）│
+│  PetBall 收起态 2D 小水球（全屏水体 + 轮播 + 水柱）│
 │  SkinEngine   皮肤包加载（CSS 变量 + 令牌覆盖）    │
 └───────────────────────────────────────────────┘
 ```
 
 - 悬浮窗：`BrowserWindow{ frame:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, resizable:false }`，拖动区用 `-webkit-app-region: drag`。
-- 收起态：折叠成一块 56×56 的小窗（2D 小圆环，唯一的形态），
+- 收起态：折叠成一块 56×56 的小窗（2D 小水球，唯一的形态），
   主体以外的区域鼠标穿透，点击展开。
 - 托盘：macOS 用 template 模板图标（**随主供应商切换 logo**），标题平铺展示该供应商的全部时限窗口（`5H 5% W 52.9% M 68.5%`）；**左键直接切换悬浮窗显隐，右键弹菜单**（macOS 上禁用 `setContextMenu`，否则左键会被菜单抢占）；Windows 托盘 hover tooltip 显示汇总。
 
@@ -266,29 +266,50 @@ slide 基线（§7b）保留为 reduced-motion 回退路径；全动效路径走
 与废除真人瘦身方向直接冲突）。
 
 - **渲染结构**：`.petball-goo` 容器挂 `filter: url(#petball-goo)`
-  （feGaussianBlur + feColorMatrix alpha 对比，滤镜区裁到 56×56 内），内部三元素 ——
-  ① `.fluid-disc`（R8 渐变球）② `.fluid-waves`（R9 水满波浪）③ `.fluid-bridge`（液桥）
-  ④ `.fluid-pill`（贴边水渍）。环/数字/标记在 goo 容器**之外**，读数永远 crisp。
+  （feGaussianBlur + feColorMatrix alpha 对比，滤镜区裁到 56×56 内），内部 ——
+  ① `.fluid-disc`（R8 渐变球）② `.fluid-waves`（全屏水 + 三层错速波 + 液面高光线，
+  仅套餐类）③ `.fluid-bridge`（液桥）④ `.fluid-pill`（贴边水柱：竖柱/横槽 +
+  柱内液 + 柱顶小波浪）。环/数字/标记在 goo 容器**之外**，读数永远 crisp。
+  （2026-10-04 水满 pivot：外圈进度环退役，② 从 r=17 小圆扩到 r=27 全屏，
+  双层波加到三层，④ 从 20px 水渍 pill 改为占满痕迹条的水柱。）
 - **状态驱动**：主进程 dockHide 经 `dock:fluid` 通道推送
   `edge-visible | absorbing | hidden | revealing`（唯一映射 `shared/fluid.fluidForPhase`），
   渲染层只切 CSS 类、不算几何。窗口位移仍走主进程 `setPosition` 步进，morph 与位移串行：
   吸入先播 morph（530ms）再滑，汇聚先滑回再播 morph 尾（400ms）。
 - **R8 球体 3D 观感**：径向渐变（`--ball-bg` 为基、顶部 `--dot-top` 高光、底部
   `--dot-bottom` 内阴影、边缘 `--ball-rim` 描边），与 09-28 球形态令牌体系同源，换肤零代码。
-- **R9 水满进度**：仅套餐类（`isPlan()` 为真）且算得出比例时挂波浪；球内 `<clipPath>` 圆形 +
-  双层正弦波浪（3.2s vs 2s = 1:1.6 错速），液位 = `shared/fluid.level(percent)`
-  （clamp 0–100 → 0–1，一位小数粒度，与环心读数逐位一致）；余额类保持素盘。
-  波浪在隐藏态暂停，reduced-motion 下只显示静态液位。
+- **R9 全屏水满进度**：仅套餐类（`isPlan()` 为真）且算得出比例时挂波浪；
+  球内 `<clipPath>` 圆 r=27（几乎占满 56 盘）+ 三层错速正弦
+  （A 2.2/28 快层 3.2s / B 1.6/36 反向 2s / C 0.9/18 细纹 5.2s，
+  位移取波长整数倍保证无缝）+ 液面 1px 高光线（与 A 层同参数同动画）+
+  水底深度罩（`--water-deep` 渐变，深底浅顶）；液位 = `shared/fluid.level(percent)`
+  （clamp 0–100 → 0–1，一位小数粒度，与环心读数逐位一致），液面公式
+  `55 - level×54`（顶 1 / 底 55，与 r=27 同口径）；水色跟 `lvl`
+  （`--ok/--warn/--danger`，与托盘/卡片同一套 `shared/levels` 阈值），
+  读数数字与角标保留（颜色非唯一通道）；余额类与算不出比例的窗口保持素盘。
+  波浪暂停只有三处：hidden 相位 / 页面不可见（`doc-hidden` 类）/ reduced-motion
+  （静态液位 + 无波浪位移，计时器保留）。
+- **R5 贴边水柱**：隐藏态的水渍 pill 改为水柱 —— 左右边 4×56 竖柱（液高从底起）、
+  上下边 56×4 横槽（液宽从左起），占满可见痕迹条（几何归 `shared/fluid.waterColumn`，
+  与 `dock-hide.peekHitbox` 逐位一致，命中区即柱体）；柱内液 = 同一液位，
+  柱顶一条小波浪（竖柱贴液面顶部通栏 / 横槽贴液面前缘通高，同一张周期 4px 正弦，
+  横槽那张透过 3px 竖缝看）；水色同样跟 `lvl`；液位 0 时只留空槽。
+  水体令牌 `--water-foam/--water-deep` 逐皮肤调色 + `:root` 兜底（新增皮肤零代码）。
 - **morph 期命中区取并集**：球形态命中区本就是整窗，并集 = 整窗 = 不覆盖 ——
   `peekOverride` 只在隐藏落定后覆盖为痕迹条、唤出开始即清除，morph 窗内天然全窗可点。
 - **取帧**：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')` 把 goo 定在 morph 帧
   （呈现层冻结，不动状态机），`'off'` 恢复；`debug:dock-fluid-freeze` 拦住主进程的
   `dock:fluid` 推送（复用 `debug:dock-freeze` 模式）。`--shots` 新增
   `5i-fluid-stretch` / `5j-fluid-bridge` / `5k-fluid-stain`。
-- **测试**：`scripts/test-fluid.mjs`（44 项：时序/液位/水渍几何/相位映射，先弄坏验证）；
+- **测试**：`scripts/test-fluid.mjs`（56 项：时序/液位/水渍几何/相位映射/
+  水柱几何`waterColumn` + 与 `peekHitbox` 同源，先弄坏验证）；
   `test-dock-hide.mjs` 增至 132 项（流体序列 + 全动效串行 + 左右/上下平局）；`test-structure.mjs` 新增
-  J 门（setPhase 唯一出口 / 渲染层只消费 / CSS 降级真实存在 / E2E 覆盖存在）；
-  `--uitest` 新增 `dockFluid{Goo,Hidden,Level,Reveal}`（落定态主副同源 + 波浪与填充弧同生同灭）。
+  J 门（setPhase 唯一出口 / 渲染层只消费 / CSS 降级真实存在 / E2E 覆盖存在）与
+  K 门（环退役无残留 / 三层波 + 高光 / 水体令牌逐皮肤 / 水柱 CSS 与 `waterColumn` 同形 /
+  三处暂停 / clip r=27 + 液面公式，均先弄坏验证）；
+  `--uitest` 新增 `dockFluid{Goo,Hidden,Level,Reveal}`（落定态主副同源 + 波浪与液面同生同灭）、
+  `petWater{Level,Column}`（液面=percent 逐值 + 水色=lvl 令牌逐位 + 隐藏态水柱液高/波浪/唤出）
+  与环退役后的球心水体检（`petBallCenterValue` / `petRingAlwaysOn` / `petNoRingOnBalance` 改查水）。
 - **回滚**：删 goo 容器恢复旧 `.petball-fallback` 即回 slide 版（R8/R9 可独立回滚：
   关水满只留渐变球）。goo 在透明窗口下合成异常则按走查结论硬开关回退 slide。
 
@@ -346,7 +367,14 @@ rig / tokens / clips）、`three` + `@types/three` 依赖与独立 chunk、`fetc
 
 | 形态 | 触发 | 收起态窗口 | 内容 |
 | --- | --- | --- | --- |
-| 2D 小圆环（唯一的形态） | 恒成立 | 56×56 | SVG 用量环 + 环心百分比，**不建 WebGL 上下文**；套餐供应商恒显环，余额供应商不画环 |
+| 2D 小水球（唯一的形态） | 恒成立 | 56×56 | 全屏水体（液位 = 用量百分比，水色跟 `lvl`）+ 环心读数，**不建 WebGL 上下文**；套餐供应商挂水（算得出比例才有液位），余额供应商画素盘 |
+
+第六轮（2026-10-04 水满 pivot）：收起态回到 56 小球、全屏水满做进度 ——
+此前落地的全息球（`src/renderer/src/holo/` + three 依赖 + `HOLO_VIEW` 双形态）**整体删除**
+（分支回到干净 56 小球再做水满；prototype/holo 仅留作原型参考，不进构建）。
+外圈进度环退役（轨道/填充弧的 CSS 与 JSX 一并删除，`data-ring` kind 探针保留）；
+隐藏态水渍 pill 改为水柱（竖柱/横槽 + 柱内液 + 柱顶波浪，几何与 `peekHitbox` 同源）。
+`--water-foam/--water-deep` 逐皮肤调色 + `:root` 兜底。
 
 > 以下三段是人物形态存续期的设计记录（已随 10-03 下线失效，保留为历史）：
 > 形态表 `FORMS` 当时只有 `figure` 一项（球形态不建场景，也就没有机位可言）；
@@ -451,7 +479,7 @@ rig / tokens / clips）、`three` + `@types/three` 依赖与独立 chunk、`fetc
 且永远停在 `windows[0]`，用户看到的是「快速切供应商但从不切时限」。
 切换时环心数字从 0 涨到目标值、平时刷新从旧值补到
 （`hideBalance` 的 `••••` 与 `!`/`—`/`…` 不参与动画）。
-**鼠标穿透**：渲染层量出 2D 小圆环的矩形（56×56 窗口里约 56×56，
+**鼠标穿透**：渲染层量出 2D 小水球的矩形（56×56 窗口里约 56×56，
 渲染层把 `getBoundingClientRect` 持续上报给主进程），每 90ms 上报给主进程；主进程 90ms 光标轮询判定命中 →
 `setIgnoreMouseEvents(ignore, { forward: true })`；**仅收起态运行轮询**，展开面板立即停止。
 
@@ -484,7 +512,7 @@ rig / tokens / clips）、`three` + `@types/three` 依赖与独立 chunk、`fetc
 **持久化**：`ui:alwaysOnTop`（是否置顶）等界面偏好见 keystore `extras`；
 `ui:pet` / `ui:petState` 为历史残留键（不再读写，`ui:pet === '1'` 启动时迁回 `'0'`）。
 
-**自检工具**（见 README 脚本表）：`electron . --ballshot` 十几秒出图（只拍 2D 小圆环；
+**自检工具**（见 README 脚本表）：`electron . --ballshot` 十几秒出图（只拍 2D 小水球；
 `BD_SKINS=1` 逐皮肤）；渲染层 `window.__bd_ball()` 暴露轮播索引（`idx` / `winIdx` /
 `winCount`，纯数据 —— 返回值必须是可结构化克隆的，塞函数会让 `executeJavaScript`
 结果回传失败）；`window.__bd_fluid_freeze()` 定住流体 morph 帧供 `--shots` 取帧。

@@ -104,7 +104,7 @@ export default function App(): React.JSX.Element {
   const [hideBalance, setHideBalance] = useState(false)
 
 
-  // ─── 收起态（2D 小圆环，唯一的形态）──────────────────────────────────────
+  // ─── 收起态（2D 小水球，唯一的形态）──────────────────────────────────────
   // 人物形态已下线（10-03-remove-human）：不再有选人/改名/形态开关。
   // ui:pet 残留 '1' 的老用户由主进程 primePrefs 迁回 '0'，这里只做防御性归一
   // （不读 morph 语义，窗口恒 56×56）。

@@ -131,7 +131,7 @@ app.whenReady().then(async () => {
     return
   }
 
-  // --ballshot：只拍收起态 2D 小圆环，见 ./qa/ballshot
+  // --ballshot：只拍收起态 2D 小水球，见 ./qa/ballshot
   if (process.argv.includes('--ballshot')) {
     await runBallshot()
     return

@@ -10,8 +10,9 @@ import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态：唯一的形态是 2D 小圆环 —— 56×56 窗口、SVG 环、环心一个数；
-// 纯 DOM，不建 3D 场景、不占显存、不加载任何角色素材（首版设计，`d5a028e`）。
+// 收起态：唯一的形态是 2D 小水球 —— 56×56 窗口、全屏水体、环心一个数；
+// 纯 DOM，不建 3D 场景、不占显存、不加载任何角色素材（首版 56×56 窗口，`d5a028e`；
+// 外圈用量环已于 10-04 退役，进度改由球内水位表达）。
 //
 // 人物形态已下线（10-03-remove-human）：pet3d 整目录、FIGURE_VIEW、形态分支、
 // 人物泡泡/动作上报全部删除。本文件只剩圆环 + 轮播 + 流体 + 确认气泡。
@@ -52,20 +53,40 @@ const COUNTUP_MS = 600
 const CONFIRM_BUBBLE_H = 49
 
 /**
- * 波浪路径（水满进度的液面）：56 viewBox 内一条正弦液面 + 两侧下沉封口。
- * 幅 2.2 / 波长 28；phase 错开的两层以 1:1.6 的速度反向漂（PRD R9 双层错速）。
- * 纯视图构造（SVG 形状），共享契约（液位/相位/水渍几何）归 shared/fluid.ts。
+ * 波浪路径（全屏水满的液面）：56 viewBox 内一条正弦液面 + 两侧下沉封口。
+ * 三层错速（A 快层 2.2/28 / B 慢层 1.6/36 反向 / C 细纹 0.9/18），phase 互相错开半个周期。
+ * 位移走 CSS translateX 循环（只位移、不逐帧重算 d），循环距离取波长的整数倍
+ * （-28 / -36 / -36）保证首尾无缝；x 起止（-40..96）盖住最大位移 36。
+ * 纯视图构造（SVG 形状），共享契约（液位/相位/水柱几何）归 shared/fluid.ts。
  */
-function waveD(surfaceY: number, phase: number): string {
-  const A = 2.2
-  const L = 28
-  const parts: string[] = [`M -4 ${surfaceY.toFixed(2)}`]
-  for (let x = -4; x <= 60; x += 4) {
-    parts.push(`L ${x} ${(surfaceY + A * Math.sin(((x + phase) / L) * Math.PI * 2)).toFixed(2)}`)
+function wavePoints(surfaceY: number, phase: number, A: number, L: number): string[] {
+  const pts: string[] = []
+  for (let x = -40; x <= 96; x += 4) {
+    pts.push(`${x} ${(surfaceY + A * Math.sin(((x + phase) / L) * Math.PI * 2)).toFixed(2)}`)
   }
-  parts.push('L 60 60 L -4 60 Z')
-  return parts.join(' ')
+  return pts
 }
+
+function waveD(surfaceY: number, phase: number, A = 2.2, L = 28): string {
+  const pts = wavePoints(surfaceY, phase, A, L)
+  return `M -40 ${surfaceY.toFixed(2)} L ${pts.join(' L ')} L 96 60 L -40 60 Z`
+}
+
+/**
+ * 液面高光线：与 A 层**同一组参数**（2.2/28、同一 phase）的开放折线，正好落在
+ * A 层填充路径的上边缘上 —— 两者挂同一个 drift-a 位移动画，同进同退，高光永远
+ * 贴着液面走。单独一条 path 而不是给填充描边：描边会把底部封口一起勾出来。
+ */
+function waveLine(surfaceY: number, phase: number, A = 2.2, L = 28): string {
+  return `M ${wavePoints(surfaceY, phase, A, L).join(' L ')}`
+}
+
+/**
+ * 水柱顶的小波浪（固定形状，周期 4px，-4..12 盖住 4px 宽的柱面加两侧余量）。
+ * 位移走 CSS（0 → -4px 循环，整数个周期，无缝）；横槽那条把同一张 svg 转 90°
+ * （见 skins.css），不另画第二份路径。
+ */
+const COLUMN_WAVE_D = `M -4 1.5 q 1 -1 2 0${' t 2 0'.repeat(8)}`
 
 /**
  * 中心读数的两态（R5 的核心分离：**显示值 ≠ 目标值**）：
@@ -133,7 +154,7 @@ export function PetBall({
 }: PetBallProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const hitRef = useRef<HTMLDivElement | null>(null)
-  /** 2D 小圆环本体：命中区按它的实测方块上报（它就是整块窗口） */
+  /** 2D 小水球本体：命中区按它的实测方块上报（它就是整块窗口） */
   const fallbackRef = useRef<HTMLDivElement | null>(null)
   /** 确认气泡本体：命中区必须并进它才算点得动（见 reportHit） */
   const confirmRef = useRef<HTMLDivElement | null>(null)
@@ -178,7 +199,7 @@ export function PetBall({
     const host = hostRef.current
     const hw = host?.clientWidth || BALL_VIEW.width
     const hh = host?.clientHeight || BALL_VIEW.height
-    // 无 3D 场景，按 **2D 小圆环的实测方块**上报，不写死尺寸。
+    // 无 3D 场景，按 **2D 小水球的实测方块**上报，不写死尺寸。
     // 窗口 56×56 本身就是那个环 → 整块窗口可点（主进程再外扩 pad=3）。
     const el = fallbackRef.current
     const w = el?.clientWidth || BALL_VIEW.width
@@ -365,10 +386,27 @@ export function PetBall({
   /** 水满只在套餐类挂波浪（余额类保持素盘）；算不出比例（pct == null）也不挂假液位 */
   const showWaves = !!s && isPlan(s) && pct != null
   const fluidLvl = showWaves ? fluidLevel(pct) : 0
-  // 液面在 56 viewBox 里的高度：clip 圆 r=17（圆心 28,28）→ 顶 11 / 底 45
-  const surfaceY = 45 - fluidLvl * 34
+  // 液面在 56 viewBox 里的高度：全屏水体的 clip 圆 r=27（圆心 28,28）→ 顶 1 / 底 55
+  const surfaceY = 55 - fluidLvl * 54
   const waveA = useMemo(() => waveD(surfaceY, 0), [surfaceY])
-  const waveB = useMemo(() => waveD(surfaceY, 14), [surfaceY])
+  const waveB = useMemo(() => waveD(surfaceY, 18, 1.6, 36), [surfaceY])
+  const waveC = useMemo(() => waveD(surfaceY, 9, 0.9, 18), [surfaceY])
+  const surfaceLine = useMemo(() => waveLine(surfaceY, 0), [surfaceY])
+  /** 水柱方向：左右边竖柱（液高从底起）、上下边横槽（液宽从左起），与 shared/fluid.waterColumn 同口径 */
+  const columnVertical = fluidEdgeAttr === 'left' || fluidEdgeAttr === 'right'
+
+  /**
+   * 页面不可见时暂停波浪（三处暂停之一，另两处是 hidden 相位与 reduced-motion）。
+   * CSS 动画在隐藏页签里本来也不绘制，但恢复可见那一刻会按「从没停过」跳一格 ——
+   * 肉眼是一次液面抽动。挂一个类让它真的停，回来继续走（计时器不归这里管）。
+   */
+  const [docHidden, setDocHidden] = useState(false)
+  useEffect(() => {
+    const onVis = (): void => setDocHidden(document.hidden)
+    setDocHidden(document.hidden)
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
 
   // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
   // 把 goo 定在某一 morph 帧并暂停动画，`'off'` 恢复 live。纯呈现层冻结 ——
@@ -644,7 +682,7 @@ export function PetBall({
     <div className={`petball lvl-${lvl}${hover ? ' hover' : ''} no3d`}>
       <div className="petball-stage" ref={hostRef} />
 
-      {/* 主体以外的窗口区域不接收鼠标：命中层只覆盖小圆环的范围 */}
+      {/* 主体以外的窗口区域不接收鼠标：命中层只覆盖小水球的范围 */}
       <div
         className="petball-hit"
         ref={hitRef}
@@ -667,7 +705,7 @@ export function PetBall({
       />
 
       {(
-        // 2D 小圆环：唯一的收起形态（不建 3D）。
+        // 2D 小水球：唯一的收起形态（不建 3D）。
         // data-ring：与 L1 **完全同源**的探针（--uitest 的 petBallCenterValue 靠它区分
         // 「套餐没环」= 回归 与 「余额没环」= 设计）。没有它，DOM 上两种情形长得一模一样，
         // 断言只能靠猜读数格式，余额一旦显示成百分比就会误判。
@@ -675,7 +713,7 @@ export function PetBall({
         //   写成 'balance' 会让断言在「一个供应商都没有」时照样绿（track 本来就没有），
         //   那是标签与机制对不上的永真兜底。
         <div
-          className="petball-fallback"
+          className={`petball-fallback${docHidden ? ' doc-hidden' : ''}`}
           ref={fallbackRef}
           data-ring={s ? (isPlan(s) ? 'plan' : 'balance') : ''}
           data-fluid={fluid}
@@ -707,7 +745,7 @@ export function PetBall({
                   <feComposite in="SourceGraphic" in2="goo" operator="atop" />
                 </filter>
                 <clipPath id="fluid-clip">
-                  <circle cx="28" cy="28" r="17" />
+                  <circle cx="28" cy="28" r="27" />
                 </clipPath>
               </defs>
             </svg>
@@ -717,37 +755,44 @@ export function PetBall({
                 <g clipPath="url(#fluid-clip)">
                   <path d={waveA} className="fluid-wave fluid-wave-a" />
                   <path d={waveB} className="fluid-wave fluid-wave-b" />
+                  <path d={waveC} className="fluid-wave fluid-wave-c" />
+                  <path d={surfaceLine} className="fluid-surface" />
                 </g>
               </svg>
             )}
             <div className="fluid-bridge" />
-            <div className="fluid-pill" />
+            {/* 贴边水柱（10-03-holo-sphere 水满）：隐藏态的水渍 pill 改为水柱 ——
+                几何（竖柱/横槽、占满痕迹条）归 shared/fluid.waterColumn，这里只摆
+                液位与波浪：柱内液高/液宽 = 同一 fluidLvl，柱顶一条小波浪，水色跟 lvl。
+                液位 0（余额类/算不出比例）时只留空柱槽 + 不挂波浪，不造假水位。 */}
+            <div className="fluid-pill">
+              <div
+                className="fluid-column-fill"
+                style={
+                  columnVertical
+                    ? { height: `${(fluidLvl * 100).toFixed(1)}%` }
+                    : { width: `${(fluidLvl * 100).toFixed(1)}%` }
+                }
+              >
+                {/* 柱顶小波浪：坐在液面上（fill 的顶部/前缘），液位 0 时 fill 高度
+                    为 0，波浪无处附着 —— 与「不造假水位」同一条件，不单独再判。 */}
+                {fluidLvl > 0 && (
+                  <span className="fluid-column-wave" aria-hidden="true">
+                    <svg viewBox="-4 0 16 3" preserveAspectRatio="none" aria-hidden="true">
+                      <path d={COLUMN_WAVE_D} className="fluid-column-wave-path" />
+                    </svg>
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          {/* 环的三层判定（缺一层就少画一层，不合并成一个大布尔）：
-              L1 只有**套餐**（plan）供应商有环 —— 充值余额连轨道都不画，只留素圆盘 + 金额
-                 （判定与主卡片同一个 isPlan()，卡片说余额、球不会说套餐）
-              L2 轨道与 pct **解耦**：套餐即使这个窗口算不出比例（无 limit）也必须有轨道。
-                  沿用「pct != null 才画」会把它显示成素圆盘 —— 用户会读成「这个供应商
-                  没环」，与 L2 的「余额才没环」自相矛盾（AC3.3）
-              L3 填充弧才需要 pct：算不出比例就没有弧，绝不画 0% 的假弧（数据诚实） */}
-          {s && isPlan(s) && (
-            <svg viewBox="0 0 56 56" aria-hidden="true">
-              <circle className="dot-ring-track" cx="28" cy="28" r="22" fill="none" strokeWidth="5" />
-              {pct != null && (
-                <circle
-                  className="dot-ring-fill"
-                  cx="28"
-                  cy="28"
-                  r="22"
-                  fill="none"
-                  strokeWidth="5"
-                  strokeLinecap="round"
-                  strokeDasharray={`${(2 * Math.PI * 22 * Math.min(100, Math.max(0, pct))) / 100} ${2 * Math.PI * 22}`}
-                  transform="rotate(-90 28 28)"
-                />
-              )}
-            </svg>
-          )}
+          {/* 外圈进度环已退役（10-03-holo-sphere 水满 pivot）：进度唯一载体是球盘内的
+              全屏水体（液位 = fluidLevel(pct)，水色跟 lvl）。data-ring 探针保留 ——
+              它与「套餐画水 / 余额画素盘」的判定同源（--uitest 靠它区分「套餐没水」=
+              回归 与 「余额没水」= 设计），删掉的话 DOM 上两种情形长得一模一样。
+              ⚠ 没有快照时是 ''（既非套餐也非余额），不是 'balance'：写成 'balance'
+              会让断言在「一个供应商都没有」时照样绿（水体本来就没有），那是标签与
+              机制对不上的永真兜底。 */}
           {/* 供应商标记：10px 品牌色图标，环内数值正上方。
               复用 ProviderMark 的 markDataUrl/markColor，不引入新依赖。
               仅当 mark 字段存在且非空时显示（FR5）。 */}
@@ -824,17 +869,18 @@ export function PetBall({
         </div>
       )}
       {isStale(s ?? {}) && (
-        // 可信度角标。小圆环上也要有（2026-09-27 复核补上）：ballLevel() 只看 status、
+        // 可信度角标。小水球上也要有（2026-09-27 复核补上）：ballLevel() 只看 status、
         // 不看 dataQuality，所以缓存/本机估算的数字在小环上是和权威数据一模一样的绿/琥珀色，
         // 看上去就是实时值。tooltip 里虽然写了「（缓存数据 · 14:03）」，可那要悬停才看得到 ——
         // 而「数字在骗人」正是最该一眼看出的场景。角标只在该出现时出现，不是装饰。
         <div
           className="petball-badge"
-          // 窗口只有 56×56：环的 stroke 外缘在 r=24.5（圆心 28,28），
-          // 空角沿 45° 对角线到盒角（距圆心 39.6）只有 15.1px，15px 的角标必然压弧或被
-          // overflow:hidden 裁掉（实测 15px 落在 (37,5)-(52,20)，最近角距圆心仅 12.0）。
-          // 所以缩到 10px。注意是**正方形**：离圆心最近的是角不是边中点，半对角线
-          // 5√2≈7.07，所以圆心要放到 24.5+7.07=31.57 才真正内切。百分比坐标跟着 viewBox 走。
+          // 窗口只有 56×56：角标 10px 正方形，中心在 (89.9%, 10.1%)，
+          // 离盘心最近的角距离 24.5（translate(-50%,-50%) 后的实测几何）。
+          // 它本来就骑在盘缘上（旧盘 r=28，新水盘 r=27）—— 角标底是半不透
+          // 明深色（见 .petball-badge），压住一小块水面不影响可读；而它绝不能
+          // 再往外挪：10px 的块再往角落去会被 overflow:hidden 裁掉（旧方案 15px
+          // 被裁的死结）。读数与水位才是进度载体，角标只是可信度注脚。
           style={{ left: '89.9%', top: '10.1%' }}
           aria-hidden="true"
         >

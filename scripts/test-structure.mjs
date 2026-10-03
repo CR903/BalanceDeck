@@ -807,5 +807,124 @@ eq2(
   'H4b 门之外没有第二处注册（生产运行时不暴露注入能力）'
 )
 
+// ─── K. 全屏水满（10-03-holo-sphere 水满 pivot）──────────────────────────────
+//
+// 外圈进度环退役后，进度唯一载体是球内水体 + 隐藏态水柱。有三件事改坏了不抛、
+// 界面上看着也正常：① 环的 CSS/JSX 删了一半（零规则的类名 = 隐形环，2026-09-27
+// 踩过）；② 水柱 CSS 与 shared/fluid.waterColumn 各写一套数（看着有柱子但点不中，
+// 与命中区脱钩）；③ 新增的水体令牌某皮肤没写（那套皮肤的水退化，截图上只觉得
+// 「颜色不对」，而外部皮肤没写时直接没高光）。
+console.log('\nK. 全屏水满')
+
+const petBallWater = stripTsComments(read('src/renderer/src/PetBall.tsx'))
+ok(petBallWater.length > 0, 'K0 前置：PetBall.tsx 剥注释后非空（下面的负向断言不能空洞通过）')
+ok(css.length > 0, 'K0 前置：skins.css 剥注释后非空')
+
+// K1 · 进度环真的退役了（CSS 与 JSX 两半都删，不留零规则的类名）。
+//     ⚠ data-ring 探针不在此列：它是 plan/balance 的 kind 探针，不是环（见 PetBall 注释）。
+ok(!/dot-ring/.test(css), 'K1a skins.css 里没有 dot-ring（轨道/填充弧规则一并退役）')
+ok(
+  !/dot-ring-track|dot-ring-fill|className="dot-ring/.test(petBallWater),
+  'K1b PetBall.tsx 里没有 dot-ring 的 SVG/类名（data-ring kind 探针不算环）'
+)
+
+// K2 · 三层波 + 液面高光线都在 DOM 上（缺一层就是「少画一层」的静默降级）。
+ok(
+  /fluid-wave-a/.test(petBallWater) && /fluid-wave-c/.test(petBallWater) && /fluid-surface/.test(petBallWater),
+  'K2a 三层波（a/b/c）+ 液面高光线都在 JSX 里'
+)
+ok(/waveLine\(/.test(petBallWater), 'K2b 高光线经 waveLine 构造（与 A 层同参数，不是手写第二份路径）')
+ok(
+  /fluid-drift-c/.test(css) && /column-drift/.test(css),
+  'K2c 第三层位移 + 水柱波浪位移的关键帧都在（只挂类名不写关键帧 = 静止的假波浪）'
+)
+// K2d · 位移距离必须是各自波长的整数倍（否则循环播放每轮跳一格：B 层曾写成 28px，
+//     而它的波长是 36 —— 2 秒一次的错位抽动，肉眼在 0.3 透明度下照样看得出）。
+//     A=28（1×28）/ B=36（1×36，反向）/ C=36（2×18）；柱顶小波浪周期 4px 走 -4。
+//     ⚠ 按块切片再取数：跨 `@keyframes` 边界贪过去会读到下一块的数，删掉整块照样绿。
+const kfBlock = (name) => {
+  const start = css.indexOf(`@keyframes ${name}`)
+  if (start < 0) return null
+  const cuts = [css.indexOf('@keyframes', start + 1), css.indexOf('@media', start + 1)].filter((i) => i > 0)
+  return css.slice(start, cuts.length ? Math.min(...cuts) : undefined)
+}
+for (const [name, want] of [
+  ['fluid-drift-a', 28],
+  ['fluid-drift-b', 36],
+  ['fluid-drift-c', 36],
+  ['column-drift', 4]
+]) {
+  const block = kfBlock(name)
+  const nums = block ? [...block.matchAll(/translateX\((-?[\d.]+)(?:px)?\)/g)].map((m) => Math.abs(parseFloat(m[1]))) : []
+  const got = nums.length ? Math.max(...nums) : null
+  ok(got === want, `K2d ${name} 位移 ${got ?? '未找到'}px（应为波长整数倍 ${want}px）`)
+}
+
+// K3 · 水体令牌：顶层 :root + 5 个内置皮肤逐个有定义（与 D3 的 --ball-bg 同纪律：
+//     缺顶层 :root，外部皮肤在浅色系统上直接没高光/没深度罩）。
+for (const prop of ['--water-foam', '--water-deep']) {
+  const scopes = declScopes(prop)
+  const missing = ['root', ...SKINS].filter((s) => !scopes.has(s))
+  ok(
+    missing.length === 0,
+    `K3 ${prop} 在顶层 :root + 5 个皮肤都有（缺 ${missing.join(',') || '无'}；实得 ${[...scopes].sort().join(',')}）`
+  )
+}
+// 水色仍跟 lvl（不是令牌写死某一级的颜色）：.fluid-wave 吃 --ok，各 lvl 覆写还在。
+const waveBody = decls(ruleBody(css, '.petball.no3d .fluid-wave'))
+ok(
+  waveBody != null && /var\(\s*--ok\s*\)/.test(waveBody.fill || ''),
+  `K3b 水体主层 fill 是 var(--ok)（实际 ${JSON.stringify(waveBody?.fill || '未找到')}）`
+)
+ok(
+  ruleBody(css, '.petball.no3d.lvl-warn .fluid-wave') != null &&
+    ruleBody(css, '.petball.no3d.lvl-danger .fluid-wave') != null &&
+    ruleBody(css, '.petball.no3d.lvl-muted .fluid-wave') != null,
+  'K3c lvl-warn/danger/muted 的水色覆写都在（删掉一级，那一级的水就恒绿）'
+)
+
+// K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形
+//     （竖柱 4×56 / 横槽 56×4；4 = shared/dock-hide.PEEK，56 = shared/pet-view.BALL_VIEW）。
+//     纯函数那半边的数由 scripts/test-fluid.mjs 用例 6 钉死，这里钉 CSS 这半边 ——
+//     两边各写一套数是「看着有柱子但点不中」的成因（与命中区 peekHitbox 脱钩）。
+for (const [edge, want] of [
+  ['left', '4px/56px'],
+  ['right', '4px/56px'],
+  ['top', '56px/4px'],
+  ['bottom', '56px/4px']
+]) {
+  const body = decls(ruleBody(css, `.petball.no3d .petball-fallback[data-edge='${edge}'] .fluid-pill`))
+  const got = `${body.width || '?'}/${body.height || '?'}`
+  ok(body.width != null && got === want, `K4 水柱 ${edge} 边 ${got}（应为 ${want}，与 waterColumn 同形）`)
+}
+// 柱内液与柱顶波浪的 DOM+CSS 都在（缺一个，柱子就是空槽/静槽）。
+ok(/fluid-column-fill/.test(petBallWater) && /fluid-column-wave/.test(petBallWater), 'K4b 柱内液 + 柱顶波浪在 JSX 里')
+ok(
+  ruleBody(css, '.petball.no3d .fluid-column-fill') != null &&
+    ruleBody(css, '.petball.no3d .fluid-column-wave svg') != null,
+  'K4c 柱内液 + 柱顶波浪的 CSS 规则都在'
+)
+
+// K5 · 三处暂停都在（hidden 相位 / 页面不可见 / reduced-motion），不是注释。
+ok(
+  /\[data-fluid='hidden'\][^{]*\.fluid-wave[^}]*animation-play-state:\s*paused/.test(css),
+  'K5a hidden 态暂停波浪（J3b 的形状，作用域规则，不是裸 paused）'
+)
+ok(
+  /\.petball-fallback\.doc-hidden[^{]*\.fluid-wave[^}]*animation-play-state:\s*paused/.test(css),
+  'K5b 页面不可见（doc-hidden）暂停波浪（PetBall 的 visibilitychange 挂类，CSS 生效）'
+)
+ok(/docHidden \? ' doc-hidden'/.test(petBallWater), 'K5c 前置：PetBall 真的挂 doc-hidden 类（K5b 不是空洞通过）')
+const reducedChunks = css.split('@media (prefers-reduced-motion: reduce)').slice(1)
+ok(
+  reducedChunks.length > 0 && reducedChunks.some((c) => c.includes('.fluid-bridge') && c.includes('.fluid-surface')),
+  'K5d reduced-motion 块里 morph 与水面波浪一起降级（只降一半 = 半动半静）'
+)
+
+// K6 · 全屏水体的液位映射：clip 圆 r=27（几乎占满 56 盘）+ 液面公式。
+//     液位 = fluidLevel(pct) 那一半由 test-fluid 钉，这里只钉视图这半的两个数。
+ok(/id="fluid-clip"[\s\S]{0,120}r="27"/.test(petBallWater), 'K6a 水体 clip 圆 r=27（全屏水，不是 r=17 的小圆）')
+ok(/55 - fluidLvl \* 54/.test(petBallWater), 'K6b 液面公式 55 - level×54（顶 1 / 底 55，与 r=27 的圆同口径）')
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

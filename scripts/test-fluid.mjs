@@ -7,6 +7,8 @@
 import { loadTs } from './lib/load-ts.mjs'
 
 const fluid = await loadTs('src/shared/fluid.ts')
+const dockHide = await loadTs('src/shared/dock-hide.ts')
+const { peekHitbox } = dockHide
 const {
   ABSORB_STRETCH_MS,
   ABSORB_MERGE_MS,
@@ -18,7 +20,8 @@ const {
   isFluidPhase,
   fluidForPhase,
   level,
-  pillBox
+  pillBox,
+  waterColumn
 } = fluid
 
 let pass = 0
@@ -99,6 +102,22 @@ eq(fluidForPhase('dwell-rehide'), 'edge-visible', 'dwell-rehide → edge-visible
 eq(fluidForPhase('bogus'), 'edge-visible', '未知相位 → edge-visible（默认画整球）')
 eq(JSON.stringify(FLUID_PHASES), JSON.stringify(['edge-visible', 'absorbing', 'hidden', 'revealing']), '相位全集四项')
 ok(isFluidPhase('absorbing') && !isFluidPhase('hiding') && !isFluidPhase(''), 'isFluidPhase 只认四相位')
+
+console.log('用例 6：贴边水柱几何（10-03-holo-sphere 水满：水渍 pill 改为占满痕迹条的水柱）')
+eq(waterColumn('left', { width: 56, height: 56 }), { x: 52, y: 0, width: 4, height: 56, vertical: true }, '左：4 宽 × 56 高竖柱（探出边贴右）')
+eq(waterColumn('right', { width: 56, height: 56 }), { x: 0, y: 0, width: 4, height: 56, vertical: true }, '右：4 宽 × 56 高竖柱（探出边贴左）')
+eq(waterColumn('top', { width: 56, height: 56 }), { x: 0, y: 52, width: 56, height: 4, vertical: false }, '上：56 宽 × 4 高横槽（探出边贴底）')
+eq(waterColumn('bottom', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 4, vertical: false }, '下：56 宽 × 4 高横槽（探出边贴顶）')
+// 水柱占满可见痕迹：与 peekHitbox 逐位一致（看得见的柱子整根可点，不存在半态）
+for (const [e, name] of [['left', '左'], ['right', '右'], ['top', '上'], ['bottom', '下']]) {
+  const col = waterColumn(e, { width: 56, height: 56 })
+  const peek = peekHitbox(e, { width: 56, height: 56 })
+  ok(col && col.x === peek.x && col.y === peek.y && col.width === peek.width && col.height === peek.height, `${name}：水柱与 peekHitbox 同源（命中区即柱体）`)
+}
+eq(waterColumn('left', { width: NaN, height: 56 }), null, 'NaN 尺寸 → null')
+eq(waterColumn('left', { width: 0, height: 56 }), null, '零宽 → null')
+eq(waterColumn('left', { width: 56, height: 56 }, -1), null, '负探出 → null')
+eq(waterColumn('bogus', { width: 56, height: 56 }), null, '非法边 → null')
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
 process.exit(fail === 0 ? 0 : 1)
