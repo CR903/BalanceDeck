@@ -15,7 +15,7 @@ import { BALL_VIEW } from '../../shared/pet-view'
 // 隐藏偏移的断言口径与主进程同一常数（改 PEEK 时这里跟着变，不各自硬编码 56-4=52）
 import { PEEK } from '../../shared/dock-hide'
 import { refreshNow } from '../scheduler'
-import { resolveWaterAnchors, waterColor } from '../../shared/water-color'
+import { parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
 
 export async function runUiTest(
@@ -1039,7 +1039,7 @@ export async function runUiTest(
   // 进度唯一载体是球内全屏水）：
   //   · plan + 百分比读数 —— 三层波浪 + 高光线 + 真实水色（lvl 令牌逐位比）+ 液面位置；
   //   · plan + 金额读数（算不出比例）—— 无波浪（绝不画 0% 的假水位），只有素盘 + 金额；
-  //   · balance —— 素盘 + 金额，无波浪；
+  //   · balance —— 满水（R4-6，钱足=满杯）+ accent 水色 + 液面到顶；
   //   · 退役环的节点一个不许剩（[class*="dot-ring"] 恒为 0）。
   //
   // kind 由 PetBall 的 data-ring 提供（与 showWaves 同一个表达式）。断言**必须**先分 kind：
@@ -1052,10 +1052,14 @@ export async function runUiTest(
       const waves=[...dot.querySelectorAll('.fluid-wave')]
       const surf=dot.querySelector('.fluid-surface')
       const value=dot.querySelector('.dot-value')
+      const d0=waves[0]?waves[0].getAttribute('d'):null
+      let sy=null
+      if(d0){const m=d0.match(/^M -40 (-?[\d.]+)/); if(m) sy=parseFloat(m[1])}
       return JSON.stringify({
         ring: dot.getAttribute('data-ring') || '',
         waves: waves.length,
         surface: !!surf,
+        surfaceY: sy,
         fill: waves[0]?getComputedStyle(waves[0]).fill:'',
         lvl: (document.querySelector('.petball')?.className.match(/lvl-([a-z]+)/)||[])[1]||'',
         ringNodes: dot.querySelectorAll('[class*="dot-ring"]').length,
@@ -1070,8 +1074,9 @@ export async function runUiTest(
   let waterLvl = ''
   let ringNodes = -1
   let ringValue = ''
+  let ringSurfaceY: number | null = null
   try {
-    const d = JSON.parse(ringDom) as { ring: string; waves: number; surface: boolean; fill: string; lvl: string; ringNodes: number; value: string }
+    const d = JSON.parse(ringDom) as { ring: string; waves: number; surface: boolean; surfaceY: number | null; fill: string; lvl: string; ringNodes: number; value: string }
     ringKind = d.ring
     waveCount = d.waves
     hasSurface = d.surface
@@ -1079,12 +1084,15 @@ export async function runUiTest(
     waterLvl = d.lvl
     ringNodes = d.ringNodes
     ringValue = d.value
+    ringSurfaceY = typeof d.surfaceY === 'number' ? d.surfaceY : null
   } catch {
     // ringDom 是 fail:... —— 下面统一报出去
   }
   const realWater = (v: string): boolean => v !== '' && v !== 'none' && v !== 'rgba(0, 0, 0, 0)'
   const pctLike = /^-?\d+(\.\d+)?%$/.test(ringValue)
-  const ringWhy = ringDom.startsWith('fail:')
+  // 余额满水（R4-6）：三层波 + 高光 + 液面到顶三件套先同步判，水色 accent 异步另判
+  // （waterAccentWhy 要读 computed，不能进三元表达式）
+  let ringWhy = ringDom.startsWith('fail:')
     ? ringDom
     : ringNodes !== 0
       ? `fail:ringNodes=${ringNodes}（退役环还有残留节点）`
@@ -1109,12 +1117,15 @@ export async function runUiTest(
                 ? 'fail:no-pct-surface'
                 : ''
           : ringKind === 'balance'
-            ? waveCount !== 0
-              ? `fail:balance-waves=${waveCount}`
-              : hasSurface
-                ? 'fail:balance-surface'
-                : ''
+            ? waveCount !== 3
+              ? `fail:balance-waves=${waveCount}（余额满水三层）`
+              : !hasSurface
+                ? 'fail:balance-no-surface（余额满水高光）'
+                : !surfaceNear(ringSurfaceY, 100)
+                  ? `fail:balance-surfaceY=${ringSurfaceY}（余额满水液面应到顶）`
+                  : ''
             : `fail:ring='${ringKind}'`
+  if (!ringWhy && ringKind === 'balance') ringWhy = await waterAccentWhy(waterFill)
   r.petBallCenterValue = ringWhy || 'ok'
   r.petBallRingDiag = ringDom
   // 命中区（W7）：球形态的拖拽/点击靠 .petball-hit 的矩形，必须贴合 56×56 的环。
@@ -1176,17 +1187,32 @@ export async function runUiTest(
   const dotValue = async (): Promise<string> =>
     String(await exec("document.querySelector('.petball-fallback .dot-value')?.textContent ?? ''"))
   /** 目标液面（与 PetBall 同式：clip 圆 r=27 → 顶 1 / 底 55，液位一位小数）：d 起点 Y 必须落在它 ±0.6 内 */
-  const surfaceFor = (pct: number): number => {
+  function surfaceFor(pct: number): number {
     const c = Math.min(100, Math.max(0, pct))
     return 55 - (Math.round(c * 10) / 1000) * 54
   }
-  const surfaceNear = (sy: number | null, pct: number): boolean =>
-    typeof sy === 'number' && Number.isFinite(sy) && Math.abs(sy - surfaceFor(pct)) <= 0.6
+  function surfaceNear(sy: number | null, pct: number): boolean {
+    return typeof sy === 'number' && Number.isFinite(sy) && Math.abs(sy - surfaceFor(pct)) <= 0.6
+  }
   /**
-   * 水色 = 连续插值期望（10-04-water-color-by-usage：与渲染层同一实现算期望，
-   * 不手写第二份公式；锚点仍读自页面 computed 三令牌，不读死颜色值，换肤不用改）。
-   * pct 由调用方按当前夹具传入（探针不带 pct，只带读数文本）。
+   * 余额水色 = accent 实色期望（R4-6：与渲染层同一实现算期望，不手写第二份公式；
+   *   accent 读自 .app computed，不读死颜色值，换肤不用改）。
+   * function 声明（非 const 箭头）：1128 行的 ringWhy 余额分支先用，后声明 ——
+   * const 会撞 TDZ，function 提升无此问题。
    */
+  async function waterAccentWhy(fill: string | null): Promise<string> {
+    const raw = String(
+      await exec(
+        `(()=>{const a=document.querySelector('.app');if(!a)return '';return getComputedStyle(a).getPropertyValue('--accent')})()`
+      )
+    ).trim()
+    if (!raw) return 'fail:accent-empty'
+    const c = parseCssColor(raw)
+    if (!c) return `fail:accent-parse=${raw.slice(0, 40)}`
+    const want = rgbStr(c)
+    const got = (fill || '').replace(/\s+/g, '')
+    return got === want.replace(/\s+/g, '') ? '' : `fail:accent fill=${fill} want=${want}(--accent=${raw.trim()})`
+  }
   const waterColorWhy = async (p: BallProbe, pct: number): Promise<string> => {
     if (p.waves !== 3 || !p.surface) return `fail:precondition waves=${p.waves} surface=${p.surface}`
     if (!p.lvl) return 'fail:no-lvl'
@@ -1389,22 +1415,31 @@ export async function runUiTest(
   r.petWindowCycle = winCycleWhy || singleWhy || 'ok'
   r.petWinLabel = winLabelWhy || singleLabelWhy || 'ok'
 
-  // ── 场景三：充值余额 —— 素盘 + 金额，无水无环（AC2.1）；隐藏余额时不出现数字（AC5.3）──
+  // ── 场景三：充值余额 —— 满水 + 金额 + accent 水色（R4-6；AC2.1 已更新）；隐藏余额时不出现数字（AC5.3）──
   await pushSettle(FIX_BAL)
   const balDom = String(
     await exec(`(()=>{const d=document.querySelector('.petball-fallback'); if(!d) return 'fail:no-dot'
+      const waves=[...d.querySelectorAll('.fluid-wave')]
+      const d0=waves[0]?waves[0].getAttribute('d'):null
+      let sy=null
+      if(d0){const m=d0.match(/^M -40 (-?[\\d.]+)/); if(m) sy=parseFloat(m[1])}
       return JSON.stringify({ring:d.getAttribute('data-ring')||'',
-        waves:d.querySelectorAll('.fluid-wave').length,
+        waves:waves.length,
         surface:!!d.querySelector('.fluid-surface'),
+        surfaceY: sy,
+        fill: waves[0]?getComputedStyle(waves[0]).fill:'',
         ringNodes:d.querySelectorAll('[class*="dot-ring"]').length})})()`)
   )
   let balWhy = ''
   try {
-    const b = JSON.parse(balDom) as { ring: string; waves: number; surface: boolean; ringNodes: number }
+    const b = JSON.parse(balDom) as { ring: string; waves: number; surface: boolean; surfaceY: number | null; fill: string; ringNodes: number }
     if (b.ring !== 'balance') balWhy = `fail:ring=${b.ring}` // 前置条件：真的是余额供应商
     else if (b.ringNodes !== 0) balWhy = `fail:ringNodes=${b.ringNodes}`
-    else if (b.waves !== 0) balWhy = `fail:waves=${b.waves}（余额不挂水）`
-    else if (b.surface) balWhy = 'fail:surface（余额不挂高光）'
+    else if (b.waves !== 3) balWhy = `fail:waves=${b.waves}（余额满水三层）`
+    else if (!b.surface) balWhy = 'fail:surface（余额满水高光）'
+    else if (typeof b.surfaceY !== 'number' || Math.abs(b.surfaceY - surfaceFor(100)) > 0.6) {
+      balWhy = `fail:surfaceY=${b.surfaceY}（余额满水液面应到顶）`
+    } else balWhy = await waterAccentWhy(b.fill)
   } catch {
     balWhy = `fail:probe=${balDom}`
   }
@@ -2372,31 +2407,36 @@ export async function runUiTest(
       : `fail:main=${dsFluidHide.fluid} dom=${domHide.fluid}/${domHide.edge}`
   // 液位与百分比同生同灭：波浪数恒为 0 或 3（三层），且"有波浪 ⟺ 有液面"。
   // 判据不依赖具体数据（真实快照随机器而变）：plan+有液面 → 3 层波浪 + 高光 + 液面在盘内；
-  // balance/无液面 → 0 层。液面位置由 petWaterLevel 按夹具逐值钉，这里只验"在盘内"。
+  // balance（R4-6 满水）→ 3 层波浪 + 高光 + 液面到顶；无液面（nodata/error/算不出）→ 0 层。
+  // 液面位置由 petWaterLevel 按夹具逐值钉，这里只验"在盘内"。
+  const wavesInDisc = (w: number, sy: unknown): boolean =>
+    w === 3 && typeof sy === 'number' && sy >= 1 && sy <= 55
   const wavesOk =
     domHide.waves === -1
       ? `fail:probe`
       : domHide.ring === 'plan'
         ? (domHide.surface
-            ? domHide.waves === 3 &&
-              typeof domHide.surfaceY === 'number' &&
-              domHide.surfaceY >= 1 &&
-              domHide.surfaceY <= 55
+            ? wavesInDisc(domHide.waves, domHide.surfaceY)
               ? 'ok'
               : `fail:ring=plan surfaceY=${domHide.surfaceY} waves=${domHide.waves}`
             : domHide.waves === 0
               ? 'ok'
               : `fail:ring=plan surface=false waves=${domHide.waves}`)
-        : domHide.waves === 0 && !domHide.surface
-          ? 'ok'
-          : `fail:ring=${domHide.ring} waves=${domHide.waves} surface=${domHide.surface}`
+        : domHide.ring === 'balance'
+          ? (domHide.surface && wavesInDisc(domHide.waves, domHide.surfaceY)
+              ? 'ok'
+              : `fail:ring=balance surfaceY=${domHide.surfaceY} waves=${domHide.waves} surface=${domHide.surface}`)
+          : domHide.waves === 0 && !domHide.surface
+            ? 'ok'
+            : `fail:ring=${domHide.ring} waves=${domHide.waves} surface=${domHide.surface}`
   r.dockFluidLevel = wavesOk
 
   // ── 贴边水柱（10-03-holo-sphere 水满 R5）：隐藏态的水渍 pill 改为水柱 ──────
   //
   // 仍在 hidden 落定态内（左沿）：柱体占满可见痕迹 + 柱内液高 = 同一液位 +
-  // 柱顶小波浪 + 水色跟 lvl。判据不依赖具体数据（真实快照随机器而变），先分 kind：
-  // plan+有液面 → 柱内液 > 0 + 波浪在；balance/无液面 → 空槽（不造假水位）。
+  // 柱顶小波浪 + 水色同源。判据不依赖具体数据（真实快照随机器而变），先分 kind：
+  // plan+有液面 → 柱内液 > 0 + 波浪在；balance（R4-6 满水）→ 满柱 + 波浪在 + accent 色；
+  // 无液面（nodata/error/算不出）→ 空槽（不造假水位）。
   // 痕迹点击唤出走既有 dockReveal 那条不断（命中区即柱体，见 shared/fluid.waterColumn）。
   const columnDom = String(
     await exec(`(()=>{
@@ -2428,10 +2468,12 @@ export async function runUiTest(
       // 前置：左沿竖柱 4×56（与 waterColumn/peekHitbox 同形；K4 在静态侧钉死四边）
       if (c.edge !== 'left') columnWhy = `fail:edge=${c.edge}`
       else if (c.pillW !== 4 || c.pillH !== 56) columnWhy = `fail:pillar=${c.pillW}x${c.pillH}`
-      else if (c.ring === 'plan' && c.surface) {
+      else if ((c.ring === 'plan' && c.surface) || c.ring === 'balance') {
+        // 套餐有液面与余额满水：柱内液 + 柱顶波 + 真实水色三件套；余额水色另判 accent
         if (!(c.fillH > 0)) columnWhy = `fail:empty-fill=${c.fillH}（有液面却空柱）`
         else if (!c.wave) columnWhy = 'fail:no-wave（有液面却无柱顶波浪）'
         else if (!c.fillColor || c.fillColor === 'rgba(0, 0, 0, 0)') columnWhy = `fail:fillColor=${c.fillColor}`
+        else if (c.ring === 'balance') columnWhy = await waterAccentWhy(c.fillColor)
       } else if (!(c.fillH === 0 && !c.wave)) {
         columnWhy = `fail:fake-level ring=${c.ring} surface=${c.surface} fillH=${c.fillH}（无液面必须空槽）`
       }

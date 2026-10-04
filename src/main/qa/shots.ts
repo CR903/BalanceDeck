@@ -151,6 +151,29 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   // 不动状态机；此时候选供应商的切换计时照走，拍完 'off' 恢复）。
   await exec(`window.__bd_fluid_freeze?.('pour-mid')`)
   await sleep(600)
+  // 自描述探针（R4-1）：雨滴是否在 DOM + 定帧位姿，不靠像素猜
+  process.stdout.write(
+    `5l-probe: ${String(
+      await exec(`(()=>{
+        const dot=document.querySelector('.petball-fallback');
+        if(!dot) return 'no-dot';
+        const drops=[...dot.querySelectorAll('.pour-drop')];
+        const vis=drops.filter((d)=>getComputedStyle(d).display!=='none');
+        const d0=vis[0];
+        const r=d0?d0.getBoundingClientRect():null;
+        const el=r?document.elementFromPoint(r.x+r.width/2,r.y+r.height/2):null;
+        return JSON.stringify({freeze:dot.getAttribute('data-freeze'),ring:dot.getAttribute('data-ring'),
+          drops:drops.length,vis:vis.length,
+          op:d0?getComputedStyle(d0).opacity:'?',
+          tf:d0?getComputedStyle(d0).transform:'?',
+          bg:d0?getComputedStyle(d0).backgroundColor:'?',
+          rect:r?{x:+r.x.toFixed(1),y:+r.y.toFixed(1),w:+r.width.toFixed(1),h:+r.height.toFixed(1)}:'?',
+          top:el?(el.className||el.tagName):'?',
+          splash:dot.querySelectorAll('.pour-splash').length,
+          trickle:dot.querySelectorAll('.pour-trickle').length});
+      })()`)
+    )}\n`
+  )
   await shoot('5l-pour-mid')
   await exec(`window.__bd_fluid_freeze?.('pour-top')`)
   await sleep(600)

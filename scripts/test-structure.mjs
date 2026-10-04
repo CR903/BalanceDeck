@@ -905,52 +905,76 @@ ok(
   'K3d 三层波 fill + 柱内液 background 都绑内联 water（少绑一处，那处的水就恒三档）'
 )
 
-// K7 · 倒水入场（10-04-pour-in-slosh + R2 细射流）：data-pour 三段 + 取帧 + 降级，缺一件都算半态
+// K7 · 倒水入场（R4-1 雨滴）：data-pour 三段 + 取帧 + 降级，缺一件都算半态
 ok(/data-pour=/.test(petBallCode), 'K7a 重播信号落在 data-pour 属性上（--shots 不靠猜样式读状态）')
 ok(
   /POUR_TOTAL_MS/.test(petBallCode) && /className="slosh"/.test(petBallWater),
   'K7b 摘属性计时经 shared POUR_TOTAL_MS + 荡漾有独立 .slosh 位移层（不复用波浪 svg 本体）'
 )
 ok(
-  /pour-stream/.test(css) && /pour-splash/.test(css) && /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
-  'K7c 射流/触水/冲顶/荡漾/闪峰五段 keyframes 都在（少一段，入场就缺一拍）'
+  /pour-drop/.test(css) && /pour-trickle/.test(css) && /pour-splash/.test(css) && /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
+  'K7c 雨滴/壁流/触水/冲顶/荡漾/闪峰六段 keyframes 都在（少一段，入场就缺一拍）'
 )
 ok(
-  !/@keyframes pour-fill\s*\{/.test(css),
-  'K7c2 整坨 pour-fill 已删（同一目标两套位移是漂移源，R2 替代为射流）'
+  !/@keyframes pour-fill\s*\{/.test(css) && !/@keyframes pour-stream\s*\{/.test(css),
+  'K7c2 整坨 pour-fill 与单条 pour-stream 已删（同一目标多套雨是漂移源，R4-1 只留雨滴）'
 )
 ok(
-  /\[data-pour='in'\][^{]*\.pour-stream[^}]*pour-stream/.test(css) &&
+  /\[data-pour='in'\][^{]*\.pour-drop[^}]*pour-drop/.test(css) &&
+    /\[data-pour='in'\][^{]*\.pour-trickle[^}]*pour-trickle/.test(css) &&
     /\[data-pour='in'\][^{]*\.pour-splash[^}]*pour-splash/.test(css) &&
     /\[data-pour='in'\][^{]*\.slosh[^}]*pour-slosh/.test(css),
-  'K7d 三段动画挂在 data-pour 上（属性摘掉即无入场 = 回滚点 R2；射流落点按 surfaceY 内联，不读死位置）'
+  'K7d 四段动画挂在 data-pour 上（属性摘掉即无入场；落距/落点按 surfaceY 内联，不读死位置）'
 )
 ok(
   /\.slosh\s*\{[^}]*position:\s*absolute/.test(css) &&
     /\.pour-clip\s*\{[^}]*clip-path:\s*circle\(27px/.test(css),
-  'K7e 位移层抽离布局 + 射流裁进水盘圆（r=27 与 svg clip 同口径，不画出界）'
+  'K7e 位移层抽离布局 + 雨裁进水盘圆（r=27 与 svg clip 同口径，不画出界）'
 )
 ok(
-  /className="pour-stream"/.test(petBallWater) &&
+  /className={`pour-drop/.test(petBallWater) &&
+    /POUR_DROPS\.map/.test(petBallWater) &&
     /className="pour-splash"/.test(petBallWater) &&
-    /surfaceY - 6/.test(petBallWater),
-  'K7e2 射流跟水色（与波同源）+ ripple 落点跟液面（surfaceY 内联，不悬空不沉底）'
+    /className="pour-trickle/.test(petBallWater) &&
+    /pourSurfaceY - 6/.test(petBallWater) &&
+    /waterAnchors\.accent/.test(petBallWater),
+  'K7e2 雨滴按表渲染 + 触水落点跟液面（pourSurfaceY 内联：套餐真实液面、余额钳 24 没入水中）+ 壁 trickle 两条 + 余额水走 accent'
+)
+ok(
+  /POUR_DROPS/.test(petBallCode) && /from '\.\/skin-waves'/.test(petBallCode),
+  'K7e3 雨滴表经 ./skin-waves 的 POUR_DROPS（不手写第二份落位）'
 )
 ok(
   /pour-mid/.test(petBallCode) &&
-    /\[data-freeze='pour-mid'\][^{]*\.pour-stream/.test(css) &&
+    /\[data-freeze='pour-mid'\][^{]*\.pour-drop/.test(css) &&
     /\[data-freeze='pour-top'\]/.test(css),
-  'K7f 取帧钩子认 pour-mid/pour-top + CSS 有对应定帧（--shots 5l/5m 不拍空；mid 定在射流半程）'
+  'K7f 取帧钩子认 pour-mid/pour-top + CSS 有对应定帧（--shots 5l/5m 不拍空；mid 定在雨滴半空）'
 )
 ok(
   /prefers-reduced-motion/.test(petBallCode),
   'K7g reduced-motion 下不挂 data-pour（JS 门控，直接终态）'
 )
+{
+  // K7h · 雨在 goo 容器之外（R4-1 取证：容器 goo 滤镜把 3px 雨滴糊成无色条，
+  // DOM 全对但像素无色）。断法：goo 开标签与 pour-clip 开标签之间的 <div / </div
+  // 必须配平（配平 = pour-clip 在 goo 闭标签之后，不嵌套；顺序同时保证雨画在水上）。
+  const src = petBallWater
+  const gooOpen = src.indexOf('className="petball-goo"')
+  const clipOpen = src.indexOf('className="pour-clip"')
+  const seg = gooOpen >= 0 && clipOpen > gooOpen ? src.slice(gooOpen, clipOpen) : ''
+  // 自闭合 <div … /> 不算 open（fluid-disc / fluid-bridge 就是自闭合，不减会误报嵌套）
+  const opens = (seg.match(/<div[\s>]/g) || []).length - (seg.match(/<div[^>]*\/>/g) || []).length
+  const closes = (seg.match(/<\/div>/g) || []).length
+  ok(
+    seg !== '' && opens === closes,
+    `K7h pour-clip 不在 goo 容器内（div 配平 ${opens}/${closes}；嵌套会被 goo blur 吃掉）`
+  )
+}
 
 // K8 · 贴边吸溜水柱温度计（10-04-edge-sip-column）：吸走 + 灌满 + 活柱，缺一件都算半态
 ok(
   /\[data-fluid='absorbing'\][^{]*\.fluid-waves[^}]*waves-drain/.test(css),
-  'K8a 吸入时球内水下沉流向贴边（drain 与 pour-fill 同目标，放 pour 规则之后，真撞上 drain 赢）'
+  'K8a 吸入时球内水下沉流向贴边（drain 是 waves 唯一的位移动画，无冲突）'
 )
 ok(
   /bridge-absorb-h/.test(css) &&
@@ -1030,8 +1054,9 @@ for (const skin of SKINS) {
   )
 }
 ok(
-  /\.fluid-surface[^}]*var\(--wave-speed-a\)/.test(css),
-  'K9d 高光线与 A 层读同一速度变量（两处写死数字会慢慢错开，高光脱离波峰）'
+  /\.fluid-surface[^}]*var\(--wave-speed-a\)/.test(css) &&
+    /\.fluid-foam[^}]*var\(--wave-speed-a\)/.test(css),
+  'K9d 高光线与泡沫带都与 A 层读同一速度变量（写死数字会慢慢错开，高光/泡沫脱离波峰）'
 )
 ok(
   !/fluid-drift|wave-speed|wave-opacity/.test(petBallCode),
@@ -1040,6 +1065,42 @@ ok(
 ok(
   /from '\.\/skin-waves'/.test(petBallWater) && /skinWaves\(skinId\)/.test(petBallWater),
   'K9f 波形逐皮肤取表（R1；ext 回退默认，不断裂）'
+)
+ok(
+  /waveBand\(surfaceY/.test(petBallWater) && /className="fluid-foam"/.test(petBallWater),
+  'K9g 泡沫带经 waveBand 与 A 同参数构造（不是手写第二份路径；冒头盖进泡沫里）'
+)
+// K9h · 天气变量全覆盖（R4-4）：:root 默认 + 5 皮肤逐个覆盖（与 K9a 同口径）。
+for (const prop of ['--drop-w', '--drop-speed', '--splash-s', '--slosh-amp', '--slosh-dur']) {
+  const scopes = declScopes(prop)
+  const missing = ['root', ...SKINS].filter((s) => !scopes.has(s))
+  ok(
+    missing.length === 0,
+    `K9h ${prop} 在顶层 :root + 5 个皮肤都有（缺 ${missing.join(',') || '无'}）`
+  )
+}
+ok(
+  /pour-slosh[^}]*var\(--slosh-amp\)/.test(css) && /pour-slosh[^}]*var\(--slosh-dur\)/.test(css),
+  'K9i 荡漾幅度与时长走变量（每皮不同性格；写死数字等于五皮同浪）'
+)
+// K9j · 每皮雨滴数不同（R4-4）：minimal 3 / ink 4 / aero 5 / dark 6 / candy 7 全开。
+// nth-child 藏尾，顺序即重要度（POUR_DROPS 表注释）；splash 与雨滴同进退。
+for (const [skin, keep] of [['minimal', 3], ['ink', 4], ['aero', 5], ['dark', 6]]) {
+  ok(
+    new RegExp(`\\[data-skin='${skin}'\\][^{]*\\.pour-drop:nth-child\\(n\\+${keep + 1}\\)`).test(css),
+    `K9j ${skin} 留前 ${keep} 滴（nth-child 藏尾）`
+  )
+}
+
+// K10 · 稳态无溢出（R4-2）：::after 深度罩与 goo 输出都裁进 r=27 水盘圆。
+// 底缘 1px 环就是"波浪超出球体"的真凶（5-ball 像素取证）；morph 态不裁（桥要出圆）。
+ok(
+  /\.fluid-waves::after[^}]*inset:\s*1px/.test(css),
+  'K10a 深度罩 inset:1px（r=27，与 svg clip 圆同口径，不多出 1px 环）'
+)
+ok(
+  /\[data-fluid='edge-visible'\]:not\(\[data-freeze\]\)[^{]*\.petball-goo[^}]*clip-path:\s*circle\(27px/.test(css),
+  'K10b 稳态 goo 裁进圆（morph/freeze 不裁：桥要出圆、取帧要看全貌）'
 )
 
 // K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形

@@ -2,17 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { BALL_VIEW } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
-import { level as fluidLevel, POUR_TOTAL_MS, type FluidPhase } from '../../shared/fluid'
+import { level as fluidLevel, POUR_FILL_MS, POUR_TOTAL_MS, type FluidPhase } from '../../shared/fluid'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank } from './read-model'
 import {
   defaultWaterAnchors,
   resolveWaterAnchors,
+  rgbStr,
   waterColor,
   type WaterAnchors
 } from '../../shared/water-color'
-import { skinWaves } from './skin-waves'
+import { skinWaves, POUR_DROPS } from './skin-waves'
 import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
 
@@ -103,6 +104,19 @@ function waveD(surfaceY: number, phase: number, A = 2.2, L = 28): string {
  */
 function waveLine(surfaceY: number, phase: number, A = 2.2, L = 28): string {
   return `M ${wavePoints(surfaceY, phase, A, L).join(' L ')}`
+}
+
+/**
+ * 泡沫带（R4-3）：盖住 B/C 层冒头的泡沫帽 —— 上沿 = A 波顶上浮 3px，
+ * 下沿 = A 波顶下沉 3.5px，闭合。与 A 同参数同 drift-a，同进同退。
+ * 为什么需要：三层错速漂移下相对相位一直在变，B/C 波峰必然周期性超出 A 波峰
+ * （aero 最坏 4.7px），白线若只是一条线就会周期性"脱节"。泡沫帽把 ±3px 的冒头
+ * 吃进泡沫里，读作浪尖的白沫；极端对齐的残留闪过可接受（瞬态，非稳态错位）。
+ */
+function waveBand(surfaceY: number, phase: number, A = 2.2, L = 28, up = 3, down = 3.5): string {
+  const top = wavePoints(surfaceY - up, phase, A, L)
+  const bottom = wavePoints(surfaceY + down, phase, A, L).reverse()
+  return `M ${top.join(' L ')} L ${bottom.join(' L ')} Z`
 }
 
 /**
@@ -407,9 +421,13 @@ export function PetBall({
       : 'edge-visible'
   const fluidEdgeAttr =
     fluidEdge === 'right' || fluidEdge === 'top' || fluidEdge === 'bottom' ? fluidEdge : 'left'
-  /** 水满只在套餐类挂波浪（余额类保持素盘）；算不出比例（pct == null）也不挂假液位 */
-  const showWaves = !!s && isPlan(s) && pct != null
-  const fluidLvl = showWaves ? fluidLevel(pct) : 0
+  /**
+   * 挂水条件（R4-6）：套餐类有比例挂水（液位 = 用量）；余额类（直充）状态 ok 即挂满水
+   * （fluidLvl=1，语义是"钱足=满杯"，与用量比例无关 —— 不是 pct，不叫百分比）。
+   * error/nodata 仍无水（坏数据不配满杯）；hideBalance 打码只管读数，水不泄露数字。
+   */
+  const showWaves = !!s && s.status === 'ok' && (isPlan(s) ? pct != null : true)
+  const fluidLvl = !showWaves || !s ? 0 : isPlan(s) ? fluidLevel(pct) : 1
   // 液面在 56 viewBox 里的高度：全屏水体的 clip 圆 r=27（圆心 28,28）→ 顶 1 / 底 55
   const surfaceY = 55 - fluidLvl * 54
   /**
@@ -425,6 +443,8 @@ export function PetBall({
   const waveB = useMemo(() => waveD(surfaceY, 18, waves.b.A, waves.b.L), [surfaceY, waves])
   const waveC = useMemo(() => waveD(surfaceY, 9, waves.c.A, waves.c.L), [surfaceY, waves])
   const surfaceLine = useMemo(() => waveLine(surfaceY, 0, waves.a.A, waves.a.L), [surfaceY, waves])
+  /** 泡沫带：与 A 同参数（见 waveBand 注释），B/C 冒头盖进泡沫里 */
+  const foamBand = useMemo(() => waveBand(surfaceY, 0, waves.a.A, waves.a.L), [surfaceY, waves])
   /** 水柱方向：左右边竖柱（液高从底起）、上下边横槽（液宽从左起），与 shared/fluid.waterColumn 同口径 */
   const columnVertical = fluidEdgeAttr === 'left' || fluidEdgeAttr === 'right'
   /**
@@ -446,9 +466,15 @@ export function PetBall({
   /**
    * 水体连续色（10-04-water-color-by-usage）：阈值处精确命中等级色，段间插值。
    * 用原始 pct（不用量化后的 fluidLvl）—— 液位不动的那几帧，颜色仍在走。
-   * null（余额类/算不出比例）时不设内联色，CSS 的 lvl-* 兜底继续生效。
+   * 余额类取 accent 实色（R4-6 实例，色值待用户看效果再定）；无水时 null，
+   * CSS 的 lvl-* 兜底继续生效。
    */
-  const water = pct != null ? waterColor(pct, waterAnchors) : null
+  const water = !showWaves || !s ? null : isPlan(s) ? waterColor(pct, waterAnchors) : rgbStr(waterAnchors.accent)
+  /**
+   * 雨落点（R4-6）：满水时液面在顶（surfaceY=1），雨若落到 1 就只剩 9px 的 drizzle；
+   * 钳到 24 —— 雨没入水体，溅落读作水花没入水中。套餐类用真实液面。
+   */
+  const pourSurfaceY = !s || isPlan(s) ? surfaceY : Math.max(surfaceY, 24)
   /**
    * 倒水入场（10-04-pour-in-slosh）：mount + 每次切供应商/窗口都播完整三段（G1 结论）。
    * `data-pour="in"` 挂载 → CSS 三段动画（灌入 600 / 冲顶 250 / 荡漾 1600，
@@ -829,29 +855,22 @@ export function PetBall({
             </svg>
             <div className="fluid-disc" />
             {showWaves && (
-              <>
-                {/* 细射流倒水（R2）：clip 到水盘圆内的 5px 射流从顶落下 + 触水 ripple。
-                    水位保持终态静默（56px 下 600ms 的液位爬升不可辨，流 + ripple + slosh 承载效果）。
-                    .pour-clip 抽离 grid 流（absolute），circle 裁剪与水盘 clip 圆同口径（r=27）。 */}
-                <div className="pour-clip" aria-hidden="true">
-                  <div className="pour-stream" style={{ background: water ?? undefined }} />
-                  <span className="pour-splash" style={{ top: surfaceY - 6 }} />
-                </div>
-                {/* .slosh：倒水入场③荡漾的位移层（10-04-pour-in-slosh）。absolute 抽离 grid 流，
-                    不参与环心两行的排布；transform 只跑合成器（见 skins.css pour-slosh）。 */}
-                <div className="slosh" aria-hidden="true">
-                  <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
-                    <g clipPath="url(#fluid-clip)">
-                      {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
-                          内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
-                      <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
-                      <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
-                      <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
-                      <path d={surfaceLine} className="fluid-surface" />
-                    </g>
-                  </svg>
-                </div>
-              </>
+              /* .slosh：倒水入场③荡漾的位移层（10-04-pour-in-slosh）。absolute 抽离 grid 流，
+                 不参与环心两行的排布；transform 只跑合成器（见 skins.css pour-slosh）。 */
+              <div className="slosh" aria-hidden="true">
+                <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
+                  <g clipPath="url(#fluid-clip)">
+                    {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
+                        内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
+                    <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
+                    <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
+                    <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
+                    {/* 泡沫带（R4-3）：B/C 冒头盖进泡沫里；白线压在带上沿 */}
+                    <path d={foamBand} className="fluid-foam" />
+                    <path d={surfaceLine} className="fluid-surface" />
+                  </g>
+                </svg>
+              </div>
             )}
             <div className="fluid-bridge" />
             {/* 贴边水柱（10-03-holo-sphere 水满 + 10-04-edge-sip-column 温度计）：
@@ -886,10 +905,55 @@ export function PetBall({
               <i className="fluid-ticks" aria-hidden="true" />
             </div>
           </div>
+          {/* 雨是 crisp 覆盖层（R4-1 取证结论）：细雨滴经整容器 goo 滤镜会被 blur 吃掉
+              （3px 滴在 stdDeviation=4 下糊成无色条 —— 5l 取证：DOM 全对但像素无色），
+              而雨不需要与水体融合 —— 与读数同理，放在 goo 容器之外，
+              靠 .pour-clip 自己的 circle 裁剪约束（r=27，不画出界）。 */}
+          {showWaves && (
+            <div className="pour-clip" aria-hidden="true">
+              {POUR_DROPS.map((d, i) => (
+                <div
+                  key={i}
+                  className={`pour-drop kind-${d.kind}`}
+                  style={
+                    {
+                      left: `${d.left}%`,
+                      background: water ?? undefined,
+                      animationDelay: `${d.delay}ms`,
+                      '--drop-dur': `${Math.round(POUR_FILL_MS * d.dur)}ms`,
+                      '--drop-travel': `${Math.max(8, pourSurfaceY + 8).toFixed(1)}px`
+                    } as React.CSSProperties
+                  }
+                />
+              ))}
+              {POUR_DROPS.filter((d) => d.kind === 'center').map((d, i) => (
+                <span
+                  key={`s${i}`}
+                  className="pour-splash"
+                  style={{
+                    left: `${d.left}%`,
+                    top: pourSurfaceY - 6,
+                    animationDelay: `${d.delay + Math.round(POUR_FILL_MS * d.dur * 0.55)}ms`
+                  }}
+                />
+              ))}
+              <span
+                className="pour-trickle left"
+                style={{ top: pourSurfaceY, background: water ?? undefined }}
+                aria-hidden="true"
+              />
+              <span
+                className="pour-trickle right"
+                style={{ top: pourSurfaceY, background: water ?? undefined }}
+                aria-hidden="true"
+              />
+            </div>
+          )}
           {/* 外圈进度环已退役（10-03-holo-sphere 水满 pivot）：进度唯一载体是球盘内的
-              全屏水体（液位 = fluidLevel(pct)，水色 = water 连续插值，CSS lvl 兜底）。data-ring 探针保留 ——
-              它与「套餐画水 / 余额画素盘」的判定同源（--uitest 靠它区分「套餐没水」=
-              回归 与 「余额没水」= 设计），删掉的话 DOM 上两种情形长得一模一样。
+              全屏水体（液位 = fluidLevel(pct)，余额类恒满；水色 = water 连续插值 / accent，
+              CSS lvl 兜底）。data-ring 探针保留 ——
+              它与「套餐画水 / 余额满水」的判定同源（--uitest 靠它区分「套餐没水」=
+              回归 与 「余额没水」= 回归），删掉的话 DOM 上两种情形长得一模一样。
               ⚠ 没有快照时是 ''（既非套餐也非余额），不是 'balance'：写成 'balance'
               会让断言在「一个供应商都没有」时照样绿（水体本来就没有），那是标签与
               机制对不上的永真兜底。 */}

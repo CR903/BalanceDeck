@@ -64,6 +64,13 @@
   --wave-len-a: 28px;
   --wave-len-b: 36px;
   --wave-len-c: 18px;
+  /* 天气变量（R4-4）：雨滴粗细/变速/水花大小/荡漾幅度与时长。
+     逐皮肤覆盖即换天气；:root 默认 = aero 春雨值（ext 皮肤零代码，退化为春雨）。 */
+  --drop-w: 3px;
+  --drop-speed: 1;
+  --splash-s: 10px;
+  --slosh-amp: 8px;
+  --slosh-dur: 1600ms;
   /* 收起态浮在**用户任意壁纸**上的浮层底：固定深底半透明 + 白字，**不随皮肤变**。
      .petball-bubble / .petball-confirm 都属这一族 —— 它们是压在小圆环与壁纸上的
      临时提示，不是像卡片面板那样跟着皮肤的颜色走。
@@ -2217,6 +2224,12 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze] .petball-goo {
   filter: url(#petball-goo);
 }
+/* 稳态 goo 裁剪（R4-2）：edge-visible 下 goo 输出裁进 r=27 水盘圆，圆沿外的低 alpha
+   光晕不再漏到球外（5-ball-1 取证：圆外 260px）。morph 态（absorbing/revealing）不裁 ——
+   桥要出圆；hidden 稳态 goo 本来就关着。freeze 也不裁 —— 取帧要看 morph 形状全貌。 */
+.petball.no3d .petball-fallback[data-fluid='edge-visible']:not([data-freeze]) .petball-goo {
+  clip-path: circle(27px at 28px 28px);
+}
 .petball.no3d .goo-defs {
   position: absolute;
   width: 0;
@@ -2267,12 +2280,13 @@ textarea {
   height: 100%;
 }
 /* 水底深度罩：深底浅顶（--water-deep 从透明到底部渐深）。::after 盖在三层波浪上、
-   读数（.dot-value 在 goo 容器之外、DOM 顺序在后）不受影响；border-radius 50%
-   把方形 overlay 裁进盘里 —— 方角漏出来就是下一个「浅色方框」。 */
+   读数（.dot-value 在 goo 容器之外、DOM 顺序在后）不受影响；inset 1px + border-radius 50%
+   把方形 overlay 裁进 r=27 的水盘圆 —— 与 svg clip 圆同口径（R4-2：原来 inset:0 是 r=28，
+   比水体多出 1px 环，底缘那一圈就是"波浪超出球体"的真凶，见 5-ball 像素取证）。 */
 .petball.no3d .fluid-waves::after {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: 1px;
   border-radius: 50%;
   background: linear-gradient(to bottom, transparent 42%, var(--water-deep));
   pointer-events: none;
@@ -2290,8 +2304,17 @@ textarea {
   opacity: var(--wave-opacity-c);
   animation: fluid-drift-c var(--wave-speed-c) linear infinite;
 }
+/* 泡沫带（R4-3）：盖住 B/C 层冒头的泡沫帽 —— 上沿 A 波顶上浮 3px、下沿下沉 3.5px
+   （路径见 PetBall waveBand），与 A 层同参数同 drift-a，同进同退。
+   白线压在带上沿（下面那条 .fluid-surface 规则），读作浪尖的白沫。 */
+.petball.no3d .fluid-foam {
+  fill: var(--water-foam);
+  opacity: 0.85;
+  animation: fluid-drift-a var(--wave-speed-a) linear infinite;
+}
 /* 液面高光线：与 A 层同参数同动画（见 PetBall 的 waveLine 注释），1px 实线。
-   时长必须与 A 层读同一个变量 —— 写死两份数字会让高光与波峰慢慢错开（K9d 钉住）。 */
+   时长必须与 A 层读同一个变量 —— 写死两份数字会让高光与波峰慢慢错开（K9d 钉住）。
+   R4-3 起压在泡沫带上沿，不再直接压 A 填充沿（B/C 冒头由泡沫带吃掉）。 */
 .petball.no3d .fluid-surface {
   fill: none;
   stroke: var(--water-foam);
@@ -2578,6 +2601,25 @@ textarea {
   --wave-len-a: 28px;
   --wave-len-b: 36px;
   --wave-len-c: 18px;
+  /* 春雨：细滴等速、小水花、中幅荡漾（:root 默认即此组，ext 回退亦然） */
+  --drop-w: 3px;
+  --drop-speed: 1;
+  --splash-s: 10px;
+  --slosh-amp: 8px;
+  --slosh-dur: 1600ms;
+}
+/* 春雨留前 5 滴 */
+[data-skin='aero'] .petball.no3d .pour-drop:nth-child(n+6) {
+  display: none;
+}
+/* splash 与雨滴同进退（splash 是 clip 第 8–12 个孩子，对应 5 个中间滴） */
+[data-skin='aero'] .petball.no3d .pour-splash:nth-child(n+11),
+[data-skin='minimal'] .petball.no3d .pour-splash:nth-child(n+11),
+[data-skin='ink'] .petball.no3d .pour-splash:nth-child(n+11) {
+  display: none;
+}
+[data-skin='dark'] .petball.no3d .pour-splash:nth-child(n+12) {
+  display: none;
 }
 [data-skin='aero'] .petball.no3d .fluid-disc {
   background:
@@ -2596,6 +2638,16 @@ textarea {
   --wave-len-a: 44px;
   --wave-len-b: 56px;
   --wave-len-c: 28px;
+  /* 海啸：粗慢滴、大 ripple、大幅长周期荡漾 */
+  --drop-w: 6px;
+  --drop-speed: 1.25;
+  --splash-s: 16px;
+  --slosh-amp: 10px;
+  --slosh-dur: 2200ms;
+}
+/* 海啸留前 6 滴 */
+[data-skin='dark'] .petball.no3d .pour-drop:nth-child(n+7) {
+  display: none;
 }
 [data-skin='dark'] .petball.no3d .fluid-disc {
   background:
@@ -2614,6 +2666,15 @@ textarea {
   --wave-len-a: 28px;
   --wave-len-b: 36px;
   --wave-len-c: 18px;
+  /* 平静：只留前 3 滴（nth-child 藏尾）、极细滴、小涟漪、小幅荡漾 */
+  --drop-w: 2px;
+  --drop-speed: 1.1;
+  --splash-s: 8px;
+  --slosh-amp: 4px;
+  --slosh-dur: 1800ms;
+}
+[data-skin='minimal'] .petball.no3d .pour-drop:nth-child(n+4) {
+  display: none;
 }
 [data-skin='minimal'] .petball.no3d .fluid-disc {
   background: radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.35), transparent 50%);
@@ -2629,6 +2690,12 @@ textarea {
   --wave-len-a: 24px;
   --wave-len-b: 32px;
   --wave-len-c: 16px;
+  /* 暴雨：7 滴全开、大滴加速、大水花、大幅短促荡漾 */
+  --drop-w: 5px;
+  --drop-speed: 0.75;
+  --splash-s: 15px;
+  --slosh-amp: 12px;
+  --slosh-dur: 1400ms;
 }
 [data-skin='candy'] .petball.no3d .fluid-disc {
   background:
@@ -2649,6 +2716,15 @@ textarea {
   --wave-len-a: 40px;
   --wave-len-b: 48px;
   --wave-len-c: 24px;
+  /* 雾雨：前 4 滴、细慢滴、中水花、缓幅荡漾 */
+  --drop-w: 3px;
+  --drop-speed: 1.4;
+  --splash-s: 11px;
+  --slosh-amp: 6px;
+  --slosh-dur: 2000ms;
+}
+[data-skin='ink'] .petball.no3d .pour-drop:nth-child(n+5) {
+  display: none;
 }
 [data-skin='ink'] .petball.no3d .fluid-disc {
   background: radial-gradient(circle at 50% 110%, rgba(60, 50, 30, 0.14), transparent 55%);
@@ -2826,60 +2902,102 @@ textarea {
   inset: 0;
   pointer-events: none;
 }
-/* ─── 细射流倒水（R2，替代整坨 pour-fill）：5px 射流从顶落下 + 触水 ripple ───
+/* ─── 雨滴倒水（R4-1，替代单条 pour-stream）：7 滴固定落位 + 触水 splash + 壁 trickle ───
  *
- * .pour-clip 把射流裁进水盘圆（与 svg clip 圆同口径 r=27，CSS 侧不需要第二个圆定义，
- * 口径注释见 PetBall）；射流颜色内联 water（与波同源同色，CSS 只给形状）。
- * 时序（POUR_* 数值不动，只换 phase 映射）：射流 0–600ms 生长/回收，
- * 冲顶 500–750ms，高光闪峰同步，slosh 荡漾 450–2050ms（接触即晃）。
- * 整坨 pour-fill 已删 —— 同一目标两套位移是漂移源。 */
+ * .pour-clip 把雨裁进水盘圆（与 svg clip 圆同口径 r=27，CSS 侧不需要第二个圆定义，
+ * 口径注释见 PetBall）；雨滴颜色内联 water（与波同源同色，CSS 只给形状）。
+ * 落距按 --drop-travel 内联（surfaceY 自适应）；时长 = POUR_FILL_MS × 表系数（JSX 内联 --drop-dur，
+ * CSS 再乘每皮 --drop-speed 变速 —— 时长口径仍是 shared 常量，J2b 不破）。
+ * 每皮可见数不同（nth-child 藏尾，顺序即重要度，见 POUR_DROPS 表注释）：
+ * minimal 3 / ink 4 / aero 5 / dark 6 / candy 7；:root 默认全显（ext 皮肤不断裂）。
+ * 单条 pour-stream 已删 —— 同一目标两套雨是漂移源。 */
 .petball.no3d .pour-clip {
   position: absolute;
   inset: 0;
   clip-path: circle(27px at 28px 28px);
   pointer-events: none;
 }
-.petball.no3d .pour-stream {
+.petball.no3d .pour-drop {
   position: absolute;
-  top: -4px;
-  left: 50%;
-  width: 5px;
-  height: 60px;
+  top: 0;
+  width: var(--drop-w);
+  height: calc(var(--drop-w) * 2.4);
+  border-radius: 50%;
   transform: translateX(-50%);
-  border-radius: 3px;
-  background: var(--ok);
   opacity: 0;
+  animation-timing-function: ease-in;
+  animation-fill-mode: both;
+  animation-duration: calc(var(--drop-dur, 600ms) * var(--drop-speed, 1));
 }
-.petball.no3d .petball-fallback[data-pour='in'] .pour-stream {
-  animation: pour-stream 600ms ease-in;
+.petball.no3d .petball-fallback[data-pour='in'] .pour-drop {
+  animation-name: pour-drop;
 }
-@keyframes pour-stream {
+@keyframes pour-drop {
   0% {
-    transform: translateX(-50%) translateY(-100%);
+    transform: translateX(-50%) translateY(calc(var(--drop-travel, 40px) * -1));
     opacity: 0;
   }
-  15% {
+  18% {
     opacity: 1;
   }
-  55% {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
-  }
-  75% {
-    transform: translateX(-50%) translateY(0);
+  70% {
+    transform: translateX(-50%) translateY(4px);
     opacity: 1;
   }
   100% {
-    transform: translateX(-50%) translateY(-30%);
+    transform: translateX(-50%) translateY(8px);
     opacity: 0;
   }
 }
-/* 触水 ripple：落在液面上（top 由 JSX 按 surfaceY 内联），foam 白点扩散淡出 */
+/* 壁 trickle：左右各一条，top 由 JSX 按 surfaceY 内联（从液面处向下长到杯底），
+   scaleY 生长 + 末段淡出；pour 摘除时整个 clip 一起下线，不留尾巴。 */
+.petball.no3d .pour-trickle {
+  position: absolute;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  transform: scaleY(0);
+  transform-origin: top;
+  opacity: 0;
+  pointer-events: none;
+}
+.petball.no3d .pour-trickle.left {
+  left: 7px;
+}
+.petball.no3d .pour-trickle.right {
+  right: 7px;
+}
+.petball.no3d .petball-fallback[data-pour='in'] .pour-trickle {
+  animation: pour-trickle 1400ms ease-out 600ms both;
+}
+@keyframes pour-trickle {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.9;
+  }
+  30% {
+    transform: scaleY(1);
+    opacity: 0.9;
+  }
+  75% {
+    transform: scaleY(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+/* 触水 ripple：落在液面上（top/left 由 JSX 按落点内联），foam 白点扩散淡出。
+   大小走 --splash-s（每皮不同，暴雨大、平静小）。delay 由 JSX 按各滴触水时刻内联。 */
 .petball.no3d .pour-splash {
   position: absolute;
   left: 50%;
-  width: 12px;
-  height: 12px;
+  width: var(--splash-s);
+  height: var(--splash-s);
   border-radius: 50%;
   transform: translateX(-50%);
   background: var(--water-foam);
@@ -2903,7 +3021,7 @@ textarea {
   }
 }
 .petball.no3d .petball-fallback[data-pour='in'] .slosh {
-  animation: pour-slosh 1600ms ease-out 450ms;
+  animation: pour-slosh var(--slosh-dur) ease-out 450ms;
 }
 .petball.no3d .petball-fallback[data-pour='in'] {
   animation: pour-top 250ms ease-out 500ms;
@@ -2935,19 +3053,19 @@ textarea {
 }
 @keyframes pour-slosh {
   0% {
-    transform: translateX(8px);
+    transform: translateX(var(--slosh-amp));
   }
   20% {
-    transform: translateX(-6px);
+    transform: translateX(calc(var(--slosh-amp) * -0.75));
   }
   40% {
-    transform: translateX(4px);
+    transform: translateX(calc(var(--slosh-amp) * 0.5));
   }
   60% {
-    transform: translateX(-2.5px);
+    transform: translateX(calc(var(--slosh-amp) * -0.3));
   }
   80% {
-    transform: translateX(1.2px);
+    transform: translateX(calc(var(--slosh-amp) * 0.15));
   }
   100% {
     transform: translateX(0);
@@ -3025,7 +3143,9 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze] .slosh,
 .petball.no3d .petball-fallback[data-freeze] .fluid-waves,
 .petball.no3d .petball-fallback[data-freeze] .fluid-surface,
-.petball.no3d .petball-fallback[data-freeze] .pour-stream,
+.petball.no3d .petball-fallback[data-freeze] .fluid-foam,
+.petball.no3d .petball-fallback[data-freeze] .pour-drop,
+.petball.no3d .petball-fallback[data-freeze] .pour-trickle,
 .petball.no3d .petball-fallback[data-freeze] .pour-splash {
   animation: none;
 }
@@ -3054,15 +3174,19 @@ textarea {
   scale: 1;
   opacity: 1;
 }
-/* 倒水取帧（R2 细射流）：射流落至半程 + 触水 ripple 半开。 waves/slosh 不参与倒水位移，
-   不定帧（暂停名单已定住漂移）；不依赖 data-pour 是否还在播。 */
-.petball.no3d .petball-fallback[data-freeze='pour-mid'] .pour-stream {
-  transform: translateX(-50%) translateY(-50%);
+/* 倒水取帧（R4-1 雨滴）：3 滴定在半空 + 触水 ripple 半开 + trickle 半长。
+   waves/slosh/foam 不参与倒水位移，不定帧（暂停名单已定住漂移）；不依赖 data-pour 是否还在播。 */
+.petball.no3d .petball-fallback[data-freeze='pour-mid'] .pour-drop {
+  transform: translateX(-50%) translateY(10px);
   opacity: 1;
 }
 .petball.no3d .petball-fallback[data-freeze='pour-mid'] .pour-splash {
   transform: translateX(-50%) scale(0.9);
   opacity: 0.85;
+}
+.petball.no3d .petball-fallback[data-freeze='pour-mid'] .pour-trickle {
+  transform: scaleY(0.6);
+  opacity: 0.9;
 }
 .petball.no3d .petball-fallback[data-freeze='pour-top'] {
   transform: translate(-50%, -50%) scale(1.07);
@@ -3084,14 +3208,18 @@ textarea {
   .petball.no3d .fluid-wave,
   .petball.no3d .fluid-wave-c,
   .petball.no3d .fluid-surface,
+  .petball.no3d .fluid-foam,
   .petball.no3d .fluid-column-wave svg {
     animation: none;
   }
-  /* 倒水/吸溜的新位移层同样禁动（drain/rise/fill/slosh 全是 animation），
+  /* 倒水/吸溜的新位移层同样禁动（drain/rise/fill/slosh/drop/trickle 全是 animation），
    * hidden 的 180ms 淡入淡出也关掉 —— 降级是直接显隐，不是"更快一点"。 */
   .petball.no3d .slosh,
   .petball.no3d .fluid-waves,
-  .petball.no3d .fluid-column-fill {
+  .petball.no3d .fluid-column-fill,
+  .petball.no3d .pour-drop,
+  .petball.no3d .pour-trickle,
+  .petball.no3d .pour-splash {
     animation: none;
   }
   .petball.no3d .fluid-waves {

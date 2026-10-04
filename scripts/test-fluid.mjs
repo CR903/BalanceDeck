@@ -157,11 +157,18 @@ const resolved = water.resolveWaterAnchors((n) => {
   seen.push(n)
   return skin[n] ?? ''
 })
-eq(seen, ['--ok', '--warn', '--danger'], 'getter 按 CSS 变量名取值（与 getPropertyValue 同口径）')
+eq(seen, ['--ok', '--warn', '--danger', '--accent'], 'getter 按 CSS 变量名取值（与 getPropertyValue 同口径）')
 ok(resolved != null && resolved.dangerDeep.every((v, i) => v < resolved.danger[i]), '三锚点解析 + dangerDeep 自动压暗')
 eq(water.resolveWaterAnchors(() => ''), null, '全缺 → null（整套回退，不给半套）')
 eq(water.resolveWaterAnchors((n) => (n === '--warn' ? 'oops' : skin[n])), null, '一锚坏 → null')
 eq(JSON.stringify(water.defaultWaterAnchors().ok), JSON.stringify([48, 209, 88]), '缺省锚点 = aero 三色')
+// R4-6 accent：独立回退（不参与插值，缺了只影响余额水，不连累用量水）
+eq(JSON.stringify(water.defaultWaterAnchors().accent), JSON.stringify([10, 132, 255]), '缺省 accent = aero #0a84ff')
+const noAccent = water.resolveWaterAnchors((n) => (n === '--accent' ? '' : skin[n]))
+ok(noAccent != null && JSON.stringify(noAccent.accent) === JSON.stringify([10, 132, 255]), '缺 accent → 回退色，不整套 null')
+const withAccent = water.resolveWaterAnchors((n) => (n === '--accent' ? '#8b5cf6' : skin[n]))
+eq(withAccent && withAccent.accent, [139, 92, 246], 'accent 正常解析（candy 紫）')
+eq(withAccent && water.rgbStr(withAccent.accent), 'rgb(139, 92, 246)', '余额水色 = accent 实色（不插值）')
 
 console.log('用例 8：倒水入场时序（10-04-pour-in-slosh：三段串行 ≈ AC 2.5s 内结束）')
 eq(fluid.POUR_FILL_MS, 600, '灌入 600ms ease-in')
@@ -188,15 +195,25 @@ for (const s of SKINS9) {
 // 皮肤之间真不一样（A 层振幅至少三档 distinct，否则"换皮如换汤"）
 const distinctA = new Set(SKINS9.map((s) => table[s].a.A))
 ok(distinctA.size >= 3, `A 层振幅 ${distinctA.size} 档 distinct（aero/minimal/candy 必须拉开）`)
-// CSS --wave-len-* 与表中 L 逐值相等（漂移距离恒 = 波长整数倍，无缝循环不断裂）
+// CSS --wave-len-* 与表中 L 逐值相等（漂移距离恒 = 波长整数倍，无缝循环不断裂）。
+// 只认裸皮肤块 `[data-skin='x'] { … }`（disc 背景等后代规则另起块，不在此口径内）。
 const skinCss9 = readFileSync(resolve(ROOT, 'src/renderer/src/skins.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 for (const s of SKINS9) {
   for (const [layer, key] of [['a', 'a'], ['b', 'b'], ['c', 'c']]) {
-    const re = new RegExp(`\\[data-skin='${s}'\\][\\s\\S]{0,1200}?--wave-len-${layer}:\\s*([\\d.]+)px`)
+    const re = new RegExp(`\\[data-skin='${s}'\\] \\{[^}]*?--wave-len-${layer}:\\s*([\\d.]+)px`)
     const m = skinCss9.match(re)
     eq(m && Number(m[1]), table[s][key].L, `${s} --wave-len-${layer} == 表中 L（${table[s][key].L}）`)
   }
 }
+
+console.log('用例 10：雨滴表（R4-1：7 滴固定落位 + 中/壁分工 + 前 3 为中间滴）')
+const drops = skinWaves.POUR_DROPS
+eq(drops.length, 7, '7 滴（minimal 3 / ink 4 / aero 5 / dark 6 / candy 7 全开）')
+eq(drops.filter((d) => d.kind === 'center').length, 5, '中间滴 5（splash 一一对应）')
+eq(drops.filter((d) => d.kind === 'wall').length, 2, '近壁滴 2（转 trickle，不挂 splash）')
+ok(drops.every((d) => d.left >= 20 && d.left <= 80), '横向全在 20..80（圆内，clip 裁出穹顶感）')
+ok(drops.every((d) => d.delay >= 0 && d.dur > 0), '延迟非负、时长系数为正')
+eq(drops.slice(0, 3).every((d) => d.kind === 'center'), true, '前 3 必须全是中间滴（藏尾顺序即重要度）')
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
 process.exit(fail === 0 ? 0 : 1)

@@ -17,12 +17,15 @@ export interface WaterAnchors {
   warn: RGB
   danger: RGB
   dangerDeep: RGB
+  /** 余额水色（R4-6：余额无 pct 可插值，直接取皮肤 accent 实色；实例先行，色值待用户定） */
+  accent: RGB
 }
 
 /** aero 缺省三色（读不到皮肤令牌时的回退，与 skins.css :root 同值） */
 const FALLBACK_OK: RGB = [48, 209, 88]
 const FALLBACK_WARN: RGB = [255, 159, 10]
 const FALLBACK_DANGER: RGB = [255, 69, 58]
+const FALLBACK_ACCENT: RGB = [10, 132, 255]
 /** 100% 端的加深系数：danger 再压暗一档，"烫到底"仍有变化 */
 const DEEP_FACTOR = 0.72
 
@@ -87,19 +90,21 @@ export function defaultWaterAnchors(): WaterAnchors {
     ok: FALLBACK_OK,
     warn: FALLBACK_WARN,
     danger: FALLBACK_DANGER,
-    dangerDeep: shade(FALLBACK_DANGER, DEEP_FACTOR)
+    dangerDeep: shade(FALLBACK_DANGER, DEEP_FACTOR),
+    accent: FALLBACK_ACCENT
   }
 }
 
 /**
- * 从取值函数解析三锚点（调用方传 `(n) => getComputedStyle(appEl).getPropertyValue(n)`，
+ * 从取值函数解析锚点（调用方传 `(n) => getComputedStyle(appEl).getPropertyValue(n)`，
  * 单测传普通对象查找 —— 不直接依赖 DOM，可纯测）。
- * 任一锚点缺失/解析失败即回 null：半套插值会在阈值处断裂，不如整套回退。
+ * ok/warn/danger 任一缺失/解析失败即回 null：半套插值会在阈值处断裂，不如整套回退。
+ * accent 独立回退（它不参与插值，缺了只影响余额水，不值得连累用量水）。
  */
 export function resolveWaterAnchors(get: (name: string) => string): WaterAnchors | null {
   const ok = parseCssColor(get('--ok'))
   const warn = parseCssColor(get('--warn'))
   const danger = parseCssColor(get('--danger'))
   if (!ok || !warn || !danger) return null
-  return { ok, warn, danger, dangerDeep: shade(danger, DEEP_FACTOR) }
+  return { ok, warn, danger, dangerDeep: shade(danger, DEEP_FACTOR), accent: parseCssColor(get('--accent')) ?? FALLBACK_ACCENT }
 }
