@@ -1,21 +1,20 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// 悬浮球流体隐藏：纯函数（时序常量 + 液位映射 + 水渍几何 + 相位映射）。
+// 悬浮球贴边自动隐藏：纯函数（时序常量 + 液位映射 + 水柱几何 + 相位映射）。
 //
 // 本模块是纯函数（不依赖 electron / DOM / React），因此主进程的状态机
-// （src/main/dockHide.ts）、渲染层（PetBall.tsx 的波浪/水渍定位）与单元测试
+// （src/main/dockHide.ts）、渲染层（PetBall.tsx 的波浪/水柱定位）与单元测试
 // （scripts/test-fluid.mjs）共用同一实现。几何口径与 src/shared/dock-hide.ts
-// 同源（PEEK 痕迹宽度、56×56 球窗），边类型直接复用 DockEdge，不自立第二份。
+// 同源（COLUMN_W 柱宽、56×56 球窗），边类型直接复用 DockEdge，不自立第二份。
 //
-// 口径（PRD R5/R9 + design Fluid 节）：
+// 口径（PRD R5/R9 + design Fluid 节 + R4-5 原地变柱）：
 //   · 吸入总 ~530ms（拉伸 150 ease-out → 桥接合并 300 → pill 定形 + 微回弹 80）；
-//   · 汇聚反向 ~400ms；窗口滑出/滑入仍走主进程既有步进（300ms / 200ms），
-//     morph 与位移串行不重叠；
+//   · 汇聚反向 ~400ms；窗口不再滑出屏幕（原地 morph，位移步进退役）；
 //   · 液位 = percent（与 percent.ts 的一位小数归一化同粒度，无浮点抖动）；
-//   · 水渍 pill 沿边沿约 20px × 探出 PEEK（4px），居中，圆角水滴形（圆角归 CSS）。
+//   · 隐藏态 = 屏边 COLUMN_W（12px）温度计水柱，命中区即柱体。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import type { DockEdge } from './dock-hide'
-import { PEEK } from './dock-hide'
+import { peekHitbox } from './dock-hide'
 
 /** 吸入拉伸段：球体向贴边侧拉伸成液桥起手（150ms ease-out，PRD R5） */
 export const ABSORB_STRETCH_MS = 150
@@ -35,8 +34,6 @@ export const POUR_TOP_MS = 250
 export const POUR_SLOSH_MS = 1600
 /** 倒水入场总时长（600 + 250 + 1600 = 2450 ≈ AC 的 2.5s 内结束；播完 JS 摘 data-pour） */
 export const POUR_TOTAL_MS = POUR_FILL_MS + POUR_TOP_MS + POUR_SLOSH_MS
-/** 水渍 pill 沿边沿的长度（约 20px，PRD R2） */
-export const PILL_LEN = 20
 
 /** 流体相位（dock:fluid 通道推送，渲染层只切 CSS 类、不算几何） */
 export type FluidPhase = 'edge-visible' | 'absorbing' | 'hidden' | 'revealing'
@@ -73,7 +70,7 @@ export function fluidForPhase(phase: string): FluidPhase {
  *     `Math.round(p * 10) / 1000` —— 13.7 → 0.137，与环心读数逐位一致，
  *     且同样的输入永远得到同样的输出（CSS 高度不因浮点尘逐帧抖动）；
  *   · 非有限输入（NaN / Infinity / 非数字）回 0：这是守卫，不是数据口径 ——
- *     调用方只在 `pct != null`（isPlan 且算得出比例）时挂波浪，
+ *     调用方只在有水时挂波浪（套餐 isPlan 且算得出比例 / 余额满水），
  *     level 永远拿不到"未知"，这里的 0 只是让非法输入画不出离谱液面。
  */
 export function level(percent: unknown): number {
@@ -88,50 +85,18 @@ export interface Size {
 }
 
 /**
- * 水渍 pill 在窗口局部坐标里的矩形（渲染层只按它摆，不自己算几何）。
- * pill 贴在贴边侧、沿边沿居中：左贴边 → 窗口右侧一条 `PEEK × PILL_LEN`。
+ * 贴边水柱（R4-5 原地变柱：隐藏态窗口不动，原地立起屏边温度计柱）。
  *
- * 非法输入（非有限数 / 非正尺寸 / 非正 len·peek）回 null —— 调用方回退到
- * dock-hide.ts 的 peekHitbox 痕迹条（同源的另一半），不凭空摆一个错位水渍。
- */
-export function pillBox(
-  edge: DockEdge,
-  size: Size,
-  len: number = PILL_LEN,
-  peek: number = PEEK
-): { x: number; y: number; width: number; height: number } | null {
-  const w = size?.width
-  const h = size?.height
-  if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return null
-  if (!Number.isFinite(len) || !(len > 0) || !Number.isFinite(peek) || !(peek > 0)) return null
-  if (len > (edge === 'left' || edge === 'right' ? h : w)) return null
-  switch (edge) {
-    case 'left':
-      return { x: w - peek, y: (h - len) / 2, width: peek, height: len }
-    case 'right':
-      return { x: 0, y: (h - len) / 2, width: peek, height: len }
-    case 'top':
-      return { x: (w - len) / 2, y: h - peek, width: len, height: peek }
-    case 'bottom':
-      return { x: (w - len) / 2, y: 0, width: len, height: peek }
-  }
-}
-
-/**
- * 贴边水柱（10-03-holo-sphere 水满 pivot：隐藏态的水渍 pill 改为水柱）。
- *
- * 水柱占满整条可见痕迹 —— 几何与 dock-hide.ts 的 peekHitbox **逐位一致**
- * （左右边：PEEK 宽 × 满高竖柱；上下边：满宽 × PEEK 高横槽），柱内液高/液宽 =
- * 同一 fluidLevel(pct)，柱顶一条小波浪（渲染层），水色同样跟 `lvl`。
- * 命中区仍是主进程按 peekHitbox 覆盖的那一条：看得见的柱子整根可点，
- * 不存在「柱子宽、能点的窄」的半态。
+ * 几何直接委托 dock-hide.ts 的 peekHitbox —— 柱子矩形与命中区是同一出处，
+ * 看得见的柱子整根可点，不存在「柱子宽、能点的窄」的半态。
+ * （左右边：COLUMN_W 宽 × 满高竖柱，贴边侧；上下边：满宽 × COLUMN_W 高横槽。）
+ * 柱内液高/液宽 = 同一 fluidLevel(pct)，柱顶一条小波浪（渲染层）。
  *
  * 为什么另起一个函数而不是让渲染层直接调 peekHitbox：方向是视图才需要的
  * 信息（竖柱的液高从底起、横槽的液宽从左起，CSS 按 `vertical` 分两套摆），
- * 而「柱子占满痕迹」这句口径要有单测钉住 —— 钉在共用实现上，不钉在 CSS 声明上。
+ * 而「柱子与命中区同源」这句口径要有单测钉住 —— 钉在共用实现上，不钉在 CSS 声明上。
  *
- * 非法输入回 null（与 pillBox 同纪律）：调用方回退到「不画柱子只留命中区」，
- * 不凭空摆一个错位水柱。
+ * 非法输入回 null：调用方回退到「不画柱子只留命中区」，不凭空摆一个错位水柱。
  */
 export interface WaterColumn {
   x: number
@@ -142,24 +107,8 @@ export interface WaterColumn {
   vertical: boolean
 }
 
-export function waterColumn(
-  edge: DockEdge,
-  size: Size,
-  peek: number = PEEK
-): WaterColumn | null {
-  const w = size?.width
-  const h = size?.height
-  if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return null
-  if (!Number.isFinite(peek) || !(peek > 0)) return null
-  switch (edge) {
-    case 'left':
-      return { x: w - peek, y: 0, width: peek, height: h, vertical: true }
-    case 'right':
-      return { x: 0, y: 0, width: peek, height: h, vertical: true }
-    case 'top':
-      return { x: 0, y: h - peek, width: w, height: peek, vertical: false }
-    case 'bottom':
-      return { x: 0, y: 0, width: w, height: peek, vertical: false }
-  }
-  return null
+export function waterColumn(edge: DockEdge, size: Size): WaterColumn | null {
+  const box = peekHitbox(edge, size)
+  if (!box) return null
+  return { ...box, vertical: edge === 'left' || edge === 'right' }
 }

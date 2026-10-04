@@ -7,4 +7,5 @@
 | 2026-10-04 | [水色随用量连续变色](daily/2026-10-04_water-color-by-usage.md) | `10-04-water-color-by-usage` |
 | 2026-10-04 | [倒水入场与荡漾平息](daily/2026-10-04_pour-in-slosh.md) | `10-04-pour-in-slosh` |
 | 2026-10-04 | [贴边吸溜水柱温度计](daily/2026-10-04_edge-sip-column.md) | `10-04-edge-sip-column` |
+| 2026-10-04 | [R4返工：雨滴天气泡沫余额水+原地变柱](daily/2026-10-04_rain-weather-column.md) | `10-04-rain-weather-column` |
 | 2026-10-04 | [皮肤差异化返工 R1–R3](daily/2026-10-04_skin-fluid-rework.md) | `10-04-skin-fluid-redesign` |

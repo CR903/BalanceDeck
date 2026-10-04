@@ -22,17 +22,21 @@
 ## Acceptance Criteria
 
 - [x] 雨滴：5l 取帧可见多滴+水花+壁 trickle；单滴位置确定性（单测 pin 伪随机表）
-  → 5l-probe（7滴/5可见/splash5/trickle2）+ 像素雨区均色≈水绿；用例10 pin 表；K7/K9j 门
+  → 5l-probe（7滴/5可见/splash5/trickle2）+ 像素雨区均色≈水绿；用例 9 pin 表；K7/K9j 门
 - [x] 圆外溢出像素≈0（5-ball 走查，goo 光晕纪律延续）
   → ::after inset:1px + 稳态 goo clip；5-ball-2/5l 圆外=8（AA）；K10a/K10b
 - [x] 泡沫带存在且跟 A 同参数（K 门）；B/C 冒头被盖住（走查）
   → waveBand + .fluid-foam（drift-a/speed-a）；K9d扩展/K9g
 - [x] 5 天气可辨：雨滴数/水花/荡漾幅度逐皮不同（shot+探针）
   → 天气变量×5皮（K9h）+ 雨滴数 3/4/5/6/7（K9j）+ slosh 幅度/时长变量（K9i）
-- [ ] 贴边：窗口不滑出屏幕；终态为屏边 12px 水柱；e2e dockHide/dockEdges 按新口径绿
+- [x] 贴边：窗口不滑出屏幕；终态为屏边 12px 水柱；e2e dockHide/dockEdges 按新口径绿
+  → hiddenBounds 原地 + peekHitbox 屏边 12px 条 + 删 animateTo/位移/PEEK/平台禁边；
+  e2e dockHide/dockEdges/dockPeekSize 全绿；5n 左侧 12px 橙水柱像素对拍
 - [x] 余额：满水+满柱 accent 色实例可走查；相关 e2e/结构门同步更新
   → accent 锚点 + 满水满柱；e2e petNoRingOnBalance/petWaterColumn/dockFluidLevel 全绿
-- [ ] `npm run test` + `npm run typecheck` 全绿（收尾时重验）
+- [x] `npm run test` + `npm run typecheck` 全绿
+  → 全套件零失败；typecheck 双工程干净；`npm run build` 通过
+- [ ] 用户人眼动态终验（G1+G2：雨/天气/泡沫/余额 accent 实例 + 原地变柱）← review gate
 
 ## Notes
 

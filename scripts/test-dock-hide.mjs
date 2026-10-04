@@ -9,7 +9,7 @@ import { loadTs } from './lib/load-ts.mjs'
 const shared = await loadTs('src/shared/dock-hide.ts')
 const {
   EDGE_THRESHOLD,
-  PEEK,
+  COLUMN_W,
   HIDE_DWELL_MS,
   REVEAL_DWELL_MS,
   REHIDE_MS,
@@ -53,9 +53,9 @@ async function waitPhase(d, want, maxMs = 5000) {
 const WA = { x: 0, y: 25, width: 1440, height: 875 } // 主屏工作区（菜单栏 25px）
 const B = (x, y, w = 56, h = 56) => ({ x, y, width: w, height: h })
 
-console.log('用例 1：常量口径（PRD R1–R5）')
+console.log('用例 1：常量口径（PRD R1–R5 + R4-5 原地变柱）')
 eq(EDGE_THRESHOLD, 8, '贴边阈值 8px')
-eq(PEEK, 4, '痕迹 4px')
+eq(COLUMN_W, 12, '温度计柱宽 12px（命中区即柱体）')
 eq(HIDE_DWELL_MS, 1000, '隐藏停留 1000ms')
 eq(REVEAL_DWELL_MS, 300, '唤出停留 300ms')
 eq(REHIDE_MS, 1500, '离开重藏 1500ms')
@@ -87,17 +87,17 @@ eq(detectEdge(B(0, 400, 56, 2000), WA), null, '窗口比工作区高 → null')
 eq(detectEdge(B(-10, 400), WA), null, '探出工作区（负距离）不算贴边')
 eq(detectEdge(B(0, 400, 0, 56), WA), null, '零宽窗口 → null')
 
-console.log('用例 5：隐藏偏移（只留 4px 痕迹）')
-eq(hiddenBounds(B(0, 400), 'left'), { x: -52, y: 400, width: 56, height: 56 }, '左：x = 0 - (56-4)')
-eq(hiddenBounds(B(1384, 400), 'right'), { x: 1436, y: 400, width: 56, height: 56 }, '右：x = 1384 + (56-4)')
-eq(hiddenBounds(B(700, 25), 'top'), { x: 700, y: -27, width: 56, height: 56 }, '上：y = 25 - (56-4)')
-eq(hiddenBounds(B(700, 844), 'bottom'), { x: 700, y: 896, width: 56, height: 56 }, '下：y = 844 + (56-4)')
+console.log('用例 5：隐藏位置（R4-5 原地变柱：窗口不动，返回 docked 本身）')
+eq(hiddenBounds(B(0, 400), 'left'), { x: 0, y: 400, width: 56, height: 56 }, '左：原地')
+eq(hiddenBounds(B(1384, 400), 'right'), { x: 1384, y: 400, width: 56, height: 56 }, '右：原地')
+eq(hiddenBounds(B(700, 25), 'top'), { x: 700, y: 25, width: 56, height: 56 }, '上：原地')
+eq(hiddenBounds(B(700, 844), 'bottom'), { x: 700, y: 844, width: 56, height: 56 }, '下：原地')
 
-console.log('用例 6：痕迹命中区（窗口局部坐标，与隐藏偏移同源）')
-eq(peekHitbox('left', { width: 56, height: 56 }), { x: 52, y: 0, width: 4, height: 56 }, '左：痕迹条在窗口右侧')
-eq(peekHitbox('right', { width: 56, height: 56 }), { x: 0, y: 0, width: 4, height: 56 }, '右：痕迹条在窗口左侧')
-eq(peekHitbox('top', { width: 56, height: 56 }), { x: 0, y: 52, width: 56, height: 4 }, '上：痕迹条在窗口底部')
-eq(peekHitbox('bottom', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 4 }, '下：痕迹条在窗口顶部')
+console.log('用例 6：水柱命中区（窗口局部坐标，屏边侧 12px 全条）')
+eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 12, height: 56 }, '左：柱在窗口左侧')
+eq(peekHitbox('right', { width: 56, height: 56 }), { x: 44, y: 0, width: 12, height: 56 }, '右：柱在窗口右侧')
+eq(peekHitbox('top', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 12 }, '上：柱在窗口顶部')
+eq(peekHitbox('bottom', { width: 56, height: 56 }), { x: 0, y: 44, width: 56, height: 12 }, '下：柱在窗口底部')
 
 console.log('用例 7：动画曲线')
 eq(easeOutCubic(0), 0, 't=0 → 0')
@@ -125,14 +125,12 @@ function fakeWorld(opts = {}) {
     onHiddenChange: (h) => calls.hiddenChange.push(h),
     onPersist: (d) => calls.persist.push({ ...d }),
     onFluidPhase: (phase, edge) => calls.fluid.push({ phase, edge }),
-    fast: () => fast,
-    // 平台约束注入（默认全支持；macOS 上沿用 (e) => e !== 'top' 模拟，见用例 24）
-    isEdgeSupported: typeof opts.edgeSupported === 'function' ? opts.edgeSupported : () => true
+    fast: () => fast
   }
   return { calls, api, boundsOf: () => ({ ...bounds }) }
 }
 
-console.log('用例 8：贴边 dragStop → 隐藏（痕迹覆盖 + 持久化）')
+console.log('用例 8：贴边 dragStop → 隐藏（水柱覆盖 + 持久化，窗口不动）')
 {
   const w = fakeWorld()
   const d = createDockHide(w.api)
@@ -143,10 +141,11 @@ console.log('用例 8：贴边 dragStop → 隐藏（痕迹覆盖 + 持久化）
   eq(d.hidden(), true, 'hidden() 为真')
   eq(d.edge(), 'left', '记住贴的是左邊')
   const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 52, y: 0, width: 4, height: 56 }, '命中区覆盖为左贴边痕迹条')
+  eq(lastPeek, { x: 0, y: 0, width: 12, height: 56 }, '命中区覆盖为左贴边水柱')
   eq(w.calls.hiddenChange, [true], '通知渲染层 hidden=true')
   eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'left', hidden: true }, '持久化 {edge, hidden}')
-  eq(w.boundsOf().x, -52, '窗口滑出到只剩 4px（fast 跳终态）')
+  eq(w.boundsOf().x, 0, '窗口原地不动（R4-5 无滑出）')
+  eq(w.calls.setPosition.length, 0, '隐藏全程零 setPosition（无位移可崩）')
 }
 
 console.log('用例 9：中间松手 → 不隐藏')
@@ -172,7 +171,7 @@ console.log('用例 10：隐藏计时期间光标进入球体 → 取消（R1）
   eq(d.phase(), 'idle', '计时到也不隐藏')
 }
 
-console.log('用例 11：痕迹停留 300ms → 滑出；路过不停留 → 不唤出（R3）')
+console.log('用例 11：痕迹停留 300ms → 唤出；路过不停留 → 不唤出（R3）')
 {
   const w = fakeWorld()
   const d = createDockHide(w.api)
@@ -180,14 +179,14 @@ console.log('用例 11：痕迹停留 300ms → 滑出；路过不停留 → 不
   await sleep(90)
   eq(d.phase(), 'hidden', '前置：已隐藏')
   d.onCursor(true)
-  eq(d.phase(), 'dwell-reveal', '痕迹区进入 → 起唤出计时')
+  eq(d.phase(), 'dwell-reveal', '柱上进入 → 起唤出计时')
   d.onCursor(false)
   eq(d.phase(), 'hidden', '没停够就离开 → 回 hidden，不唤出')
-  eq(w.boundsOf().x, -52, '窗口没动')
+  eq(w.boundsOf().x, 0, '窗口没动')
   d.onCursor(true)
   await sleep(90)
-  eq(d.phase(), 'edge-visible', '停留够 → 滑出到贴边全可见')
-  eq(w.boundsOf().x, 0, '窗口回到贴边全可见位置')
+  eq(d.phase(), 'edge-visible', '停留够 → 回到贴边全可见（窗口本就没动过）')
+  eq(w.boundsOf().x, 0, '窗口仍在贴边全可见位置')
   eq(w.calls.hiddenChange[w.calls.hiddenChange.length - 1], false, '通知渲染层 hidden=false')
 }
 
@@ -251,18 +250,19 @@ console.log('用例 15：开关关闭/人物形态/展开态 → 不参与')
   eq(d.phase(), 'idle', '光标事件也被忽略')
 }
 
-console.log('用例 16：无 hover 点击痕迹 → 直接滑出')
+console.log('用例 16：无 hover 点击柱体 → 直接唤出')
 {
   const w = fakeWorld()
   const d = createDockHide(w.api)
   d.onDragStop()
   await sleep(90)
   d.onTapPeek()
-  eq(d.phase(), 'edge-visible', '点击即滑出（不等 300ms）')
-  eq(w.boundsOf().x, 0, '窗口回到全可见')
+  eq(d.phase(), 'revealing', '点击即进唤出（不等 300ms 停留）')
+  eq(await waitPhase(d, 'edge-visible'), 'edge-visible', 'morph 尾（fast 跳等待）后落定')
+  eq(w.boundsOf().x, 0, '窗口本就没动过')
 }
 
-console.log('用例 17：reduced-motion 下跳动画、留计时（R5，真计时证明）')
+console.log('用例 17：reduced-motion 下跳 morph、留计时（R5，真计时证明）')
 // ⚠ 之前这里用 fast:true —— fast 与 reduced-motion 走同一个"直接落终态"分支，
 // 删掉 reducedMotion() 判断也照样绿。用 fast:false + 真实 1000ms 停留重测，
 // 分支才真正被 reduced-motion 撑住（弄坏验证时把 reducedMotion 判据取反，这里必须红）。
@@ -272,8 +272,8 @@ console.log('用例 17：reduced-motion 下跳动画、留计时（R5，真计�
   d.onDragStop()
   eq(d.phase(), 'dwell-hide', '先起 1000ms 真实隐藏计时')
   eq(await waitPhase(d, 'hidden'), 'hidden', '计时保留，仍隐藏')
-  eq(w.calls.setPosition.length, 1, '只落一次终态（无逐帧步进）')
-  eq(w.boundsOf().x, -52, '落在隐藏终态')
+  eq(w.calls.setPosition.length, 0, '原地变柱本就没有位移（R4-5：连终态落点都不需要）')
+  eq(w.boundsOf().x, 0, '窗口原地')
 }
 
 console.log('用例 18：启动恢复（R6）与显示器变化')
@@ -282,10 +282,10 @@ console.log('用例 18：启动恢复（R6）与显示器变化')
   const d = createDockHide(w.api)
   d.restore({ edge: 'left', hidden: true })
   eq(d.phase(), 'hidden', '按持久化恢复隐藏态')
-  eq(w.boundsOf().x, -52, '按当前 workArea 重算偏移')
+  eq(w.boundsOf().x, 0, '原地恢复（R4-5：窗口从未离开，无偏移可重算）')
   d.onDisplayChange()
   eq(d.phase(), 'hidden', '显示器变化后仍 hidden')
-  eq(w.boundsOf().x, -52, '偏移重算，不漂移')
+  eq(w.boundsOf().x, 0, '仍在原位，不漂移')
   const w2 = fakeWorld()
   const d2 = createDockHide(w2.api)
   d2.restore(undefined)
@@ -293,36 +293,36 @@ console.log('用例 18：启动恢复（R6）与显示器变化')
   eq(d2.hidden(), false, 'hidden=false')
 }
 
-console.log('用例 19：允许动画时真逐帧步进（不是一次跳终态）')
+console.log('用例 19：允许动画时隐藏全程零位移（R4-5：morph 是唯一的动）')
 {
   const w = fakeWorld({ fast: false })
   const d = createDockHide(w.api)
   d.onDragStop()
-  eq(await waitPhase(d, 'hidden'), 'hidden', '落定 hidden（真实 1000ms 停留 + 300ms 动画）')
-  ok(w.calls.setPosition.length >= 5, `动画逐帧调 setPosition（实际 ${w.calls.setPosition.length} 次，删掉 interval 就剩 1 次）`)
-  eq(w.boundsOf().x, -52, '终态精确')
+  eq(await waitPhase(d, 'hidden'), 'hidden', '落定 hidden（真实 1000ms 停留 + 530ms morph 等待）')
+  eq(w.calls.setPosition.length, 0, '隐藏全程零 setPosition（删掉步进，744 类崩溃无处发生）')
+  eq(w.boundsOf().x, 0, '窗口原地')
 }
 
-console.log('用例 20：动画期间的光标翻转不丢（追球的手不扑空）')
+console.log('用例 20：morph 期间的光标翻转不丢（柱上/柱外的人不扑空）')
 {
-  // 隐藏播到一半进入痕迹 → 落定后直接起唤出停留，不用再 wiggle 一次鼠标
+  // 吸入 morph 播到一半进入柱区 → 落定后直接起唤出停留，不用再 wiggle 一次鼠标
   const w = fakeWorld({ fast: false })
   const d = createDockHide(w.api)
   d.onDragStop()
-  eq(await waitPhase(d, 'hiding'), 'hiding', '前置：隐藏动画播到一半')
-  d.onCursor(true) // 痕迹上有人（tick 只在翻转瞬间调一次，这里必须被记住）
-  eq(await waitPhase(d, 'edge-visible'), 'edge-visible', '落定后消费记住的翻转，直接滑出')
+  eq(await waitPhase(d, 'hiding'), 'hiding', '前置：吸入 morph 中')
+  d.onCursor(true) // 柱上有人（tick 只在翻转瞬间调一次，这里必须被记住）
+  eq(await waitPhase(d, 'edge-visible'), 'edge-visible', '落定后消费记住的翻转，直接唤出')
   eq(w.calls.hiddenChange[w.calls.hiddenChange.length - 1], false, '通知渲染层 hidden=false')
 }
 {
-  // 滑出播到一半离开 → 落定后直接起重藏停留
+  // morph 尾播到一半离开 → 落定后直接起重藏停留
   const w = fakeWorld({ fast: false })
   const d = createDockHide(w.api)
   d.onDragStop()
   eq(await waitPhase(d, 'hidden'), 'hidden', '前置：已隐藏')
   d.onCursor(true)
-  // 唤出停留 300ms 后滑出动画（200ms）：轮询抓到 revealing 相再喂离开
-  eq(await waitPhase(d, 'revealing'), 'revealing', '前置：滑出动画播到一半')
+  // 唤出停留 300ms 后 morph 尾（400ms）：轮询抓到 revealing 相再喂离开
+  eq(await waitPhase(d, 'revealing'), 'revealing', '前置：汇聚 morph 尾中')
   d.onCursor(false) // 人走了（必须被记住，否则落定后傻站着不藏）
   eq(await waitPhase(d, 'hidden', 6000), 'hidden', '落定后消费记住的离开，直接重藏（1500ms 重藏停留）')
 }
@@ -366,59 +366,35 @@ console.log('用例 22：启动恢复只认当前边沿（旧屏隐藏态不带�
   eq(w.calls.hiddenChange.length, 0, '不发 hidden 通知')
 }
 
-console.log('用例 23：OS 夹回落点 → 不算隐藏成功（macOS 菜单栏实测）')
+console.log('用例 23：上沿同样隐藏（R4-5：无位移 → 无菜单栏夹取 → 无平台禁藏边）')
 {
-  // macOS 不许窗口顶部越过菜单栏：setPosition(y=-27) 被系统夹回 y=25。
-  // 控制器必须验落点，失败则回到贴边全可见 + idle，绝不停在半态。
-  const calls = { setPosition: [], peek: [], hiddenChange: [], persist: [] }
-  let bounds = B(700, 25)
-  const api = {
-    getBounds: () => ({ ...bounds }),
-    setPosition: (x, y) => {
-      calls.setPosition.push([x, y])
-      // 模拟系统夹取：窗口顶部不许越过 workArea 顶部
-      bounds = { ...bounds, x, y: Math.max(y, WA.y) }
-    },
-    getWorkArea: () => ({ ...WA }),
-    isActive: () => true,
-    reducedMotion: () => false,
-    setPeekOverride: (r) => calls.peek.push(r ? { ...r } : null),
-    onHiddenChange: (h) => calls.hiddenChange.push(h),
-    onPersist: (d) => calls.persist.push({ ...d }),
-    fast: () => true
-  }
-  const d = createDockHide(api)
-  d.onDragStop()
-  eq(d.phase(), 'dwell-hide', '上贴边起计时')
-  await sleep(90)
-  eq(d.phase(), 'idle', '落点被夹回 → 回到 idle，不停在半态')
-  eq(bounds.y, 25, '窗口回到贴边全可见位置')
-  eq(calls.hiddenChange.length, 0, '从未通知过 hidden（没有"看得见点不着"的窗口期）')
-  eq(calls.persist[calls.persist.length - 1], { edge: 'top', hidden: false }, '持久化 hidden=false')
-}
-
-console.log('用例 24：平台不支持的边直接拒绝（macOS 上沿，不试藏）')
-// abort 是"试了再撤"（1s 停留后无事发生）；拒绝是"根本不起藏" —— 确定性行为，E2E 可断言。
-// overlay 侧用 (e) => e !== 'top' || platform !== 'darwin' 注入（裸窗口探针实测：
-// 可见窗口 setPosition 到 workArea.y-52 会被系统同步夹回，隐藏窗口则不会）。
-{
-  const macTop = (e) => e !== 'top'
-  const w = fakeWorld({ bounds: B(700, 25), edgeSupported: macTop })
+  // 旧 OS 夹回落点校验随滑出机制一并退役：窗口从不动，就没有"落点被夹回"这件事。
+  // 本用例钉住"上沿与其它三边同权" —— 之前上沿是被拒绝的那条边。
+  const w = fakeWorld({ bounds: B(700, 25) })
   const d = createDockHide(w.api)
   d.onDragStop()
-  eq(d.phase(), 'idle', '上贴边但平台不支持 → idle，不起计时')
-  eq(d.edge(), null, 'edge 不记忆（与"屏幕中间"同口径：不参与）')
-  eq(w.calls.setPosition.length, 0, '窗口一次都没动过（没有 1s 后的定向闪烁）')
-  eq(w.calls.hiddenChange.length, 0, '不发 hidden 通知')
+  eq(d.phase(), 'dwell-hide', '上贴边起计时（不再拒绝）')
+  eq(d.edge(), 'top', '记住上沿')
+  eq(await waitPhase(d, 'hidden'), 'hidden', '计时到 → hidden')
+  eq(w.boundsOf().y, 25, '窗口原地（无处可夹）')
+  const lastPeek = w.calls.peek[w.calls.peek.length - 1]
+  eq(lastPeek, { x: 0, y: 0, width: 56, height: 12 }, '命中区覆盖为上沿水柱')
+  eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'top', hidden: true }, '持久化 hidden=true')
+}
+
+console.log('用例 24：右沿隐藏的水柱在右侧（方向回归网：与 --dx 翻转同源）')
+// 主进程只管命中矩形，方向由 peekHitbox 的边分支决定 —— 右沿柱在右，与左沿镜像。
+// （渲染层 --dx 翻转是另一半，CSS 侧 K 门钉住；这里钉主进程这一半。）
+{
+  const w = fakeWorld({ bounds: B(1384, 400) })
+  const d = createDockHide(w.api)
+  d.onDragStop()
+  eq(d.edge(), 'right', '记住右沿')
   await sleep(90)
-  eq(d.phase(), 'idle', '计时后仍 idle（不是 abort，是从未开始）')
-  // 同一约束下左沿照常藏（拒绝只针对上沿）
-  const w2 = fakeWorld({ edgeSupported: macTop })
-  const d2 = createDockHide(w2.api)
-  d2.onDragStop()
-  eq(d2.phase(), 'dwell-hide', '左贴边不受影响')
-  await sleep(90)
-  eq(d2.phase(), 'hidden', '左沿照常隐藏')
+  eq(d.phase(), 'hidden', '右沿照常隐藏')
+  const lastPeek = w.calls.peek[w.calls.peek.length - 1]
+  eq(lastPeek, { x: 44, y: 0, width: 12, height: 56 }, '命中区覆盖为右贴边水柱')
+  eq(w.boundsOf().x, 1384, '窗口原地')
 }
 
 console.log('用例 25：流体相位随状态机推送（dock:fluid 唯一口径，fast 跳 morph）')
@@ -440,27 +416,22 @@ console.log('用例 25：流体相位随状态机推送（dock:fluid 唯一口�
   ok(w.calls.fluid.length > 0 && w.calls.fluid.every((f) => f.edge === 'left'), '每次推送都带当前边（edge=left）')
 }
 
-console.log('用例 26：全动效下 morph 与位移串行（先 morph 后滑，不重叠）')
+console.log('用例 26：morph 期间窗口纹丝不动（R4-5：morph 是唯一的动）')
 {
   const w = fakeWorld({ fast: false })
   const d = createDockHide(w.api)
   d.onDragStop()
   eq(await waitPhase(d, 'hiding'), 'hiding', '前置：吸入 morph 开始（hiding）')
-  eq(w.boundsOf().x, 0, 'morph 等待期间窗口纹丝不动（位移尚未开始）')
-  eq(await waitPhase(d, 'hidden'), 'hidden', 'morph 播完才滑，落定 hidden')
-  eq(w.boundsOf().x, -52, '终态精确')
-  // 唤出侧：滑出落定后 morph 尾才结束（revealing 相里窗口已在全可见位）
+  eq(w.boundsOf().x, 0, 'morph 等待期间窗口纹丝不动（本就没有位移）')
+  eq(await waitPhase(d, 'hidden'), 'hidden', 'morph 播完落定 hidden')
+  eq(w.boundsOf().x, 0, '终态原地')
+  eq(w.calls.setPosition.length, 0, '全程零 setPosition')
+  // 唤出侧：revealing 相里窗口本就在全可见位，morph 尾后才进全可见相
   d.onCursor(true)
-  eq(await waitPhase(d, 'revealing'), 'revealing', '前置：滑出 morph 中')
+  eq(await waitPhase(d, 'revealing'), 'revealing', '前置：汇聚 morph 尾中')
   const t0 = Date.now()
-  for (;;) {
-    if (w.boundsOf().x === 0 || Date.now() - t0 > 5000) break
-    await sleep(50)
-  }
-  eq(w.boundsOf().x, 0, '滑块先落定到贴边全可见')
-  const tSlide = Date.now()
   eq(await waitPhase(d, 'edge-visible'), 'edge-visible', 'morph 尾后才进全可见相')
-  ok(Date.now() - tSlide >= 250, `位移落定与相位落定之间隔着 morph 尾（≥250ms，实际 ${Date.now() - tSlide}ms）`)
+  ok(Date.now() - t0 >= 250, `revealing 相跨越 morph 尾（≥250ms，实际 ${Date.now() - t0}ms）`)
 }
 
 console.log('用例 27：非法几何永不产生 undefined（744 崩溃回归 · 纯函数层）')
@@ -478,8 +449,8 @@ console.log('用例 27：非法几何永不产生 undefined（744 崩溃回归 �
   eq(peekHitbox('left', null), null, 'null 尺寸 → null')
   eq(peekHitbox('left', { width: 0, height: 56 }), null, '零宽尺寸 → null')
   // 有效输入不受影响（正常路别被守卫改坏）
-  eq(hiddenBounds(B(0, 400), 'left'), { x: -52, y: 400, width: 56, height: 56 }, '有效边仍精确')
-  eq(peekHitbox('left', { width: 56, height: 56 }), { x: 52, y: 0, width: 4, height: 56 }, '有效边仍精确')
+  eq(hiddenBounds(B(0, 400), 'left'), { x: 0, y: 400, width: 56, height: 56 }, '有效边原地返回')
+  eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 12, height: 56 }, '有效边仍精确')
   // fuzz：任何边 × 任何 docked → null 或有限矩形，永不出现 undefined
   const edges = ['left', 'right', 'top', 'bottom', 'up', '', null, undefined, 0]
   const dockeds = [B(0, 400), B(NaN, 400), undefined, null]
@@ -497,35 +468,31 @@ console.log('用例 27：非法几何永不产生 undefined（744 崩溃回归 �
   eq(bad, 0, `fuzz ${edges.length * dockeds.length * 2} 组：无 undefined、无非有限坐标`)
 }
 
-console.log('用例 28：定时器链异常安全（744 崩溃回归 · 状态机层）')
+console.log('用例 28：隐藏全程零位移（744 崩溃回归 · R4-5：无步进无处抛）')
 {
-  // 28a 动画中途窗口关闭：setPosition 全抛（模拟 Object has been destroyed）。
-  // 崩溃前 animTimer 的 16ms 步进无 try/catch，第一次 tick 就把异常抛给 Node
-  // 计时器 → 主进程对话框，整个测试进程都会被杀死（这本身就是断言）。
+  // 28a setPosition 全程抛（模拟 Object has been destroyed）：
+  // 隐藏路径根本不碰窗口 —— 抛无处发生，隐藏照常落定，进程不死（这本身就是断言）。
   const w = fakeWorld({ fast: false })
+  w.api.setPosition = (x, y) => {
+    w.calls.setPosition.push([x, y])
+    throw new Error('Object has been destroyed')
+  }
   const d = createDockHide(w.api)
   const errors = []
   const origErr = console.error
   console.error = (...a) => { errors.push(a.join(' ')) }
   try {
     d.onDragStop()
-    eq(await waitPhase(d, 'hiding'), 'hiding', '28a 前置：隐藏动画播到一半')
-    w.api.setPosition = (x, y) => {
-      w.calls.setPosition.push([x, y])
-      throw new Error('Object has been destroyed')
-    }
-    eq(await waitPhase(d, 'idle', 6000), 'idle', '28a 步进抛 → 停动画回 idle（不崩进程）')
-    const nonFinite = w.calls.setPosition.filter(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))
-    eq(nonFinite, [], '28a setPosition 记录里无 undefined/NaN（undefined 不得进 setPosition）')
-    ok(errors.length >= 1, '28a 异常被记了一次日志（兜底跑过，不是空洞通过）')
+    eq(await waitPhase(d, 'hidden', 6000), 'hidden', '28a 全抛 → 照常 hidden（隐藏不碰窗口）')
+    eq(w.calls.setPosition.length, 0, '28a 零调用（无处可抛）')
+    eq(w.calls.hiddenChange, [true], '28a 通知照常')
+    eq(errors.length, 0, '28a 无异常可记（连兜底都不需要经过）')
   } finally {
     console.error = origErr
   }
 }
 {
-  // 28b 位移动作抛（窗口已销毁，destroyed 窗口的 setPosition 抛）：
-  // fast 路径下 animateTo 跑在 arm 的 setTimeout 回调里，崩溃前该回调无
-  // try/catch → 未捕获异常对话框，测试进程会被杀死（这本身就是断言）。
+  // 28b fast 路径同样零位移：计时回调里只有相位切换 + 通知，无窗口动作。
   const w = fakeWorld({ fast: true })
   w.api.setPosition = (x, y) => {
     w.calls.setPosition.push([x, y])
@@ -538,10 +505,9 @@ console.log('用例 28：定时器链异常安全（744 崩溃回归 · 状态�
   try {
     d.onDragStop()
     eq(d.phase(), 'dwell-hide', '28b 前置：隐藏计时中')
-    eq(await waitPhase(d, 'idle', 6000), 'idle', '28b 计时回调里抛 → 回 idle（不崩进程）')
-    const nonFinite = w.calls.setPosition.filter(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))
-    eq(nonFinite, [], '28b setPosition 记录里无 undefined/NaN（抛之前参数已是有限数）')
-    ok(errors.length >= 1, '28b 异常被记了一次日志（兜底跑过，不是空洞通过）')
+    eq(await waitPhase(d, 'hidden', 6000), 'hidden', '28b 全抛 → 照常 hidden')
+    eq(w.calls.setPosition.length, 0, '28b 零调用')
+    eq(errors.length, 0, '28b 无异常可记')
   } finally {
     console.error = origErr
   }

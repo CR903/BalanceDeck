@@ -13,8 +13,12 @@
 
 /** 贴边判定阈值：窗口边与工作区边距离 ≤ 8px 算贴边（PRD R1/R4） */
 export const EDGE_THRESHOLD = 8
-/** 痕迹宽度：隐藏后留在屏幕内的可见条（PRD R2） */
-export const PEEK = 4
+/**
+ * 温度计柱宽（R4-5）：隐藏态窗口原地立起的水柱宽度 = 命中区宽度。
+ * 柱子在哪、哪可点 —— peekHitbox 与渲染层水柱同形（fluid.waterColumn 委托本函数，
+ * 不各自硬编码 12）。旧 PEEK（4px 滑出痕迹）随滑出机制一并退役。
+ */
+export const COLUMN_W = 12
 /** 贴边停留多久才隐藏（PRD R1，防误触） */
 export const HIDE_DWELL_MS = 1000
 /** 痕迹区停留多久才滑出（PRD R3，防路过抖动） */
@@ -85,53 +89,40 @@ export function detectEdge(bounds: Rect, wa: WorkArea): DockEdge | null {
 }
 
 /**
- * 按贴边全可见位置算出隐藏位置（窗口向贴边方向滑出屏幕外，只留 PEEK 痕迹）。
- * 例：左贴边 → 窗口右缘留在 wa.x + PEEK 处。
+ * 隐藏位置（R4-5 原地变柱）：窗口不再滑出屏幕，原地不动 —— 返回 docked 本身。
+ * "隐藏"的是球形态（渲染层 morph 成屏边水柱），不是窗口位置。
  *
- * 非法输入（非法边 / 非有限 docked）回 null —— 调用方不得移动窗口
- * （undefined 进 setPosition 会直接崩主进程，见 10-03-dock-autohide 744 崩溃；
- * 这里回 null 让调用方走"不动 + idle" 的 fail-closed 路，不抛也不藏）。
+ * 保留函数（调用方/单测入口不变）：docked 非法仍回 null，调用方走"不动 + idle"。
+ * （undefined 进 setPosition 会直接崩主进程，见 10-03-dock-autohide 744 崩溃。）
  */
-export function hiddenBounds(docked: Rect, edge: DockEdge, peek: number = PEEK): Rect | null {
+export function hiddenBounds(docked: Rect, edge: DockEdge): Rect | null {
   if (!docked || !finiteRect(docked)) return null
   if (edge !== 'left' && edge !== 'right' && edge !== 'top' && edge !== 'bottom') return null
-  const p = Number.isFinite(peek) && peek >= 0 ? peek : PEEK
-  switch (edge) {
-    case 'left':
-      return { ...docked, x: Math.round(docked.x - (docked.width - p)) }
-    case 'right':
-      return { ...docked, x: Math.round(docked.x + (docked.width - p)) }
-    case 'top':
-      return { ...docked, y: Math.round(docked.y - (docked.height - p)) }
-    case 'bottom':
-      return { ...docked, y: Math.round(docked.y + (docked.height - p)) }
-    default:
-      return null
-  }
+  return { ...docked }
 }
 
 /**
- * 隐藏态的命中区覆盖（窗口局部坐标，DIP）。
- * 主进程以它为准，不采信渲染层常规上报（跨层契约：与隐藏偏移同源）。
+ * 隐藏态的命中区覆盖（窗口局部坐标，DIP）= 屏边水柱矩形（COLUMN_W 全高/全宽条，
+ * 贴边侧；与渲染层 .fluid-pill 同形，见 K4）。
+ * 主进程以它为准，不采信渲染层常规上报（跨层契约）。
  *
  * 非法输入（非法边 / 非有限非正尺寸）回 null —— 调用方跳过覆盖、
  * 保持整窗可点（fail-open：绝不造出"看得见点不着"的半态）。
  */
-export function peekHitbox(edge: DockEdge, size: { width: number; height: number }, peek: number = PEEK): Rect | null {
+export function peekHitbox(edge: DockEdge, size: { width: number; height: number }): Rect | null {
   const w = size?.width
   const h = size?.height
   if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return null
   if (edge !== 'left' && edge !== 'right' && edge !== 'top' && edge !== 'bottom') return null
-  const p = Number.isFinite(peek) && peek >= 0 ? peek : PEEK
   switch (edge) {
     case 'left':
-      return { x: w - p, y: 0, width: p, height: h }
+      return { x: 0, y: 0, width: COLUMN_W, height: h }
     case 'right':
-      return { x: 0, y: 0, width: p, height: h }
+      return { x: w - COLUMN_W, y: 0, width: COLUMN_W, height: h }
     case 'top':
-      return { x: 0, y: h - p, width: w, height: p }
+      return { x: 0, y: 0, width: w, height: COLUMN_W }
     case 'bottom':
-      return { x: 0, y: 0, width: w, height: p }
+      return { x: 0, y: h - COLUMN_W, width: w, height: COLUMN_W }
     default:
       return null
   }

@@ -12,8 +12,8 @@ import { join } from 'path'
 import { consumeDragFired } from '../ipc'
 import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
 import { BALL_VIEW } from '../../shared/pet-view'
-// 隐藏偏移的断言口径与主进程同一常数（改 PEEK 时这里跟着变，不各自硬编码 56-4=52）
-import { PEEK } from '../../shared/dock-hide'
+// 隐藏态几何口径与主进程同一常数（改 COLUMN_W 时这里跟着变，不各自硬编码 12）
+import { COLUMN_W } from '../../shared/dock-hide'
 import { refreshNow } from '../scheduler'
 import { parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
@@ -2281,7 +2281,8 @@ export async function runUiTest(
     return placed && placed.docked ? { x: placed.docked.x, y: placed.docked.y } : { x: 0, y: 0 }
   }
 
-  // 摆左沿 → 隐藏（只留 4px 痕迹）。段内真光标已冻结，两次机会只防 dwell 本身的时序抖动。
+  // 摆左沿 → 隐藏（R4-5 原地变柱：窗口不动，球 morph 成屏边水柱）。
+  // 段内真光标已冻结，两次机会只防 dwell 本身的时序抖动。
   let dockedX = 0
   let dockedY = 0
   let hid = false
@@ -2291,49 +2292,23 @@ export async function runUiTest(
     dockedY = p.y
     hid = await dockWait('window.api.debugDockState().then(s=>s.hidden===true)', 'hide')
   }
-  // 四边扫一遍：贴边判定/隐藏偏移的符号由单测钉死，这里只验"主进程接线把窗口摆对了边"——
-  // dockTestToEdge 的屏幕坐标数学只活在 E2E 路径里（单测够不着），左右/上下反了这里必红。
-  // 不经过光标（debug 通道先复位再摆位，可重复调用），所以无真光标 flake。
+  // 四边扫一遍：贴边判定与隐藏的屏幕坐标数学只活在 E2E 路径里（单测够不着），
+  // 左右/上下反了这里必红。不经过光标（debug 通道先复位再摆位，可重复调用），所以无真光标 flake。
   //
-  // ⚠ 上/下沿可能被 OS 夹回而干净拒绝（本机实测：顶部菜单栏 + 底部 Dock 都不许窗口越界，
-  //   落点校验 abort 后停在贴边全可见（单测用例 23 同款）；左/右沿则正常隐藏）。
-  //   这取决于用户把 Dock 摆在哪边、跑在哪台机器 —— 所以不断言"哪条边必须藏"，
-  //   只断言"每条边要么正确藏、要么干净拒绝，不许半态"，另加一条"至少一边真藏了"
-  //   （四条全拒 = 功能死了，必须红）。方向数学的逐值锁定在单测，不在这里。
-  const dockStep = BALL_VIEW.width - PEEK // 球宽 56 - 痕迹 4 = 单步位移（与 hiddenBounds 同式）
+  // R4-5 原地变柱：隐藏不再滑出屏幕，每条边要么原地藏（dx=dy=0）、要么干净拒绝，
+  // 不许半态；另加一条"至少一边真藏了"（四条全拒 = 功能死了，必须红）。
+  // 上沿在 darwin 也不再拒绝 —— 原地 morph 不经过菜单栏，无处可夹。
+  // 方向数学的逐值锁定在单测，不在这里。
   let dockEdges = 'ok'
   let hidAnyEdge = false
   for (const e of ['left', 'right', 'top', 'bottom']) {
     const p = await bayEdge(e)
-    // macOS 上沿是确定性拒绝（isEdgeSupported 平台约束，可见窗口越菜单栏会被同步夹回）：
-    // 不烧 6s 等超时，睡 1300ms（盖过真实 1000ms 停留）后断言"从未开始"的完整签名。
-    // 若实现改成"试藏"，phase/edge 任一项对不上就红；bayEdge 本身失败时 p 回退 (0,0)，
-    // 坐标项也会红 —— 不存在静默放过。
-    if (e === 'top' && process.platform === 'darwin') {
-      await sleep(1300)
-      const stRef = await dockState()
-      const bRef = bounds()
-      const refuseOk =
-        stRef.phase === 'idle' && stRef.hidden === false && stRef.edge === null &&
-        bRef.x === p.x && bRef.y === p.y
-      if (!refuseOk) {
-        dockEdges =
-          `fail:top-refuse phase=${stRef.phase} hidden=${stRef.hidden} edge=${stRef.edge} ` +
-          `x=${bRef.x} y=${bRef.y} want=(${p.x},${p.y})`
-        break
-      }
-      continue
-    }
     const okEdge = await dockWait(`window.api.debugDockState().then(s=>s.hidden===true&&s.edge==='${e}')`, `hide-${e}`)
     const bSweep = bounds()
     const dx = bSweep.x - p.x
     const dy = bSweep.y - p.y
-    const dirOk =
-      e === 'left' ? dx === -dockStep && dy === 0
-      : e === 'right' ? dx === dockStep && dy === 0
-      : e === 'top' ? dy === -dockStep && dx === 0
-      : dy === dockStep && dx === 0
-    if (okEdge && dirOk) {
+    // 原地：藏了 = 相位 hidden + 窗口纹丝不动
+    if (okEdge && dx === 0 && dy === 0) {
       hidAnyEdge = true
       continue
     }
@@ -2355,8 +2330,8 @@ export async function runUiTest(
   }
   const dsHide = await dockState()
   const bHide = bounds()
-  // 隐藏偏移 = 球宽 - 痕迹（与 shared/dock-hide.hiddenBounds 同式，不手算 52）
-  const wantHideX = dockedX - (BALL_VIEW.width - PEEK)
+  // R4-5 原地变柱：隐藏态窗口坐标 = 贴边全可见坐标（与 docked 同位，不手算偏移）
+  const wantHideX = dockedX
   r.dockHide =
     hid && dsHide.edge === 'left' && bHide.x === wantHideX && bHide.y === dockedY
       ? 'ok'
@@ -2433,7 +2408,7 @@ export async function runUiTest(
 
   // ── 贴边水柱（10-03-holo-sphere 水满 R5）：隐藏态的水渍 pill 改为水柱 ──────
   //
-  // 仍在 hidden 落定态内（左沿）：柱体占满可见痕迹 + 柱内液高 = 同一液位 +
+  // 仍在 hidden 落定态内（左沿）：屏边 12px 水柱 + 柱内液高 = 同一液位 +
   // 柱顶小波浪 + 水色同源。判据不依赖具体数据（真实快照随机器而变），先分 kind：
   // plan+有液面 → 柱内液 > 0 + 波浪在；balance（R4-6 满水）→ 满柱 + 波浪在 + accent 色；
   // 无液面（nodata/error/算不出）→ 空槽（不造假水位）。
@@ -2465,9 +2440,9 @@ export async function runUiTest(
   } else {
     try {
       const c = JSON.parse(columnDom) as { edge: string; pillW: number; pillH: number; fillH: number; fillW: number; wave: boolean; fillColor: string; ring: string; surface: boolean }
-      // 前置：左沿竖柱 4×56（与 waterColumn/peekHitbox 同形；K4 在静态侧钉死四边）
+      // 前置：左沿 12px 屏边柱（与 waterColumn/peekHitbox 同形；K4 在静态侧钉死四边）
       if (c.edge !== 'left') columnWhy = `fail:edge=${c.edge}`
-      else if (c.pillW !== 4 || c.pillH !== 56) columnWhy = `fail:pillar=${c.pillW}x${c.pillH}`
+      else if (c.pillW !== COLUMN_W || c.pillH !== 56) columnWhy = `fail:pillar=${c.pillW}x${c.pillH}（应为 ${COLUMN_W}x56 屏边柱）`
       else if ((c.ring === 'plan' && c.surface) || c.ring === 'balance') {
         // 套餐有液面与余额满水：柱内液 + 柱顶波 + 真实水色三件套；余额水色另判 accent
         if (!(c.fillH > 0)) columnWhy = `fail:empty-fill=${c.fillH}（有液面却空柱）`

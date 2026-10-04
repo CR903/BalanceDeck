@@ -693,7 +693,7 @@ eq2(
 //
 // 几何唯一来源是 shared/dock-hide.ts（主进程状态机与单测共用）；overlay.ts 只做
 // 转接（三个调用点：dragStop 尾 / dragStart 头 / 显示器重定位处）。
-// 隐藏态命中区覆盖为痕迹条 —— 渲染层常规上报在隐藏态下不被采信（跨层契约）。
+// 隐藏态命中区覆盖为屏边水柱 —— 渲染层常规上报在隐藏态下不被采信（跨层契约）。
 console.log('\nI. 贴边自动隐藏的单一几何来源')
 
 const DOCK_SHARED = 'src/shared/dock-hide.ts'
@@ -714,8 +714,8 @@ ok(
   !/\belectron\b/.test(dockMainBody),
   'I1b 状态机不直接 import electron（窗口/屏幕经 overlay 注入，否则单测加载不了）'
 )
-// 阈值与痕迹的数值字面量只允许出现在几何模块一处（两处各写一个 8/4 必然漂移）。
-// fluid.ts 是几何的共同拥有者（水渍 pill 与痕迹条同源）：它可以**引用**，
+// 阈值与柱宽的数值字面量只允许出现在几何模块一处（两处各写一个 8/12 必然漂移）。
+// fluid.ts 是几何的共同拥有者（水柱与命中区同源）：它可以**引用**，
 // 但不许自立第二个数 —— 下一条 I2c 单独钉住它，扫描时先排除。
 const dockScanned = [
   ...sharedFiles.map((f) => `src/shared/${f}`),
@@ -723,12 +723,12 @@ const dockScanned = [
 ].filter((f) => f !== DOCK_SHARED && f !== DOCK_MAIN && f !== FLUID_SHARED)
 const dupDock = dockScanned.filter((f) => {
   const code = stripTsComments(read(f))
-  return /EDGE_THRESHOLD|PEEK(?![A-Z_])/.test(code)
+  return /EDGE_THRESHOLD|COLUMN_W(?![A-Z_])/.test(code)
 })
-eq2(dupDock, [], 'I2 EDGE_THRESHOLD / PEEK 只在几何模块命名（别处硬编码 8/4 会漂移）')
+eq2(dupDock, [], 'I2 EDGE_THRESHOLD / COLUMN_W 只在几何模块命名（别处硬编码 8/12 会漂移）')
 ok(
   /from '\.\/dock-hide'/.test(fluidSharedBody) &&
-    !/(const|let)\s+(EDGE_THRESHOLD|PEEK|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(fluidSharedBody),
+    !/(const|let)\s+(EDGE_THRESHOLD|COLUMN_W|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(fluidSharedBody),
   'I2c 流体模块经 shared/dock-hide 取几何常量（引用不断、不自立第二个数）'
 )
 ok(
@@ -737,7 +737,7 @@ ok(
 )
 ok(
   /from '\.\.\/shared\/dock-hide'/.test(dockMainBody) &&
-    !/(const|let)\s+(EDGE_THRESHOLD|PEEK|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(dockMainBody),
+    !/(const|let)\s+(EDGE_THRESHOLD|COLUMN_W|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(dockMainBody),
   'I2b 状态机经 shared/dock-hide 取常量（不自立第二个数）'
 )
 // overlay 的三个调用点都在（删掉任何一处，隐藏/取消/显示器路径就静默少一条）
@@ -749,7 +749,7 @@ ok(/dock\.resetToVisible\(\)/.test(overlayCode), 'I3d 展开/收起切换调 doc
 ok(/function tickCursorWatch/.test(overlayCode), 'I3e 前置：找得到 tickCursorWatch（下面的调用形状断言不能空洞通过）')
 ok(
   /cursorInsideHit\(cursor,\s*b,\s*peekOverride/.test(overlayCode),
-  'I3e 命中决策点以痕迹条覆盖为准（调用形状，不是"某处出现过"——petHitboxDebug 那个只是 debug 读数，删掉这里必须红）'
+  'I3e 命中决策点以水柱覆盖为准（调用形状，不是"某处出现过"——petHitboxDebug 那个只是 debug 读数，删掉这里必须红）'
 )
 // ─── J. 流体隐藏的单一口径（10-03-dock-autohide 步 5/6/7）───────────────────
 //
@@ -783,7 +783,7 @@ const skinCss = read('src/renderer/src/skins.css').replace(/\/\*[\s\S]*?\*\//g, 
 ok(/\.petball-goo\s*\{[^}]*filter:\s*url\(#petball-goo\)/.test(skinCss),
   'J3a goo 容器挂滤镜（不挂 elaborate 的 morph 全是散的）')
 ok(/\[data-fluid='hidden'\][^{]*\.fluid-wave[^}]*animation-play-state:\s*paused/.test(skinCss),
-  'J3b hidden 态暂停波浪（PRD R9 —— 一直转等于在痕迹上烧电；必须判作用域规则，裸判 paused 会被别处兜底）')
+  'J3b hidden 态暂停波浪（PRD R9 —— 一直转等于在柱上烧电；必须判作用域规则，裸判 paused 会被别处兜底）')
 ok(/prefers-reduced-motion/.test(skinCss) && /\.fluid-bridge/.test(skinCss),
   'J3c reduced-motion 下跳 morph（PRD R5 —— 只降级 motion，不降级 dwell 计时）')
 
@@ -1103,19 +1103,26 @@ ok(
   'K10b 稳态 goo 裁进圆（morph/freeze 不裁：桥要出圆、取帧要看全貌）'
 )
 
-// K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形
-//     （竖柱 4×56 / 横槽 56×4；4 = shared/dock-hide.PEEK，56 = shared/pet-view.BALL_VIEW）。
-//     纯函数那半边的数由 scripts/test-fluid.mjs 用例 6 钉死，这里钉 CSS 这半边 ——
+// K4 · 水柱几何（R4-5 原地变柱）：CSS 的四条边规则与 shared/fluid.waterColumn 同形
+//     （竖柱 12×56 / 横槽 56×12；12 = shared/dock-hide.COLUMN_W，56 = shared/pet-view.BALL_VIEW），
+//     且贴边侧（左沿柱在左，不在右 —— 与旧滑出 peek 侧反号）。
+//     纯函数那半边的数由 scripts/test-fluid.mjs 用例 3 钉死，这里钉 CSS 这半边 ——
 //     两边各写一套数是「看着有柱子但点不中」的成因（与命中区 peekHitbox 脱钩）。
 for (const [edge, want] of [
-  ['left', '4px/56px'],
-  ['right', '4px/56px'],
-  ['top', '56px/4px'],
-  ['bottom', '56px/4px']
+  ['left', '12px/56px'],
+  ['right', '12px/56px'],
+  ['top', '56px/12px'],
+  ['bottom', '56px/12px']
 ]) {
   const body = decls(ruleBody(css, `.petball.no3d .petball-fallback[data-edge='${edge}'] .fluid-pill`))
   const got = `${body.width || '?'}/${body.height || '?'}`
   ok(body.width != null && got === want, `K4 水柱 ${edge} 边 ${got}（应为 ${want}，与 waterColumn 同形）`)
+}
+// K4d · 柱在屏边侧（R4-5 方向回归网）：左沿 left:0（不是 right:0），右沿 right:0，
+// 上沿 top:0，下沿 bottom:0 —— 摆错边等于柱子悬空在窗中。
+for (const [edge, prop] of [['left', 'left'], ['right', 'right'], ['top', 'top'], ['bottom', 'bottom']]) {
+  const body = decls(ruleBody(css, `.petball.no3d .petball-fallback[data-edge='${edge}'] .fluid-pill`))
+  ok(body != null && String(body[prop] || '') === '0', `K4d ${edge} 沿柱贴 ${prop}:0（屏边侧）`)
 }
 // 柱内液与柱顶波浪的 DOM+CSS 都在（缺一个，柱子就是空槽/静槽）。
 ok(/fluid-column-fill/.test(petBallWater) && /fluid-column-wave/.test(petBallWater), 'K4b 柱内液 + 柱顶波浪在 JSX 里')

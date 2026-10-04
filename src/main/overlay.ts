@@ -169,11 +169,6 @@ const dock = createDockHide({
     persist()
   },
   fast: () => process.env.BD_DOCK_FAST === '1',
-  // 平台约束：macOS 可见窗口不许越过菜单栏 —— 上沿隐藏位（workArea.y - 52 < 0 的部分）
-  // setPosition 会被系统同步夹回（裸窗口探针实测：show:false 时不夹、show:true 时夹；
-  // 所以落点校验 abort 是安全网，但行为上直接拒绝：1s 停留后无事发生，不闪一下）。
-  // Windows/Linux 上沿无此约束（任务栏/顶栏不挡程序化定位），保持支持。
-  isEdgeSupported: (e) => e !== 'top' || process.platform !== 'darwin'
 })
 
 /** 贴边隐藏开关（设置页 + 右键菜单双入口，R7） */

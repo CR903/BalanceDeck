@@ -180,23 +180,22 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await shoot('5m-pour-top')
   await exec(`window.__bd_fluid_freeze?.('off')`)
 
-  // ③ 贴边自动隐藏走查：贴边停留 → 滑入边框只留痕迹 → 悬停唤出（10-03-dock-autohide）
-  // ⚠ capturePage 拍的是窗口内容，不是桌面合成 —— 藏起来的窗口内容里球还是完整的，
-  //   这两张证明的是"离屏 excursion + 滑回后渲染无损"（GPU 合成没被屏外定位搞坏），
-  //   痕迹本身（屏上只剩 4px）的证据在 uitest 的 bounds 断言（dockHide/dockEdges），不在 PNG 里。
+  // ③ 贴边自动隐藏走查（R4-5 原地变柱）：贴边停留 → 球 morph 成屏边水柱（窗口不动）→ 悬停唤出
+  // ⚠ capturePage 拍的是窗口内容 —— 5g 证明"原地立柱渲染无损"（屏边 12px 温度计柱 + 柱内液位），
+  //   命中区即柱体的证据在 uitest 的 bounds/column 断言（dockHide/petWaterColumn），不在 PNG 里。
   //   对着 5g 数像素说"只剩一条"就是 ballshot 教训的重演。解码验证见 check 报告。
-  // 真光标冻结：走查机上鼠标若停在痕迹条附近，2500ms 里足够唤回一次，截图就错过隐藏态
+  // 真光标冻结：走查机上鼠标若停在水柱上，2500ms 里足够唤回一次，截图就错过隐藏态
   await exec('window.api.debugDockFreeze(true)')
   await exec("window.api.debugDockEdge('left')")
   await sleep(2500) // 真实计时：1000ms 停留 + 300ms 隐藏动画
   await shoot('5g-dock-hidden')
   await exec('window.api.debugDockCursor(true)')
-  await sleep(1500) // 真实计时：300ms 唤出停留 + 200ms 滑出动画
+  await sleep(1500) // 真实计时：300ms 唤出停留 + 400ms morph 尾
   await shoot('5h-dock-revealed')
-  // 流体三帧（10-03-dock-autohide 步 6/7）：拉伸中 / 桥接中 / 水渍 ——
+  // 流体三帧：拉伸中 / 桥接中 / 水渍 ——
   // __bd_fluid_freeze 把 goo 定在某一 morph 帧并暂停动画（呈现层冻结，不动状态机）。
-  // capturePage 拍的是窗口内容：这三张证明 morph 帧的形状渲染无损（与 5g 同口径：
-  // 痕迹本身的证据在 uitest 的 bounds 断言，不在 PNG 里）。
+  // capturePage 拍的是窗口内容：这三张证明 morph 帧的形状渲染无损。
+  // 柱子与命中区同源的证据在 uitest 的 bounds 断言，不在 PNG 里。
   await exec(`window.__bd_fluid_freeze?.('stretch')`)
   await sleep(600)
   await shoot('5i-fluid-stretch')

@@ -17,13 +17,9 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import {
-  ANIM_FRAME_MS,
-  HIDE_ANIM_MS,
   HIDE_DWELL_MS,
   REHIDE_MS,
-  REVEAL_ANIM_MS,
   REVEAL_DWELL_MS,
-  animBounds,
   detectEdge,
   hiddenBounds,
   peekHitbox,
@@ -55,11 +51,6 @@ export interface DockHideDeps {
   setPeekOverride: (rect: Rect | null) => void
   /** 隐藏态变化：主进程据此决定命中覆盖与渲染层通知（dock:hidden 通道） */
   onHiddenChange: (hidden: boolean) => void
-  /** 这条边允不允许藏（平台约束注入，默认全允许）：
-   * macOS 可见窗口不许越过菜单栏（探针实测：setPosition 到 workArea.y-52 会被同步夹回），
-   * 所以 darwin 上沿直接拒绝 —— 比"试了再 abort"少一次 1s 停留 + 定向动画，且 E2E 可断言。
-   * 纯粹的平台知识，不进 shared 几何模块（单测经 loadTs 跑在纯 node，要保持可注入）。 */
-  isEdgeSupported?: (edge: DockEdge) => boolean
   /** 持久化 dock 字段（overlay 侧写进 state.json） */
   onPersist: (dock: DockPersisted) => void
   /**
@@ -99,7 +90,6 @@ export function createDockHide(deps: DockHideDeps): {
   /** 贴边全可见位置（隐藏偏移的计算基准；persist 存的也是它） */
   let docked: Rect | null = null
   let timer: NodeJS.Timeout | null = null
-  let animTimer: NodeJS.Timeout | null = null
   /**
    * 动画期间的光标翻转（追球的手常在这 300ms 里扑空，tick 只在翻转瞬间调一次 onCursor，
    * 动画相里会被现在的 switch 吞掉）：记下最新值，动画落定再消费。null = 动画期间无翻转。
@@ -122,25 +112,10 @@ export function createDockHide(deps: DockHideDeps): {
     }
   }
 
-  function edgeSupported(e: DockEdge): boolean {
-    try {
-      return deps.isEdgeSupported ? deps.isEdgeSupported(e) !== false : true
-    } catch {
-      return true
-    }
-  }
-
   function clearTimer(): void {
     if (timer) {
       clearTimeout(timer)
       timer = null
-    }
-  }
-
-  function clearAnim(): void {
-    if (animTimer) {
-      clearInterval(animTimer)
-      animTimer = null
     }
   }
 
@@ -192,7 +167,6 @@ export function createDockHide(deps: DockHideDeps): {
   function recoverToIdle(where: string, e: unknown): void {
     noteDockError(where, e)
     clearTimer()
-    clearAnim()
     try {
       setPhase('idle')
       persist()
@@ -245,86 +219,14 @@ export function createDockHide(deps: DockHideDeps): {
     later(delayMs, fire, `arm:${next}`)
   }
 
-  /** 动画步进到底（from → to）；reduced-motion 或 fast 下直接落终态 */
-  function animateTo(to: Rect | null, durMs: number, done: DockPhase, after: () => void): void {
-    clearAnim()
-    // to 非法（hiddenBounds 回了 null：非法边/非有限 docked）→ 不动窗口，
-    // 直接 idle（fail-closed；绝不把 undefined/NaN 交给 setPosition）
-    if (!to || !Number.isFinite(to.x) || !Number.isFinite(to.y)) {
-      setPhase('idle')
-      persist()
-      return
-    }
-    // 窗口已关（getBounds 抛/回非有限）→ 同样不动，直接 idle
-    const from = safeBounds()
-    if (!from) {
-      setPhase('idle')
-      persist()
-      return
-    }
-    setPhase(done === 'hidden' ? 'hiding' : 'revealing')
-    // OS 窗口约束（如 macOS 菜单栏不许窗口顶部越过它）：落点被系统夹回时不算隐藏成功。
-    // 绝不能停在"相位说藏了、窗口还在原位"的半态 —— 那会让球"看得见、大部分点不着"
-    // （命中区已被痕迹条覆盖）。失败则回到贴边全可见并复位 idle，等下一次 dragStop。
-    const landed = (): boolean => {
-      const b = safeBounds()
-      if (!b) return false
-      return Math.abs(b.x - to.x) <= 1 && Math.abs(b.y - to.y) <= 1
-    }
-    const abortToDocked = (): void => {
-      if (docked && Number.isFinite(docked.x) && Number.isFinite(docked.y)) {
-        deps.setPosition(Math.round(docked.x), Math.round(docked.y))
-      }
-      deps.setPeekOverride(null)
-      pendingOver = null
-      setPhase('idle')
-      persist()
-    }
-    const finishHide = (): void => {
-      setPhase(done)
-      if (!landed()) {
-        abortToDocked()
-        return
-      }
-      after()
-    }
-    if (deps.reducedMotion() || isFast()) {
-      if (Number.isFinite(to.x) && Number.isFinite(to.y)) deps.setPosition(Math.round(to.x), Math.round(to.y))
-      // 唤出目标恒是曾经待过的全可见位置，不会被系统夹；只验隐藏落点
-      if (done === 'hidden') {
-        finishHide()
-        return
-      }
-      setPhase(done)
-      after()
-      return
-    }
-    const t0 = Date.now()
-    animTimer = setInterval(() => {
-      try {
-        const t = (Date.now() - t0) / durMs
-        if (t >= 1) {
-          clearAnim()
-          if (Number.isFinite(to.x) && Number.isFinite(to.y)) deps.setPosition(Math.round(to.x), Math.round(to.y))
-          if (done === 'hidden') {
-            finishHide()
-            return
-          }
-          setPhase(done)
-          after()
-          return
-        }
-        const b = animBounds(from, to, t)
-        if (Number.isFinite(b.x) && Number.isFinite(b.y)) deps.setPosition(b.x, b.y)
-      } catch (e) {
-        // 步进中任何异常（窗口关闭、屏幕 API 瞬态）都停动画回 idle：
-        // 不清 animTimer 的话每 16ms 抛一次，照样是未捕获异常刷屏
-        recoverToIdle('anim-step', e)
-      }
-    }, ANIM_FRAME_MS)
+  /** 原地落定（R4-5：窗口不再滑出，落定 = 相位切换 + 命中覆盖 + 通知）。
+   * reduced-motion / fast 下同样直接落定（本就无位移可跳）。 */
+  function settleHidden(): void {
+    setPhase('hidden')
+    enterHidden()
   }
 
-  /** 进入隐藏态：覆盖命中区为痕迹条，通知渲染层，持久化 */
+  /** 进入隐藏态：覆盖命中区为屏边水柱，通知渲染层，持久化 */
   function enterHidden(): void {
     const b = safeBounds()
     if (edge && b) {
@@ -335,7 +237,7 @@ export function createDockHide(deps: DockHideDeps): {
     }
     deps.onHiddenChange(true)
     persist()
-    // 动画期间光标已在痕迹上（pendingOver）：直接起唤出停留，不让用户再wiggle一次鼠标
+    // morph 期间光标已到柱上（pendingOver）：直接起唤出停留，不让用户再wiggle一次鼠标
     const po = pendingOver
     pendingOver = null
     if (po === true && deps.isActive()) arm(ms(REVEAL_DWELL_MS, isFast()), 'dwell-reveal', startRevealing)
@@ -348,29 +250,32 @@ export function createDockHide(deps: DockHideDeps): {
       return
     }
     pendingOver = null
-    // 全动效下 morph 与位移串行：先播吸入 morph（absorbing CSS 530ms），再滑窗口。
+    // R4-5 原地变柱：窗口不动，只播吸入 morph（absorbing CSS 530ms）再进 hidden。
     // morph 等待走 timer 槽 —— dragStart / reset / 显示器变化都会清掉它（取消语义不变）。
-    // reduced-motion / fast 跳 morph（旧路，单测与无障碍断言依赖它）。
+    // reduced-motion / fast 跳 morph 等待（旧路），但相位照常经过 hiding
+    // （流体序列 edge-visible → absorbing → hidden 不断，单测用例 25 钉住）。
     if (!deps.reducedMotion() && !isFast()) {
       setPhase('hiding')
-      const wantDocked = { ...docked }
-      const wantEdge = edge
-      // morph 等待走 timer 槽（带异常兜底的 later）—— dragStart / reset /
-      // 显示器变化都会清掉它（取消语义不变）
       later(
         ABSORB_TOTAL_MS,
         () => {
           // 等待期间被取消（phase 已不在 hiding）则不继续
           if (phase !== 'hiding') return
-          const to = hiddenBounds(wantDocked, wantEdge)
-          animateTo(to, HIDE_ANIM_MS, 'hidden', enterHidden)
+          settleHidden()
         },
         'absorb-wait'
       )
       return
     }
-    const to = hiddenBounds(docked, edge)
-    animateTo(to, HIDE_ANIM_MS, 'hidden', enterHidden)
+    setPhase('hiding')
+    later(
+      0,
+      () => {
+        if (phase !== 'hiding') return
+        settleHidden()
+      },
+      'absorb-skip'
+    )
   }
 
   function startRevealing(): void {
@@ -382,35 +287,40 @@ export function createDockHide(deps: DockHideDeps): {
     pendingOver = null
     deps.setPeekOverride(null)
     deps.onHiddenChange(false)
-    // 全动效下先滑窗口、再播汇聚 morph 尾（串行，不重叠）。
+    // R4-5：无位移可滑，直接播汇聚 morph 尾（revealing CSS 400ms）。
     // morph 尾期间 phase 仍是 revealing → 光标翻转记入 pendingOver，尾后消费。
-    // reduced-motion / fast 走旧路（直接 edge-visible）。
+    // reduced-motion / fast 跳 morph 等待（旧路），但相位照常经过 revealing。
     if (!deps.reducedMotion() && !isFast()) {
-      animateTo({ ...docked }, REVEAL_ANIM_MS, 'revealing', () => {
-        setPhase('revealing')
-        later(
-          REVEAL_MS,
-          () => {
-            if (phase !== 'revealing') return
-            setPhase('edge-visible')
-            persist()
-            // 滑出动画期间光标已离开（pendingOver）：直接起重藏停留，不等下一次翻转
-            const po = pendingOver
-            pendingOver = null
-            if (po === false) arm(ms(REHIDE_MS, isFast()), 'dwell-rehide', startHiding)
-          },
-          'reveal-tail'
-        )
-      })
+      setPhase('revealing')
+      later(
+        REVEAL_MS,
+        () => {
+          if (phase !== 'revealing') return
+          setPhase('edge-visible')
+          persist()
+          // morph 尾期间光标已离开（pendingOver）：直接起重藏停留，不等下一次翻转
+          const po = pendingOver
+          pendingOver = null
+          if (po === false) arm(ms(REHIDE_MS, isFast()), 'dwell-rehide', startHiding)
+        },
+        'reveal-tail'
+      )
       return
     }
-    animateTo({ ...docked }, REVEAL_ANIM_MS, 'edge-visible', () => {
-      persist()
-      // 滑出动画期间光标已离开（pendingOver）：直接起重藏停留，不等下一次翻转
-      const po = pendingOver
-      pendingOver = null
-      if (po === false) arm(ms(REHIDE_MS, isFast()), 'dwell-rehide', startHiding)
-    })
+    setPhase('revealing')
+    later(
+      0,
+      () => {
+        if (phase !== 'revealing') return
+        setPhase('edge-visible')
+        persist()
+        // 唤出期间光标已离开（pendingOver）：直接起重藏停留，不等下一次翻转
+        const po = pendingOver
+        pendingOver = null
+        if (po === false) arm(ms(REHIDE_MS, isFast()), 'dwell-rehide', startHiding)
+      },
+      'reveal-skip'
+    )
   }
 
   return {
@@ -420,7 +330,6 @@ export function createDockHide(deps: DockHideDeps): {
 
     onDragStop() {
       clearTimer()
-      clearAnim()
       pendingOver = null
       // bounds/workArea 读不到（窗口关闭中、屏幕 API 瞬态）→ 按"不参与"处理：
       // 不动窗口、不起计时（不动永远比藏错安全）
@@ -434,8 +343,8 @@ export function createDockHide(deps: DockHideDeps): {
         return
       }
       const e = detectEdge(b, wa)
-      // 不贴边，或贴的是本平台藏不了的边（macOS 上沿，见 isEdgeSupported）→ 不参与
-      if (!e || !edgeSupported(e)) {
+      // 不贴边 → 不参与（R4-5 起无平台禁藏边：窗口不动，无菜单栏夹取问题）
+      if (!e) {
         edge = null
         docked = null
         setPhase('idle')
@@ -455,13 +364,11 @@ export function createDockHide(deps: DockHideDeps): {
       if ((phase === 'hidden' || phase === 'dwell-reveal' || phase === 'revealing') && docked) {
         const d = { ...docked }
         clearTimer()
-        clearAnim()
         deps.setPeekOverride(null)
         deps.onHiddenChange(false)
         if (Number.isFinite(d.x) && Number.isFinite(d.y)) deps.setPosition(Math.round(d.x), Math.round(d.y))
       } else {
         clearTimer()
-        clearAnim()
         if (phase === 'hidden') {
           deps.setPeekOverride(null)
           deps.onHiddenChange(false)
@@ -527,7 +434,6 @@ export function createDockHide(deps: DockHideDeps): {
     resetToVisible() {
       // 展开 / 开关关闭：取消计时与动画、回到贴边全可见、清 hidden（R7）
       clearTimer()
-      clearAnim()
       pendingOver = null
       if ((phase === 'hidden' || phase === 'dwell-reveal' || phase === 'revealing') && docked) {
         const d = { ...docked }
@@ -542,7 +448,6 @@ export function createDockHide(deps: DockHideDeps): {
     onDisplayChange() {
       // 显示器变化：取消计时与动画；隐藏态按当前 workArea 重算偏移，不漂出可视区（R6）
       clearTimer()
-      clearAnim()
       pendingOver = null
       if (!safeActive()) {
         edge = null
@@ -585,12 +490,11 @@ export function createDockHide(deps: DockHideDeps): {
         }
         // 按当前位置重判贴边并刷新 docked（旧坐标可能已不在新工作区边上）——
         // 下一次隐藏必须重新走 dragStop + 1000ms 停留（R1 取消语义），不能沿用旧记忆直接藏。
-        // 平台藏不了的边同样不参与（与 onDragStop 同口径）。
         // bounds/workArea 读不到 → 按不贴边（旧记忆清掉，不藏）。
         const b = safeBounds()
         const wa = safeArea()
         const e2 = b && wa ? detectEdge(b, wa) : null
-        edge = e2 && edgeSupported(e2) ? e2 : null
+        edge = e2
         docked = edge && b ? { ...b } : null
         setPhase('idle')
         persist()
@@ -599,7 +503,6 @@ export function createDockHide(deps: DockHideDeps): {
 
     restore(saved: DockPersisted | undefined) {
       clearTimer()
-      clearAnim()
       pendingOver = null
       const e = saved?.edge
       const wantHidden = saved?.hidden === true
@@ -616,8 +519,8 @@ export function createDockHide(deps: DockHideDeps): {
         return
       }
       // 启动恢复：按当前 bounds 重判贴边（持久化坐标可能已随工作区变化被夹回别处）。
-      // 只有仍在边沿、且边受平台支持才恢复隐藏 —— 显示器拔掉后窗口被夹回屏幕中间时若还按旧 edge 藏，
-      // 球是全可见的、命中区却只有 4px（看得见点不着）。R6：不漂出可视区优先于记住隐藏态。
+      // 只有仍在边沿才恢复隐藏 —— 显示器拔掉后窗口被夹回屏幕中间时若还按旧 edge 藏，
+      // 球是全可见的、命中区却只有水柱条（看得见点不着）。R6：不漂出可视区优先于记住隐藏态。
       // （到这里 isActive 必为真：false 的情况上面已 return。）
       // bounds 读不到 → 按全可见启动（不动窗口，不藏）。
       const b = safeBounds()
@@ -629,7 +532,7 @@ export function createDockHide(deps: DockHideDeps): {
         return
       }
       const now = detectEdge(b, wa)
-      if (!now || !edgeSupported(now)) {
+      if (!now) {
         edge = null
         docked = null
         pendingOver = null

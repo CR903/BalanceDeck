@@ -2235,22 +2235,23 @@ textarea {
   width: 0;
   height: 0;
 }
-/* 桥的方向变量：pill 侧（左贴边 → pill 在窗口右侧 → 桥向 +x） */
+/* 桥的方向变量：柱子在屏边侧（左贴边 → 柱在窗口左侧 → 桥向 -x）。
+   R4-5 起与旧 peek 侧反号：球心→柱心的位移，disc/bridge/drain/freeze 全跟它走。 */
 .petball.no3d .petball-fallback[data-edge='left'] {
-  --dx: 1;
+  --dx: -1;
   --dy: 0;
 }
 .petball.no3d .petball-fallback[data-edge='right'] {
-  --dx: -1;
+  --dx: 1;
   --dy: 0;
 }
 .petball.no3d .petball-fallback[data-edge='top'] {
   --dx: 0;
-  --dy: 1;
+  --dy: -1;
 }
 .petball.no3d .petball-fallback[data-edge='bottom'] {
   --dx: 0;
-  --dy: -1;
+  --dy: 1;
 }
 /* R8 渐变 3D 球：径向渐变球体 + 顶部高光 + 底部内阴影。
    颜色全部取自既有球令牌（--dot-top 高光 / --dot-bottom 内阴影），中间透明露出
@@ -2394,12 +2395,12 @@ textarea {
   background: var(--ball-bg);
   transform: translate(-50%, -50%) scale(0);
 }
-/* 贴边水柱（10-03-holo-sphere 水满）：隐藏态的水渍 pill 改为水柱 ——
-   竖柱 4×56（左右边，占满整条可见痕迹）/ 横槽 56×4（上下边），与
+/* 贴边水柱（R4-5 原地变柱）：隐藏态窗口不动，原地立起屏边温度计柱 ——
+   竖柱 12×56（左右边，贴边侧）/ 横槽 56×12（上下边），与
    shared/fluid.waterColumn 同形、与 dock-hide.peekHitbox 同源（命中区即柱体）。
    槽底 = --track（玻璃槽），柱内液 = lvl 色（与球内水体同源），液高/液宽 =
    同一 fluidLevel（JSX 内联 style，禁止 CSS 写死百分比），柱顶一条小波浪。
-   位置按 data-edge 贴边，平时 scale(0)，吸入终态留下。
+   位置按 data-edge 贴边侧（屏边那一侧，不是滑出后的探出侧），平时 scale(0)，吸入终态留下。
    ⚠ 显隐走独立的 `scale` 属性（与定位的 `transform` 分开）：四个边的定位 transform
    各不相同（translateY vs translateX），关键帧若写完整 transform 就得分边写四套；
    用 `scale` 属性后一套关键帧通吃四边（Chromium 104+，Electron 37 可用）。
@@ -2408,33 +2409,33 @@ textarea {
 .petball.no3d .fluid-pill {
   position: absolute;
   background: var(--track);
-  border-radius: 2px;
+  border-radius: 6px;
   scale: 0;
   overflow: hidden;
 }
 .petball.no3d .petball-fallback[data-edge='left'] .fluid-pill {
-  right: 0;
+  left: 0;
   top: 0;
-  width: 4px;
+  width: 12px;
   height: 56px;
 }
 .petball.no3d .petball-fallback[data-edge='right'] .fluid-pill {
-  left: 0;
+  right: 0;
   top: 0;
-  width: 4px;
+  width: 12px;
   height: 56px;
 }
 .petball.no3d .petball-fallback[data-edge='top'] .fluid-pill {
-  bottom: 0;
-  left: 0;
-  width: 56px;
-  height: 4px;
-}
-.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill {
   top: 0;
   left: 0;
   width: 56px;
-  height: 4px;
+  height: 12px;
+}
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill {
+  bottom: 0;
+  left: 0;
+  width: 56px;
+  height: 12px;
 }
 /* 柱内液：竖柱从底起（液高 = 100% × level）、横槽从左起（液宽同），水色跟 lvl。
    液位 0（余额类/算不出比例）时高度/宽度就是 0 —— 空槽，不造假水位。 */
@@ -2510,10 +2511,10 @@ textarea {
     transform: translateX(-4px);
   }
 }
-/* ─── 温度计三件套（10-04-edge-sip-column）───
+/* ─── 温度计三件套（10-04-edge-sip-column，R4-5 柱宽 12px）───
  *
- * 液头弯月：fill 顶部/前缘的圆头（竖管 4px 圆、横槽 4px 圆），background:inherit
- * 吃柱液本色 —— 随 water 连续色自动走，不另起令牌（换肤零代码）。
+ * 液头弯月：fill 顶部/前缘的圆头（12px 整圆，与柱同宽的温度计液头），
+ * background:inherit 吃柱液本色 —— 随 water 连续色自动走，不另起令牌（换肤零代码）。
  * :not(:empty) 守门：fill 里有柱顶波 span 才非空，空槽不画假液头
  * （与「液位 0 不挂波浪」同一条件，不单独再判）。 */
 .petball.no3d .fluid-column-fill:not(:empty)::before {
@@ -2525,16 +2526,16 @@ textarea {
 }
 .petball.no3d .petball-fallback[data-edge='left'] .fluid-column-fill:not(:empty)::before,
 .petball.no3d .petball-fallback[data-edge='right'] .fluid-column-fill:not(:empty)::before {
-  top: -2px;
+  top: -6px;
   left: 0;
   width: 100%;
-  height: 4px;
+  height: 12px;
 }
 .petball.no3d .petball-fallback[data-edge='top'] .fluid-column-fill:not(:empty)::before,
 .petball.no3d .petball-fallback[data-edge='bottom'] .fluid-column-fill:not(:empty)::before {
   top: 0;
-  right: -2px;
-  width: 4px;
+  right: -6px;
+  width: 12px;
   height: 100%;
 }
 /* 管壁刻度：三格线，空槽也看得见（管子的刻度不依赖有没有水）。
