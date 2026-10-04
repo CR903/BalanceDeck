@@ -832,11 +832,14 @@ export function PetBall({
               </div>
             )}
             <div className="fluid-bridge" />
-            {/* 贴边水柱（10-03-holo-sphere 水满）：隐藏态的水渍 pill 改为水柱 ——
-                几何（竖柱/横槽、占满痕迹条）归 shared/fluid.waterColumn，这里只摆
-                液位与波浪：柱内液高/液宽 = 同一 fluidLvl，柱顶一条小波浪，水色跟 water
-                （连续插值，CSS lvl 兜底；与球内水体同源同色）。
-                液位 0（余额类/算不出比例）时只留空柱槽 + 不挂波浪，不造假水位。 */}
+            {/* 贴边水柱（10-03-holo-sphere 水满 + 10-04-edge-sip-column 温度计）：
+                隐藏态的水渍 pill 改为水柱 —— 几何（竖柱/横槽、占满痕迹条）归
+                shared/fluid.waterColumn，这里只摆液位与波浪：柱内液高/液宽 = 同一 fluidLvl，
+                柱顶一条小波浪，水色跟 water（连续插值，CSS lvl 兜底；与球内水体同源同色）。
+                温度计三件套：液头弯月（fill ::before，随水色走）+ 管壁三格刻度（.fluid-ticks，
+                空槽也看得见）+ 管壁侧光（pill ::after）。液位 0 时只留空槽 + 不挂波浪，
+                不造假水位。absorbing 灌满/revealing 缩走都只动位移，不碰高度值
+                （高度是数据的，位移是演的 —— 见 skins.css column-rise）。 */}
             <div className="fluid-pill">
               <div
                 className="fluid-column-fill"
@@ -847,7 +850,8 @@ export function PetBall({
                 }
               >
                 {/* 柱顶小波浪：坐在液面上（fill 的顶部/前缘），液位 0 时 fill 高度
-                    为 0，波浪无处附着 —— 与「不造假水位」同一条件，不单独再判。 */}
+                    为 0，波浪无处附着 —— 与「不造假水位」同一条件，不单独再判。
+                    hidden 态保持动画（柱内动荡，见 skins.css hidden 暂停名单）。 */}
                 {fluidLvl > 0 && (
                   <span className="fluid-column-wave" aria-hidden="true">
                     <svg viewBox="-4 0 16 3" preserveAspectRatio="none" aria-hidden="true">
@@ -856,6 +860,8 @@ export function PetBall({
                   </span>
                 )}
               </div>
+              {/* 管壁刻度：纯装饰（aria-hidden），温度计读数感；空槽时也在（管子的刻度不依赖有没有水） */}
+              <i className="fluid-ticks" aria-hidden="true" />
             </div>
           </div>
           {/* 外圈进度环已退役（10-03-holo-sphere 水满 pivot）：进度唯一载体是球盘内的

@@ -2190,10 +2190,14 @@ textarea {
   inset: 0;
   filter: url(#petball-goo);
 }
-/* 常态（整球）不挂滤镜：正常态渲染与 slide 基线逐像素一致，
+/* 常态（整球）与隐藏稳态不挂滤镜：正常态渲染与 slide 基线逐像素一致，
    goo 只在 morph/水渍三态融合形状（回退 slide 时这里就是"没开"的样子）。
+   hidden 稳态也没有可融合的形状（disc/bridge 缩成 0、球内水淡出，只剩柱子），
+   挂滤镜除了烧 GPU 别无用处 —— 且实测离屏窗口的 SVG 滤镜子树画不出来
+   （5n 取证：柱盒与颜色全对但像素透明），steady 状态必须关滤镜。
    取帧冻结时强制挂上（data-freeze 不改变 data-fluid，常态下 freeze 也要看到融合）。 */
-.petball.no3d .petball-fallback[data-fluid='edge-visible'] .petball-goo {
+.petball.no3d .petball-fallback[data-fluid='edge-visible'] .petball-goo,
+.petball.no3d .petball-fallback[data-fluid='hidden'] .petball-goo {
   filter: none;
 }
 .petball.no3d .petball-fallback[data-freeze] .petball-goo {
@@ -2312,14 +2316,25 @@ textarea {
     transform: translateX(-36px);
   }
 }
-/* hidden 态暂停波浪（PRD R9）；数字仍居中压在液面上（沿用环心读数样式）。
-   ⚠ 首个选择器必须保持 `[data-fluid='hidden'] … .fluid-wave … paused` 的形状 ——
-   scripts/test-structure.mjs 的 J3b 按这个形状判（裸判 paused 会被别处兜底）。 */
+/* hidden 态：球内波暂停（PRD R9，省电），柱顶波保持动画（10-04-edge-sip-column
+ * 柱内动荡 —— 藏起来的柱子必须是活的）；球内水淡出（opacity 0，屏上只剩温度计柱，
+ * 水位诚实：条里有几分水就是几分）。
+ * ⚠ 首个选择器必须保持 `[data-fluid='hidden'] … .fluid-wave … paused` 的形状 ——
+ *    scripts/test-structure.mjs 的 J3b 按这个形状判（裸判 paused 会被别处兜底）。
+ * ⚠ 柱顶波刻意不在这个名单里 —— K8d 断言 hidden 作用域下没有 column 的 paused。 */
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-wave,
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-wave-c,
-.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-surface,
-.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-column-wave svg {
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-surface {
   animation-play-state: paused;
+}
+/* 隐藏稳态球内水不可见（drain 收尾 opacity 0 的衔接；revealing 用 waves-fill 淡回）。
+ * transition 180ms 让 absorbing→hidden 与 hidden→revealing 不跳变；
+ * reduced-motion 下 transition:none（见文件尾，直接显隐）。 */
+.petball.no3d .fluid-waves {
+  transition: opacity 180ms ease;
+}
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-waves {
+  opacity: 0;
 }
 /* 页面不可见暂停波浪（三处暂停之二，见 PetBall 的 docHidden 注释） */
 .petball.no3d .petball-fallback.doc-hidden .fluid-wave,
@@ -2455,12 +2470,95 @@ textarea {
     transform: translateX(-4px);
   }
 }
+/* ─── 温度计三件套（10-04-edge-sip-column）───
+ *
+ * 液头弯月：fill 顶部/前缘的圆头（竖管 4px 圆、横槽 4px 圆），background:inherit
+ * 吃柱液本色 —— 随 water 连续色自动走，不另起令牌（换肤零代码）。
+ * :not(:empty) 守门：fill 里有柱顶波 span 才非空，空槽不画假液头
+ * （与「液位 0 不挂波浪」同一条件，不单独再判）。 */
+.petball.no3d .fluid-column-fill:not(:empty)::before {
+  content: '';
+  position: absolute;
+  background: inherit;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.petball.no3d .petball-fallback[data-edge='left'] .fluid-column-fill:not(:empty)::before,
+.petball.no3d .petball-fallback[data-edge='right'] .fluid-column-fill:not(:empty)::before {
+  top: -2px;
+  left: 0;
+  width: 100%;
+  height: 4px;
+}
+.petball.no3d .petball-fallback[data-edge='top'] .fluid-column-fill:not(:empty)::before,
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-column-fill:not(:empty)::before {
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+}
+/* 管壁刻度：三格线，空槽也看得见（管子的刻度不依赖有没有水）。
+ * 颜色复用 --water-foam（液面高光同一支，逐皮肤已调到在水色上可读）；
+ * 横槽的线是竖线（读作"前缘刻度"），竖管的线是横线。 */
+.petball.no3d .fluid-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--water-foam), var(--water-foam)),
+    linear-gradient(var(--water-foam), var(--water-foam)),
+    linear-gradient(var(--water-foam), var(--water-foam));
+  background-repeat: no-repeat;
+  opacity: 0.55;
+}
+.petball.no3d .petball-fallback[data-edge='left'] .fluid-ticks,
+.petball.no3d .petball-fallback[data-edge='right'] .fluid-ticks {
+  background-size: 100% 1px;
+  background-position: 50% 25%, 50% 50%, 50% 75%;
+}
+.petball.no3d .petball-fallback[data-edge='top'] .fluid-ticks,
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-ticks {
+  background-size: 1px 100%;
+  background-position: 25% 50%, 50% 50%, 75% 50%;
+}
+/* 管壁侧光：槽内侧一条渐隐高光（玻璃管感）。只做可读分隔，不断言"发光"。 */
+.petball.no3d .fluid-pill::after {
+  content: '';
+  position: absolute;
+  background: linear-gradient(to bottom, var(--water-foam), transparent 70%);
+  opacity: 0.5;
+  pointer-events: none;
+}
+.petball.no3d .petball-fallback[data-edge='left'] .fluid-pill::after,
+.petball.no3d .petball-fallback[data-edge='right'] .fluid-pill::after {
+  left: 1px;
+  top: 3px;
+  bottom: 3px;
+  width: 1px;
+}
+.petball.no3d .petball-fallback[data-edge='top'] .fluid-pill::after,
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill::after {
+  top: 1px;
+  left: 3px;
+  right: 3px;
+  height: 1px;
+  background: linear-gradient(to right, var(--water-foam), transparent 70%);
+}
 /* 吸入 morph（530ms = 150 拉伸 → 300 合并 → 80 定形；关键帧 28%/85% 即分段点） */
 .petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-disc {
   animation: disc-absorb 530ms var(--ease) forwards;
 }
-.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-bridge {
-  animation: bridge-absorb 530ms var(--ease) forwards;
+/* 液桥拉宽成流道（10-04-edge-sip-column）：左右沿横向拉长、上下沿纵向拉长。
+ * 两套关键帧，定位 transform 与原版同式（--dx/--dy），只在 85%/100% 处加非均匀缩放；
+ * 旧 bridge-absorb 整套删除 —— 同一元素两套 morph 是漂移源（J2b 纪律）。
+ * 时序沿用 ABSORB 530ms（shared/fluid，不另起常量）。 */
+.petball.no3d .petball-fallback[data-edge='left'][data-fluid='absorbing'] .fluid-bridge,
+.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing'] .fluid-bridge {
+  animation: bridge-absorb-h 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-edge='top'][data-fluid='absorbing'] .fluid-bridge,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing'] .fluid-bridge {
+  animation: bridge-absorb-v 530ms var(--ease) forwards;
 }
 .petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-pill {
   animation: pill-absorb 530ms var(--ease) forwards;
@@ -2479,7 +2577,7 @@ textarea {
     transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
   }
 }
-@keyframes bridge-absorb {
+@keyframes bridge-absorb-h {
   0% {
     transform: translate(-50%, -50%) scale(0);
   }
@@ -2487,10 +2585,24 @@ textarea {
     transform: translate(calc(-50% + var(--dx) * 8px), calc(-50% + var(--dy) * 8px)) scale(0.8);
   }
   85% {
-    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1);
+    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1.5, 0.7);
   }
   100% {
-    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.5);
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.9, 0.4);
+  }
+}
+@keyframes bridge-absorb-v {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+  }
+  28% {
+    transform: translate(calc(-50% + var(--dx) * 8px), calc(-50% + var(--dy) * 8px)) scale(0.8);
+  }
+  85% {
+    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(0.7, 1.5);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0.4, 0.9);
   }
 }
 @keyframes pill-absorb {
@@ -2639,6 +2751,69 @@ textarea {
     transform: translateX(0);
   }
 }
+/* ─── 吸溜走水（10-04-edge-sip-column）：absorbing 阶段水面下降流向贴边 ───
+ *
+ * .fluid-waves 整体下沉 26px + 向贴边侧偏移 22px（复用 --dx/--dy）+ 淡出，
+ * 被 clip 圆裁出"水面下降、被边吸走"。下沉量是呈现值（窗内视觉），不是命中几何，
+ * 不进 shared（J2b 只管时序/水渍口径）。
+ * 与 pour-fill 同目标（.fluid-waves）：放 pour 规则之后，真撞上（切供应商撞上贴边）
+ * drain 赢 —— 吸走优先于倒满。时序沿用 ABSORB 530ms forwards。
+ * forwards 结束态（opacity 0）与 hidden 稳态（下面 opacity 0）衔接，无跳变。 */
+.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-waves {
+  animation: waves-drain 530ms ease-in forwards;
+}
+@keyframes waves-drain {
+  0% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(var(--dx) * 22px), calc(var(--dy) * 22px + 26px));
+    opacity: 0;
+  }
+}
+/* 柱从空灌到满（10-04-edge-sip-column）：fill 高度恒 = fluidLvl（JSX 内联，不造假），
+ * rise 只用自身高度百分比位移演灌入 —— 竖管 bottom-up、横槽 left-to-right。
+ * 高度是数据的、位移是演的，两者不混（revealing 不做反向 sink：柱由 pill-reveal 整根
+ * 缩走，反向位移会在末帧弹跳，见 PRD Notes）。时序沿用 ABSORB 530ms。 */
+.petball.no3d .petball-fallback[data-edge='left'][data-fluid='absorbing'] .fluid-column-fill,
+.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing'] .fluid-column-fill {
+  animation: column-rise 530ms ease-out;
+}
+.petball.no3d .petball-fallback[data-edge='top'][data-fluid='absorbing'] .fluid-column-fill,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing'] .fluid-column-fill {
+  animation: column-rise-h 530ms ease-out;
+}
+@keyframes column-rise {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes column-rise-h {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+/* 唤出时水流回球里：球内水淡入回升（400ms，反向结构），柱由 pill-reveal 整根缩走。 */
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-waves {
+  animation: waves-fill 400ms ease-out;
+}
+@keyframes waves-fill {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 /* 取帧冻结（--shots 用，window.__bd_fluid_freeze 设 data-freeze）：
    定在某一 morph 帧并暂停一切动画，拍完 'off' 恢复 live。 */
 .petball.no3d .petball-fallback[data-freeze] .fluid-disc,
@@ -2701,6 +2876,16 @@ textarea {
   .petball.no3d .fluid-surface,
   .petball.no3d .fluid-column-wave svg {
     animation: none;
+  }
+  /* 倒水/吸溜的新位移层同样禁动（drain/rise/fill/slosh 全是 animation），
+   * hidden 的 180ms 淡入淡出也关掉 —— 降级是直接显隐，不是"更快一点"。 */
+  .petball.no3d .slosh,
+  .petball.no3d .fluid-waves,
+  .petball.no3d .fluid-column-fill {
+    animation: none;
+  }
+  .petball.no3d .fluid-waves {
+    transition: none;
   }
   .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc {
     transform: translate(-50%, -50%) scale(0);

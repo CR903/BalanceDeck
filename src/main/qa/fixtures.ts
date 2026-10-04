@@ -51,4 +51,38 @@ export function demoSnapshot(): unknown[] {
   ]
 }
 
+/**
+ * 温度计定量夹具（10-04-edge-sip-column）：单供应商单窗口 70%。
+ * 单家无轮播（count<=1 不推进，idx 恒定），贴边隐藏后柱高确定可解码
+ * （满管 70% ≈ 39px/78px@2x —— AC 逐值对拍的实机点位）。
+ */
+export function column70Snapshot(): unknown[] {
+  const nowIso = new Date().toISOString()
+  return [
+    {
+      builtin: true,
+      dataQuality: 'official',
+      dataAt: nowIso,
+      updatedAt: nowIso,
+      id: 'shot-column',
+      name: 'Shot 柱',
+      kind: 'coding',
+      mark: 'opencode',
+      plan: '柱套餐',
+      status: 'ok',
+      source: '走查固件',
+      windows: [
+        {
+          name: '5 小时',
+          used: 8.4,
+          limit: 12,
+          unit: 'usd',
+          percent: 70,
+          resetAt: new Date(Date.now() + 3.4 * 3_600_000).toISOString()
+        }
+      ]
+    }
+  ]
+}
+
 // —— UI 交互自动化测试 ——

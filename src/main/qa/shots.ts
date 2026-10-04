@@ -9,7 +9,7 @@
 // 产物在 /tmp/balancedeck-shots/。
 import { app } from 'electron'
 import { join } from 'path'
-import { demoSnapshot } from './fixtures'
+import { demoSnapshot, column70Snapshot } from './fixtures'
 import { BALL_VIEW } from '../../shared/pet-view'
 
 export async function runShots(win: Electron.BrowserWindow): Promise<void> {
@@ -165,6 +165,47 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await sleep(600)
   await shoot('5k-fluid-stain')
   await exec(`window.__bd_fluid_freeze?.('off')`)
+  // 温度计定量帧（10-04-edge-sip-column）：单供应商单窗口 70%（单家无轮播），
+  // 贴边隐藏后柱高应为满管 70% —— AC 逐值对拍的实机点位。拍完恢复演示数据，
+  // 后续 dock 走查沿用原夹具。
+  await exec(`window.api.debugPush(${JSON.stringify(column70Snapshot())}, false)`)
+  await sleep(900) // 等读数补间收尾（COUNTUP 600ms，见 uitest pushSettle）
+  await exec('window.api.debugDockFreeze(true)')
+  await exec("window.api.debugDockEdge('left')")
+  await sleep(2500) // 真实计时：1000ms 停留 + 300ms 隐藏动画
+  // 自描述探针：把渲染态打到日志（fixture 是否存活、柱高、波浪数），截图解码时不再猜供应商
+  const columnProbe = String(
+    await exec(`(()=>{
+      const dot=document.querySelector('.petball-fallback');
+      if(!dot) return 'no-dot';
+      const fill=dot.querySelector('.fluid-column-fill');
+      const fr=fill?fill.getBoundingClientRect():null;
+      const fc=fill?getComputedStyle(fill):null;
+      const pill=dot.querySelector('.fluid-pill');
+      const pr=pill?pill.getBoundingClientRect():null;
+      const pc=pill?getComputedStyle(pill):null;
+      const goo=dot.querySelector('.petball-goo');
+      const gc=goo?getComputedStyle(goo):null;
+      const wv=dot.querySelector('.fluid-waves');
+      return JSON.stringify({fluid:dot.dataset.fluid,edge:dot.dataset.edge,
+        waves:dot.querySelectorAll('.fluid-wave').length,
+        wavesOpacity:wv?getComputedStyle(wv).opacity:'?',
+        fillH:fr?+fr.height.toFixed(1):-1,
+        fillW:fr?+fr.width.toFixed(1):-1,
+        fillBg:fc?.backgroundColor,fillOp:fc?.opacity,fillDisp:fc?.display,fillTf:fc?.transform,
+        pillW:pr?+pr.width.toFixed(1):-1,pillH:pr?+pr.height.toFixed(1):-1,
+        pillOp:pc?.opacity,pillTf:pc?.transform,
+        gooFilter:gc?.filter?.slice(0,40),
+        value:dot.querySelector('.dot-value')?.textContent ?? ''});
+    })()`)
+  )
+  process.stdout.write(`5n-probe: ${columnProbe}\n`)
+  await shoot('5n-column-70')
+  await exec('window.api.debugDockCursor(true)')
+  await sleep(1500)
+  await exec('window.api.debugDockFreeze(false)')
+  await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
+  await sleep(900)
   await exec('window.api.debugDockFreeze(false)')
   await exec('window.api.expand()')
   await sleep(700)

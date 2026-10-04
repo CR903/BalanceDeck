@@ -937,6 +937,51 @@ ok(
   'K7g reduced-motion 下不挂 data-pour（JS 门控，直接终态）'
 )
 
+// K8 · 贴边吸溜水柱温度计（10-04-edge-sip-column）：吸走 + 灌满 + 活柱，缺一件都算半态
+ok(
+  /\[data-fluid='absorbing'\][^{]*\.fluid-waves[^}]*waves-drain/.test(css),
+  'K8a 吸入时球内水下沉流向贴边（drain 与 pour-fill 同目标，放 pour 规则之后，真撞上 drain 赢）'
+)
+ok(
+  /bridge-absorb-h/.test(css) &&
+    /bridge-absorb-v/.test(css) &&
+    !/@keyframes bridge-absorb\s*\{/.test(css),
+  'K8b 液桥按边拉宽成流道（横/纵两套，旧单套 bridge-absorb 已删，不留第二套 morph）'
+)
+ok(
+  /\[data-fluid='absorbing'\][^{]*\.fluid-column-fill[^}]*column-rise/.test(css),
+  'K8c 吸入时柱从空灌到满（位移演灌满，高度恒 = fluidLvl，见 K8f）'
+)
+// K8d · hidden 保持柱顶波动荡：hidden 暂停名单里必须没有 column（有 = 柱子冻住，违背"里面也是水在动荡"）。
+// 负向断言的非空洞由 J3b/K5a 兜底（hidden 规则被整个删掉时它们先红）。
+{
+  const hi = css.indexOf("[data-fluid='hidden']")
+  const seg = css.slice(hi, hi + 600).split('paused')[0]
+  ok(hi >= 0 && !/fluid-column-wave/.test(seg), 'K8d hidden 只停球内波，柱顶波不在暂停名单里')
+}
+ok(
+  /\.doc-hidden[^{]*\.fluid-column-wave[^}]*paused/.test(css),
+  'K8d2 页面不可见时柱顶波仍暂停（省电：没人看的动画不烧，hidden 的"活着"只给看得见的屏）'
+)
+ok(
+  /className="fluid-ticks"/.test(petBallWater) &&
+    /column-fill:not\(:empty\)/.test(css) &&
+    /fluid-pill::after/.test(css),
+  'K8e 温度计三件套：管壁刻度 JSX + 液头弯月（空槽不画假液头）+ 管壁侧光 CSS'
+)
+ok(
+  /\(fluidLvl \* 100\)\.toFixed\(1\)/.test(petBallCode),
+  'K8f 柱内液高 = fluidLvl 逐值绑定（隐藏态水柱液高与球内液位同一出处，逐值对拍的结构侧）'
+)
+ok(
+  /\[data-fluid='hidden'\][^{]*\.fluid-waves[^}]*opacity:\s*0/.test(css),
+  'K8g 隐藏稳态球内水不可见（屏上只剩温度计柱，水位诚实）'
+)
+ok(
+  /\[data-fluid='hidden'\][^{]*\.petball-goo[^}]*filter:\s*none/.test(css),
+  'K8h 隐藏稳态关 goo 滤镜（无可融合形状；离屏 SVG 滤镜子树画不出，5n 取证）'
+)
+
 // K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形
 //     （竖柱 4×56 / 横槽 56×4；4 = shared/dock-hide.PEEK，56 = shared/pet-view.BALL_VIEW）。
 //     纯函数那半边的数由 scripts/test-fluid.mjs 用例 6 钉死，这里钉 CSS 这半边 ——
