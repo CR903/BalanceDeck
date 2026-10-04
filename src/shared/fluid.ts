@@ -27,6 +27,14 @@ export const ABSORB_SETTLE_MS = 80
 export const ABSORB_TOTAL_MS = ABSORB_STRETCH_MS + ABSORB_MERGE_MS + ABSORB_SETTLE_MS
 /** 汇聚 morph 总时长（反向 400ms，PRD R5） */
 export const REVEAL_MS = 400
+/** 倒水入场①灌入段：整水体从球顶之上倒进来（600ms ease-in，10-04-pour-in-slosh） */
+export const POUR_FILL_MS = 600
+/** 倒水入场②冲顶段：整球 overshoot + 高光闪峰（250ms，接灌入尾段） */
+export const POUR_TOP_MS = 250
+/** 倒水入场③荡漾段：slosh 包裹层衰减（1600ms，接冲顶尾段） */
+export const POUR_SLOSH_MS = 1600
+/** 倒水入场总时长（600 + 250 + 1600 = 2450 ≈ AC 的 2.5s 内结束；播完 JS 摘 data-pour） */
+export const POUR_TOTAL_MS = POUR_FILL_MS + POUR_TOP_MS + POUR_SLOSH_MS
 /** 水渍 pill 沿边沿的长度（约 20px，PRD R2） */
 export const PILL_LEN = 20
 

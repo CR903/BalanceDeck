@@ -128,6 +128,15 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
     await sleep(1100)
     await shoot(`5c-ball-${id}`)
   }
+  // 倒水入场取帧（10-04-pour-in-slosh）：freeze 定住灌入中段/冲顶峰（呈现层冻结，
+  // 不动状态机；此时候选供应商的切换计时照走，拍完 'off' 恢复）。
+  await exec(`window.__bd_fluid_freeze?.('pour-mid')`)
+  await sleep(600)
+  await shoot('5l-pour-mid')
+  await exec(`window.__bd_fluid_freeze?.('pour-top')`)
+  await sleep(600)
+  await shoot('5m-pour-top')
+  await exec(`window.__bd_fluid_freeze?.('off')`)
 
   // ③ 贴边自动隐藏走查：贴边停留 → 滑入边框只留痕迹 → 悬停唤出（10-03-dock-autohide）
   // ⚠ capturePage 拍的是窗口内容，不是桌面合成 —— 藏起来的窗口内容里球还是完整的，

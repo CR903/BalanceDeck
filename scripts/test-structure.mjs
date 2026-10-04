@@ -773,7 +773,7 @@ const petBallSrc = read('src/renderer/src/PetBall.tsx')
 const petBallCode = stripTsComments(petBallSrc)
 ok(/from '\.\.\/\.\.\/shared\/fluid'/.test(petBallCode), 'J2a 前置：PetBall 真的 import shared/fluid')
 ok(/fluidLevel\(/.test(petBallCode), 'J2 液位经 shared/fluid.level（不用内联公式）')
-ok(!/(const|let)\s+(ABSORB_|REVEAL_MS|PILL_LEN)\s*=/.test(petBallCode),
+ok(!/(const|let)\s+(ABSORB_|REVEAL_MS|PILL_LEN|POUR_)\s*=/.test(petBallCode),
   'J2b 渲染层不自立时序/水渍常量（时序唯一口径在 shared/fluid.ts）')
 ok(/data-fluid=/.test(petBallCode) && /data-edge=/.test(petBallCode),
   'J2c 相位与贴边落在 DOM 属性上（--uitest 不靠猜样式读状态）')
@@ -905,6 +905,36 @@ ok(
   /className="fluid-wave fluid-wave-a"[^>]*style=\{\{\s*fill:\s*water/.test(petBallWater) &&
     /className="fluid-column-fill"[^]*background:\s*water/.test(petBallWater),
   'K3d 三层波 fill + 柱内液 background 都绑内联 water（少绑一处，那处的水就恒三档）'
+)
+
+// K7 · 倒水入场（10-04-pour-in-slosh）：data-pour 三段 + 取帧 + 降级，缺一件都算半态
+ok(/data-pour=/.test(petBallCode), 'K7a 重播信号落在 data-pour 属性上（--shots 不靠猜样式读状态）')
+ok(
+  /POUR_TOTAL_MS/.test(petBallCode) && /className="slosh"/.test(petBallWater),
+  'K7b 摘属性计时经 shared POUR_TOTAL_MS + 荡漾有独立 .slosh 位移层（不复用波浪 svg 本体）'
+)
+ok(
+  /pour-fill/.test(css) && /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
+  'K7c 灌入/冲顶/荡漾/闪峰四段 keyframes 都在（少一段，入场就缺一拍）'
+)
+ok(
+  /\[data-pour='in'\][^{]*\.fluid-waves[^}]*pour-fill/.test(css) &&
+    /\[data-pour='in'\][^{]*\.slosh[^}]*pour-slosh/.test(css),
+  'K7d 三段动画挂在 data-pour 上（属性摘掉即无入场 = 回滚点 R2，不断言具体时长，时长归单测用例 8）'
+)
+ok(
+  /\.slosh\s*\{[^}]*position:\s*absolute/.test(css),
+  'K7e .slosh 抽离 grid 流（static 会挤进环心两行，数字错位）'
+)
+ok(
+  /pour-mid/.test(petBallCode) &&
+    /\[data-freeze='pour-mid'\]/.test(css) &&
+    /\[data-freeze='pour-top'\]/.test(css),
+  'K7f 取帧钩子认 pour-mid/pour-top + CSS 有对应定帧（--shots 5l/5m 不拍空）'
+)
+ok(
+  /prefers-reduced-motion/.test(petBallCode),
+  'K7g reduced-motion 下不挂 data-pour（JS 门控，直接终态）'
 )
 
 // K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形

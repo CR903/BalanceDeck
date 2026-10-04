@@ -2561,12 +2561,93 @@ textarea {
     opacity: 0;
   }
 }
+/* ─── 倒水入场（10-04-pour-in-slosh）：data-pour="in" 三段串行 ───
+ *
+ * ① pour-fill：整水体从球顶之上灌入（.fluid-waves translateY -60px→0，600ms ease-in，
+ *    被 clip 圆裁出"倒满"感）；② pour-top：整球冲顶 overshoot（fallback scale 1→1.07→1，
+ *    250ms，接灌入尾）+ 高光线 pour-flash 闪峰；③ pour-slosh：.slosh 包裹层
+ *    translateX ±8px→0 衰减包络（1600ms，接冲顶尾）。
+ * 总 600+250+1600=2450ms（= shared/fluid.POUR_TOTAL_MS，播完 JS 摘属性）。
+ * 位移动画只跑合成器：液面 d 只算一次终态，不逐帧重渲染。
+ * ⚠ pour-top 的关键帧必须带 translate(-50%,-50%) —— fallback 靠 transform 定位居中，
+ *    animation 会覆盖整条 transform（含 :has(:active) 的按压态，250ms 内可接受）。
+ * ⚠ D6 纪律：位移只用 transform，不触发布局；无 outer shadow。 */
+.petball.no3d .slosh {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.petball.no3d .petball-fallback[data-pour='in'] .fluid-waves {
+  animation: pour-fill 600ms ease-in;
+}
+.petball.no3d .petball-fallback[data-pour='in'] .slosh {
+  animation: pour-slosh 1600ms ease-out 850ms;
+}
+.petball.no3d .petball-fallback[data-pour='in'] {
+  animation: pour-top 250ms ease-out 600ms;
+}
+.petball.no3d .petball-fallback[data-pour='in'] .fluid-surface {
+  animation: pour-flash 250ms ease-out 600ms;
+}
+@keyframes pour-fill {
+  from {
+    transform: translateY(-60px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes pour-top {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  40% {
+    transform: translate(-50%, -50%) scale(1.07);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes pour-flash {
+  0% {
+    opacity: 0.9;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.9;
+  }
+}
+@keyframes pour-slosh {
+  0% {
+    transform: translateX(8px);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-2.5px);
+  }
+  80% {
+    transform: translateX(1.2px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
 /* 取帧冻结（--shots 用，window.__bd_fluid_freeze 设 data-freeze）：
    定在某一 morph 帧并暂停一切动画，拍完 'off' 恢复 live。 */
 .petball.no3d .petball-fallback[data-freeze] .fluid-disc,
 .petball.no3d .petball-fallback[data-freeze] .fluid-bridge,
 .petball.no3d .petball-fallback[data-freeze] .fluid-pill,
-.petball.no3d .petball-fallback[data-freeze] .fluid-wave {
+.petball.no3d .petball-fallback[data-freeze] .fluid-wave,
+.petball.no3d .petball-fallback[data-freeze] .slosh,
+.petball.no3d .petball-fallback[data-freeze] .fluid-waves,
+.petball.no3d .petball-fallback[data-freeze] .fluid-surface {
   animation: none;
 }
 .petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc {
@@ -2588,6 +2669,24 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze='stain'] .fluid-pill {
   scale: 1;
   opacity: 1;
+}
+/* 倒水取帧（10-04-pour-in-slosh）：不依赖 data-pour 是否还在播 —— freeze 规则
+   自带位移终态（mid = 灌入中段 -30px；top = 冲顶峰 scale 1.07），slosh 与波浪
+   由上面的 data-freeze 暂停名单定住。特异度与 data-pour 规则同级，靠文件顺序后胜。 */
+.petball.no3d .petball-fallback[data-freeze='pour-mid'] .fluid-waves {
+  transform: translateY(-30px);
+}
+.petball.no3d .petball-fallback[data-freeze='pour-mid'] .slosh {
+  transform: translateX(4px);
+}
+.petball.no3d .petball-fallback[data-freeze='pour-top'] {
+  transform: translate(-50%, -50%) scale(1.07);
+}
+/* 冻结必须停掉 fallback 本体的 pour-top animation —— running 的 animation 优先级
+   高于 transform 声明，不停的话上面的定帧位移写了也白写（暂停名单里没有 fallback 本体） */
+.petball.no3d .petball-fallback[data-freeze='pour-mid'],
+.petball.no3d .petball-fallback[data-freeze='pour-top'] {
+  animation: none;
 }
 /* prefers-reduced-motion：跳过流体与滑动，直接显隐（计时器保留，PRD R5）。
    桥永不出现；pill 只在 hidden 态静态留痕；波浪只显示静态液位。 */

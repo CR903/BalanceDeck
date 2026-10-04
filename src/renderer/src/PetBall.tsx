@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { BALL_VIEW } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
-import { level as fluidLevel, type FluidPhase } from '../../shared/fluid'
+import { level as fluidLevel, POUR_TOTAL_MS, type FluidPhase } from '../../shared/fluid'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank } from './read-model'
@@ -436,6 +436,25 @@ export function PetBall({
    * null（余额类/算不出比例）时不设内联色，CSS 的 lvl-* 兜底继续生效。
    */
   const water = pct != null ? waterColor(pct, waterAnchors) : null
+  /**
+   * 倒水入场（10-04-pour-in-slosh）：mount + 每次切供应商/窗口都播完整三段（G1 结论）。
+   * `data-pour="in"` 挂载 → CSS 三段动画（灌入 600 / 冲顶 250 / 荡漾 1600，
+   * 时序归 shared/fluid POUR_*）→ POUR_TOTAL_MS 后摘属性，不留尾巴。
+   * reduced-motion 下不挂（直接终态，计时器不启动）；unmount/重切时清计时器。
+   * reducedMotion 是 mount 时的一次性取值（换系统设置需重载窗口，不另起监听器）。
+   */
+  const [reducedMotion] = useState(
+    () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+  const [pour, setPour] = useState<string | null>(() => (reducedMotion ? null : 'in'))
+  useEffect(() => {
+    if (reducedMotion) return
+    setPour('in')
+    const t = window.setTimeout(() => setPour(null), POUR_TOTAL_MS)
+    return () => window.clearTimeout(t)
+    // idx/winIdx 是唯一的重播信号；reducedMotion 已在 state 里，不进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, winIdx])
 
   /**
    * 页面不可见时暂停波浪（三处暂停之一，另两处是 hidden 相位与 reduced-motion）。
@@ -451,14 +470,17 @@ export function PetBall({
   }, [])
 
   // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
-  // 把 goo 定在某一 morph 帧并暂停动画，`'off'` 恢复 live。纯呈现层冻结 ——
+  // 把 goo 定在某一 morph 帧并暂停动画，`'pour-mid'|'pour-top'` 定在倒水入场中段
+  // （10-04-pour-in-slosh，不依赖 data-pour 是否还在播 —— freeze 规则自带终态位移），
+  // `'off'` 恢复 live。纯呈现层冻结 ——
   // 返回值是 void（结构化克隆安全），与 __bd_ball 的数据钩子分开。
   useEffect(() => {
     const w = window as unknown as { __bd_fluid_freeze?: (stage: string) => void }
     w.__bd_fluid_freeze = (stage: string) => {
       const goo = document.querySelector('.petball-fallback')
       if (!goo) return
-      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain') goo.setAttribute('data-freeze', stage)
+      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-mid' || stage === 'pour-top')
+        goo.setAttribute('data-freeze', stage)
       else goo.removeAttribute('data-freeze')
     }
     return () => {
@@ -760,6 +782,7 @@ export function PetBall({
           data-ring={s ? (isPlan(s) ? 'plan' : 'balance') : ''}
           data-fluid={fluid}
           data-edge={fluidEdgeAttr}
+          data-pour={pour ?? undefined}
         >
           {/* 流体三元素（R2/R3 + design Fluid 节）：渐变球盘 + 液桥 blob + 贴边水渍 pill。
               挂 filter: url(#petball-goo) 的只有这一层 —— 环/数字/标记在它之外，
@@ -793,16 +816,20 @@ export function PetBall({
             </svg>
             <div className="fluid-disc" />
             {showWaves && (
-              <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
-                <g clipPath="url(#fluid-clip)">
-                  {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
-                      内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
-                  <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
-                  <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
-                  <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
-                  <path d={surfaceLine} className="fluid-surface" />
-                </g>
-              </svg>
+              // .slosh：倒水入场③荡漾的位移层（10-04-pour-in-slosh）。absolute 抽离 grid 流，
+              // 不参与环心两行的排布；transform 只跑合成器（见 skins.css pour-slosh）。
+              <div className="slosh" aria-hidden="true">
+                <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
+                  <g clipPath="url(#fluid-clip)">
+                    {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
+                        内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
+                    <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
+                    <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
+                    <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
+                    <path d={surfaceLine} className="fluid-surface" />
+                  </g>
+                </svg>
+              </div>
             )}
             <div className="fluid-bridge" />
             {/* 贴边水柱（10-03-holo-sphere 水满）：隐藏态的水渍 pill 改为水柱 ——

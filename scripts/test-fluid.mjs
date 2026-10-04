@@ -158,5 +158,13 @@ eq(water.resolveWaterAnchors(() => ''), null, '全缺 → null（整套回退，
 eq(water.resolveWaterAnchors((n) => (n === '--warn' ? 'oops' : skin[n])), null, '一锚坏 → null')
 eq(JSON.stringify(water.defaultWaterAnchors().ok), JSON.stringify([48, 209, 88]), '缺省锚点 = aero 三色')
 
+console.log('用例 8：倒水入场时序（10-04-pour-in-slosh：三段串行 ≈ AC 2.5s 内结束）')
+eq(fluid.POUR_FILL_MS, 600, '灌入 600ms ease-in')
+eq(fluid.POUR_TOP_MS, 250, '冲顶 250ms（接灌入尾）')
+eq(fluid.POUR_SLOSH_MS, 1600, '荡漾 1600ms（接冲顶尾）')
+eq(fluid.POUR_TOTAL_MS, 2450, '总 2450ms（≤ AC 2.5s，播完 JS 摘 data-pour）')
+eq(fluid.POUR_TOTAL_MS, fluid.POUR_FILL_MS + fluid.POUR_TOP_MS + fluid.POUR_SLOSH_MS, '总数 = 三段之和（不手算 2450）')
+ok(fluid.POUR_TOTAL_MS < 2600 && fluid.POUR_TOTAL_MS > fluid.ABSORB_TOTAL_MS, '入场比吸入 morph 长（存在感优先于克制，G1 结论）')
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
 process.exit(fail === 0 ? 0 : 1)
