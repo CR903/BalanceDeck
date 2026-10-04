@@ -6,6 +6,12 @@ import { level as fluidLevel, type FluidPhase } from '../../shared/fluid'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank } from './read-model'
+import {
+  defaultWaterAnchors,
+  resolveWaterAnchors,
+  waterColor,
+  type WaterAnchors
+} from '../../shared/water-color'
 import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
 
@@ -65,6 +71,23 @@ function wavePoints(surfaceY: number, phase: number, A: number, L: number): stri
     pts.push(`${x} ${(surfaceY + A * Math.sin(((x + phase) / L) * Math.PI * 2)).toFixed(2)}`)
   }
   return pts
+}
+
+/**
+ * 读当前皮肤的水色锚点（本文件唯一碰 DOM 的水色胶水 —— 插值本身是 shared 纯函数）。
+ * 令牌落在 `.app` 上，不在 body（见 skins.css 注释 —— 写错位置会形成继承屏障，
+ * 读到 :root 的旧值）。读不到/解析失败 → 缺省三色：水退化成"阈值处仍对"的静态色，
+ * 不断裂、不透明（与 --water-foam/--water-deep 的 :root 兜底同纪律）。
+ */
+function readWaterAnchors(): WaterAnchors {
+  try {
+    const app = document.querySelector('.app')
+    if (!app) return defaultWaterAnchors()
+    const cs = getComputedStyle(app)
+    return resolveWaterAnchors((n) => cs.getPropertyValue(n)) ?? defaultWaterAnchors()
+  } catch {
+    return defaultWaterAnchors()
+  }
 }
 
 function waveD(surfaceY: number, phase: number, A = 2.2, L = 28): string {
@@ -394,6 +417,25 @@ export function PetBall({
   const surfaceLine = useMemo(() => waveLine(surfaceY, 0), [surfaceY])
   /** 水柱方向：左右边竖柱（液高从底起）、上下边横槽（液宽从左起），与 shared/fluid.waterColumn 同口径 */
   const columnVertical = fluidEdgeAttr === 'left' || fluidEdgeAttr === 'right'
+  /**
+   * 水色锚点：当前皮肤的 --ok/--warn/--danger（.app 上读，见 water-color.ts）。
+   * 换肤经 MutationObserver 重读 —— useState 存整套锚点对象，observer 只在 data-skin
+   * 变化时触发，不存在"每渲染读一次 computed"的开销。
+   */
+  const [waterAnchors, setWaterAnchors] = useState<WaterAnchors>(() => readWaterAnchors())
+  useEffect(() => {
+    const app = document.querySelector('.app')
+    if (!app) return
+    const mo = new MutationObserver(() => setWaterAnchors(readWaterAnchors()))
+    mo.observe(app, { attributes: true, attributeFilter: ['data-skin'] })
+    return () => mo.disconnect()
+  }, [])
+  /**
+   * 水体连续色（10-04-water-color-by-usage）：阈值处精确命中等级色，段间插值。
+   * 用原始 pct（不用量化后的 fluidLvl）—— 液位不动的那几帧，颜色仍在走。
+   * null（余额类/算不出比例）时不设内联色，CSS 的 lvl-* 兜底继续生效。
+   */
+  const water = pct != null ? waterColor(pct, waterAnchors) : null
 
   /**
    * 页面不可见时暂停波浪（三处暂停之一，另两处是 hidden 相位与 reduced-motion）。
@@ -753,9 +795,11 @@ export function PetBall({
             {showWaves && (
               <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
                 <g clipPath="url(#fluid-clip)">
-                  <path d={waveA} className="fluid-wave fluid-wave-a" />
-                  <path d={waveB} className="fluid-wave fluid-wave-b" />
-                  <path d={waveC} className="fluid-wave fluid-wave-c" />
+                  {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
+                      内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
+                  <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
+                  <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
+                  <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
                   <path d={surfaceLine} className="fluid-surface" />
                 </g>
               </svg>
@@ -763,15 +807,16 @@ export function PetBall({
             <div className="fluid-bridge" />
             {/* 贴边水柱（10-03-holo-sphere 水满）：隐藏态的水渍 pill 改为水柱 ——
                 几何（竖柱/横槽、占满痕迹条）归 shared/fluid.waterColumn，这里只摆
-                液位与波浪：柱内液高/液宽 = 同一 fluidLvl，柱顶一条小波浪，水色跟 lvl。
+                液位与波浪：柱内液高/液宽 = 同一 fluidLvl，柱顶一条小波浪，水色跟 water
+                （连续插值，CSS lvl 兜底；与球内水体同源同色）。
                 液位 0（余额类/算不出比例）时只留空柱槽 + 不挂波浪，不造假水位。 */}
             <div className="fluid-pill">
               <div
                 className="fluid-column-fill"
                 style={
                   columnVertical
-                    ? { height: `${(fluidLvl * 100).toFixed(1)}%` }
-                    : { width: `${(fluidLvl * 100).toFixed(1)}%` }
+                    ? { height: `${(fluidLvl * 100).toFixed(1)}%`, background: water ?? undefined }
+                    : { width: `${(fluidLvl * 100).toFixed(1)}%`, background: water ?? undefined }
                 }
               >
                 {/* 柱顶小波浪：坐在液面上（fill 的顶部/前缘），液位 0 时 fill 高度
@@ -787,7 +832,7 @@ export function PetBall({
             </div>
           </div>
           {/* 外圈进度环已退役（10-03-holo-sphere 水满 pivot）：进度唯一载体是球盘内的
-              全屏水体（液位 = fluidLevel(pct)，水色跟 lvl）。data-ring 探针保留 ——
+              全屏水体（液位 = fluidLevel(pct)，水色 = water 连续插值，CSS lvl 兜底）。data-ring 探针保留 ——
               它与「套餐画水 / 余额画素盘」的判定同源（--uitest 靠它区分「套餐没水」=
               回归 与 「余额没水」= 设计），删掉的话 DOM 上两种情形长得一模一样。
               ⚠ 没有快照时是 ''（既非套餐也非余额），不是 'balance'：写成 'balance'

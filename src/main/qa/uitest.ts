@@ -15,6 +15,7 @@ import { BALL_VIEW } from '../../shared/pet-view'
 // 隐藏偏移的断言口径与主进程同一常数（改 PEEK 时这里跟着变，不各自硬编码 56-4=52）
 import { PEEK } from '../../shared/dock-hide'
 import { refreshNow } from '../scheduler'
+import { resolveWaterAnchors, waterColor } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
 
 export async function runUiTest(
@@ -1181,29 +1182,32 @@ export async function runUiTest(
   }
   const surfaceNear = (sy: number | null, pct: number): boolean =>
     typeof sy === 'number' && Number.isFinite(sy) && Math.abs(sy - surfaceFor(pct)) <= 0.6
-  /** lvl → 期待的水色令牌（与 skins.css 同名，不读死颜色值：皮肤换了这里不用改） */
-  const lvlToken = (lvl: string): string =>
-    lvl === 'warn' ? '--warn' : lvl === 'danger' ? '--danger' : lvl === 'muted' ? '--fg-faint' : '--ok'
-  /** 令牌值（hex 或 rgba）与 computed fill（rgb()/rgba()）逐位比：hex 转 rgb 后去空格比 */
-  const hexToRgb = (hex: string): string => {
-    const m = hex.trim().match(/^#([0-9a-fA-F]{6})$/)
-    if (!m) return hex.replace(/\s+/g, '')
-    const n = parseInt(m[1], 16)
-    return `rgb(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255})`
-  }
-  /** 水色与 lvl 令牌逐位一致（颜色不是唯一通道，但水色错了就是等级错了） */
-  const waterColorWhy = async (p: BallProbe): Promise<string> => {
+  /**
+   * 水色 = 连续插值期望（10-04-water-color-by-usage：与渲染层同一实现算期望，
+   * 不手写第二份公式；锚点仍读自页面 computed 三令牌，不读死颜色值，换肤不用改）。
+   * pct 由调用方按当前夹具传入（探针不带 pct，只带读数文本）。
+   */
+  const waterColorWhy = async (p: BallProbe, pct: number): Promise<string> => {
     if (p.waves !== 3 || !p.surface) return `fail:precondition waves=${p.waves} surface=${p.surface}`
     if (!p.lvl) return 'fail:no-lvl'
-    const token = String(
+    const raw = String(
       await exec(
-        `getComputedStyle(document.querySelector('.petball')).getPropertyValue('${lvlToken(p.lvl)}')`
+        `(()=>{const b=document.querySelector('.petball');if(!b)return '';const cs=getComputedStyle(b);return JSON.stringify({'--ok':cs.getPropertyValue('--ok'),'--warn':cs.getPropertyValue('--warn'),'--danger':cs.getPropertyValue('--danger')})})()`
       )
-    ).trim()
-    if (!token) return `fail:token=${lvlToken(p.lvl)}-empty`
-    const want = hexToRgb(token)
+    )
+    let anchors = null as ReturnType<typeof resolveWaterAnchors>
+    try {
+      const t = JSON.parse(raw) as Record<string, string>
+      anchors = resolveWaterAnchors((n) => t[n] ?? '')
+    } catch {
+      anchors = null
+    }
+    if (!anchors) return `fail:anchors=${raw.slice(0, 60)}`
+    const want = waterColor(pct, anchors)
     const got = (p.waterFill || '').replace(/\s+/g, '')
-    return got === want ? '' : `fail:lvl=${p.lvl} fill=${p.waterFill} want(${lvlToken(p.lvl)})=${token}`
+    return got === want.replace(/\s+/g, '')
+      ? ''
+      : `fail:pct=${pct} fill=${p.waterFill} want=${want}`
   }
   /** 推夹具 + 等读数补间收尾：push 也会让 target 变化（走 600ms 动画），直接读会拿到中间态 */
   const pushSettle = async (snaps: unknown[]): Promise<void> => {
@@ -1239,7 +1243,7 @@ export async function runUiTest(
   }
   r.petRingAlwaysOn = ringOnWhy || 'ok'
   // 水色与 lvl 同步（颜色不是唯一通道，但水色错了就是等级错了；10% → lvl-ok → --ok）
-  r.petWaterLevel = ringOnWhy ? ringOnWhy : (await waterColorWhy(g0)) || 'ok'
+  r.petWaterLevel = ringOnWhy ? ringOnWhy : (await waterColorWhy(g0, 10)) || 'ok'
   // AC3.1/AC3.2：短标签必须落在百分比**正下方**（同一列），既不压数字也不贴盘缘、且不溢出 56×56。
   // 这里量的是**几何**，不是 CSS 声明 —— 声明由 scripts/test-structure.mjs 的 D4/D5 守。
   // 两条声明各自的判据都能被改坏（见 implement.md），但它们都**证明不了**「真的在下方」：

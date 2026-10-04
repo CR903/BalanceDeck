@@ -604,6 +604,14 @@ ok(
   !/from '.*\/(main|renderer)\//.test(levelsBody),
   'G1b levels.ts 不 import 主进程 / 渲染层（src/shared/ 是单向的跨进程层）'
 )
+// water-color.ts 同为跨进程纯模块（渲染层内联消费 + 主进程 uitest 算期望 + node 单测直 load）：
+// DOM 胶水（读 .app 令牌）归调用方，不进 shared —— shared 里出现 document/window 即红。
+const waterColorBody = stripTsComments(read('src/shared/water-color.ts'))
+ok(
+  waterColorBody.length > 0 &&
+    !/\belectron\b|\bdocument\.|window\.|navigator\.|getComputedStyle/.test(waterColorBody),
+  'G1c water-color.ts 是纯模块（无 electron / DOM；阈值锚点同源但阈值本身仍只归 levels.ts）'
+)
 
 // 阈值字面量只允许出现在 levels.ts 一处。判据扫全仓的**生效代码**（先剥注释）——
 // 注释里写「≥85% 危险」是文档，裸 grep 会把它算成第二处。
@@ -785,6 +793,10 @@ const shotsCode = stripTsComments(read('src/main/qa/shots.ts'))
 ok(/dockFluid/.test(uitestCode), 'J4a 前置：uitest 真的有 dockFluid 断言键')
 ok(/__bd_fluid_freeze|dataset\.fluid|data-fluid/.test(uitestCode), 'J4 uitest 读流体相位（状态序列不断就等于没测 morph）')
 ok(/__bd_fluid_freeze/.test(shotsCode), 'J4b shots 经 __bd_fluid_freeze 取拉伸/桥接/水渍三帧')
+ok(
+  /shared\/water-color/.test(uitestCode) && /waterColor\(pct/.test(uitestCode),
+  'J4c uitest 水色期望经 shared/water-color 算（与渲染层同源，不手写第二份公式）'
+)
 
 // J5 · 推送不抛：dock 通道一律走 safeSend（reload / GPU 崩溃恢复时裸 send 会抛
 // `Render frame was disposed`，而调用方一半在定时器回调里 —— 抛出来就是主进程
@@ -881,6 +893,18 @@ ok(
     ruleBody(css, '.petball.no3d.lvl-danger .fluid-wave') != null &&
     ruleBody(css, '.petball.no3d.lvl-muted .fluid-wave') != null,
   'K3c lvl-warn/danger/muted 的水色覆写都在（删掉一级，那一级的水就恒绿）'
+)
+// K3d · 连续水色（10-04-water-color-by-usage）：三层波 fill 与柱内液 background
+// 走内联 water（waterColor(pct) 插值），K3b/K3c 的 CSS 留作兜底 —— 内联被删时
+// 水退回三档而不是透明/无色（删内联不断裂的证明见 K3b/K3c 仍绿）。
+ok(
+  /from '\.\.\/\.\.\/shared\/water-color'/.test(petBallWater) && /waterColor\(pct/.test(petBallWater),
+  'K3d PetBall 经 shared/water-color 的 waterColor(pct) 算水色（不手写第二份插值）'
+)
+ok(
+  /className="fluid-wave fluid-wave-a"[^>]*style=\{\{\s*fill:\s*water/.test(petBallWater) &&
+    /className="fluid-column-fill"[^]*background:\s*water/.test(petBallWater),
+  'K3d 三层波 fill + 柱内液 background 都绑内联 water（少绑一处，那处的水就恒三档）'
 )
 
 // K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形

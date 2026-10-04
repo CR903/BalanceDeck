@@ -119,5 +119,44 @@ eq(waterColumn('left', { width: 0, height: 56 }), null, '零宽 → null')
 eq(waterColumn('left', { width: 56, height: 56 }, -1), null, '负探出 → null')
 eq(waterColumn('bogus', { width: 56, height: 56 }), null, '非法边 → null')
 
+console.log('用例 7：水色连续插值（10-04-water-color-by-usage：阈值处命中等级色，段间连续）')
+const water = await loadTs('src/shared/water-color.ts')
+const A = water.defaultWaterAnchors()
+// 端点精确命中锚点色（阈值处与卡片/托盘逐位同色：60→warn / 85→danger）
+eq(water.waterColor(0, A), water.rgbStr(A.ok), '0% = ok 锚点')
+eq(water.waterColor(60, A), water.rgbStr(A.warn), '60% = warn 锚点（阈值命中）')
+eq(water.waterColor(85, A), water.rgbStr(A.danger), '85% = danger 锚点（阈值命中）')
+eq(water.waterColor(100, A), water.rgbStr(A.dangerDeep), '100% = dangerDeep 锚点')
+// 段间连续：中点既不是起点也不是终点（非跳变的三档能过，跳变过不了）
+for (const [pct, lo, hi] of [[30, 'ok', 'warn'], [70, 'warn', 'danger'], [92, 'danger', 'dangerDeep']]) {
+  const mid = water.waterColor(pct, A)
+  ok(mid !== water.rgbStr(A[lo]) && mid !== water.rgbStr(A[hi]), `${pct}% 介于 ${lo}→${hi} 之间（${mid}）`)
+}
+// 钳制与非法输入（与 fluid.level 同纪律：只夹住，不抛、不透明）
+eq(water.waterColor(-5, A), water.waterColor(0, A), '负数钳到 0')
+eq(water.waterColor(150, A), water.waterColor(100, A), '超 100 钳到 100')
+eq(water.waterColor(NaN, A), water.waterColor(0, A), 'NaN → 0（未知由调用方不渲染表达）')
+eq(water.waterColor('60', A), water.waterColor(0, A), '非数字 → 0')
+ok(/^rgb\(\d{1,3}, \d{1,3}, \d{1,3}\)$/.test(water.waterColor(37.5, A)), '输出恒为 opaque rgb()（小数 pct 不抖出非法格式）')
+// 解析与锚点组装
+eq(water.parseCssColor('#ff9f0a'), [255, 159, 10], '#rrggbb 解析')
+eq(water.parseCssColor('#fff'), [255, 255, 255], '#rgb 解析')
+eq(water.parseCssColor('rgb(48, 209, 88)'), [48, 209, 88], 'rgb() 解析')
+eq(water.parseCssColor('rgba(48, 209, 88, 0.5)'), [48, 209, 88], 'rgba() 取通道（水体恒不透明）')
+eq(water.parseCssColor('transparent'), null, '关键字 → null')
+eq(water.parseCssColor(''), null, '空串 → null')
+eq(water.shade([255, 159, 10], 1), [255, 159, 10], 'shade 系数 1 恒等')
+const skin = { '--ok': '#30d158', '--warn': '#ff9f0a', '--danger': '#ff453a' }
+const seen = []
+const resolved = water.resolveWaterAnchors((n) => {
+  seen.push(n)
+  return skin[n] ?? ''
+})
+eq(seen, ['--ok', '--warn', '--danger'], 'getter 按 CSS 变量名取值（与 getPropertyValue 同口径）')
+ok(resolved != null && resolved.dangerDeep.every((v, i) => v < resolved.danger[i]), '三锚点解析 + dangerDeep 自动压暗')
+eq(water.resolveWaterAnchors(() => ''), null, '全缺 → null（整套回退，不给半套）')
+eq(water.resolveWaterAnchors((n) => (n === '--warn' ? 'oops' : skin[n])), null, '一锚坏 → null')
+eq(JSON.stringify(water.defaultWaterAnchors().ok), JSON.stringify([48, 209, 88]), '缺省锚点 = aero 三色')
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
 process.exit(fail === 0 ? 0 : 1)
