@@ -12,6 +12,7 @@ import {
   waterColor,
   type WaterAnchors
 } from '../../shared/water-color'
+import { skinWaves } from './skin-waves'
 import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
 
@@ -411,10 +412,19 @@ export function PetBall({
   const fluidLvl = showWaves ? fluidLevel(pct) : 0
   // 液面在 56 viewBox 里的高度：全屏水体的 clip 圆 r=27（圆心 28,28）→ 顶 1 / 底 55
   const surfaceY = 55 - fluidLvl * 54
-  const waveA = useMemo(() => waveD(surfaceY, 0), [surfaceY])
-  const waveB = useMemo(() => waveD(surfaceY, 18, 1.6, 36), [surfaceY])
-  const waveC = useMemo(() => waveD(surfaceY, 9, 0.9, 18), [surfaceY])
-  const surfaceLine = useMemo(() => waveLine(surfaceY, 0), [surfaceY])
+  /**
+   * 本皮肤波形（R1）：振幅/波长逐皮肤各一套（SKIN_WAVES 表），高光线与 A 层同参数。
+   * skinId 与水色锚点走同一个 data-skin observer（一事一监听是浪费）。
+   * ext 外部皮肤回退默认波形（不断裂）；漂移距离由 CSS --wave-len-* 同步（单测跨钉）。
+   */
+  const [skinId, setSkinId] = useState<string>(
+    () => document.querySelector('.app')?.getAttribute('data-skin') ?? 'aero'
+  )
+  const waves = skinWaves(skinId)
+  const waveA = useMemo(() => waveD(surfaceY, 0, waves.a.A, waves.a.L), [surfaceY, waves])
+  const waveB = useMemo(() => waveD(surfaceY, 18, waves.b.A, waves.b.L), [surfaceY, waves])
+  const waveC = useMemo(() => waveD(surfaceY, 9, waves.c.A, waves.c.L), [surfaceY, waves])
+  const surfaceLine = useMemo(() => waveLine(surfaceY, 0, waves.a.A, waves.a.L), [surfaceY, waves])
   /** 水柱方向：左右边竖柱（液高从底起）、上下边横槽（液宽从左起），与 shared/fluid.waterColumn 同口径 */
   const columnVertical = fluidEdgeAttr === 'left' || fluidEdgeAttr === 'right'
   /**
@@ -426,7 +436,10 @@ export function PetBall({
   useEffect(() => {
     const app = document.querySelector('.app')
     if (!app) return
-    const mo = new MutationObserver(() => setWaterAnchors(readWaterAnchors()))
+    const mo = new MutationObserver(() => {
+      setWaterAnchors(readWaterAnchors())
+      setSkinId(app.getAttribute('data-skin') ?? 'aero')
+    })
     mo.observe(app, { attributes: true, attributeFilter: ['data-skin'] })
     return () => mo.disconnect()
   }, [])
@@ -816,20 +829,29 @@ export function PetBall({
             </svg>
             <div className="fluid-disc" />
             {showWaves && (
-              // .slosh：倒水入场③荡漾的位移层（10-04-pour-in-slosh）。absolute 抽离 grid 流，
-              // 不参与环心两行的排布；transform 只跑合成器（见 skins.css pour-slosh）。
-              <div className="slosh" aria-hidden="true">
-                <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
-                  <g clipPath="url(#fluid-clip)">
-                    {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
-                        内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
-                    <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
-                    <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
-                    <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
-                    <path d={surfaceLine} className="fluid-surface" />
-                  </g>
-                </svg>
-              </div>
+              <>
+                {/* 细射流倒水（R2）：clip 到水盘圆内的 5px 射流从顶落下 + 触水 ripple。
+                    水位保持终态静默（56px 下 600ms 的液位爬升不可辨，流 + ripple + slosh 承载效果）。
+                    .pour-clip 抽离 grid 流（absolute），circle 裁剪与水盘 clip 圆同口径（r=27）。 */}
+                <div className="pour-clip" aria-hidden="true">
+                  <div className="pour-stream" style={{ background: water ?? undefined }} />
+                  <span className="pour-splash" style={{ top: surfaceY - 6 }} />
+                </div>
+                {/* .slosh：倒水入场③荡漾的位移层（10-04-pour-in-slosh）。absolute 抽离 grid 流，
+                    不参与环心两行的排布；transform 只跑合成器（见 skins.css pour-slosh）。 */}
+                <div className="slosh" aria-hidden="true">
+                  <svg className="fluid-waves" viewBox="0 0 56 56" aria-hidden="true">
+                    <g clipPath="url(#fluid-clip)">
+                      {/* 三层 fill 走内联连续水色（water）；CSS 的 lvl-* 填充保留为兜底 ——
+                          内联色不可用时仍是三档，不透明不断裂（见 water-color.ts）。 */}
+                      <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
+                      <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
+                      <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
+                      <path d={surfaceLine} className="fluid-surface" />
+                    </g>
+                  </svg>
+                </div>
+              </>
             )}
             <div className="fluid-bridge" />
             {/* 贴边水柱（10-03-holo-sphere 水满 + 10-04-edge-sip-column 温度计）：

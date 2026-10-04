@@ -52,6 +52,38 @@ export function demoSnapshot(): unknown[] {
 }
 
 /**
+ * 波形对照夹具（R1）：单供应商单窗口 40%。单家无轮播，5c 五皮肤循环拍到同一液面，
+ * 波形差异（振幅/波长）可逐皮肤对拍 —— 液面相同，波顶位置不同即振幅不同。
+ */
+export function wave40Snapshot(): unknown[] {
+  const nowIso = new Date().toISOString()
+  return [
+    {
+      builtin: true,
+      dataQuality: 'official',
+      dataAt: nowIso,
+      updatedAt: nowIso,
+      id: 'shot-wave',
+      name: 'Shot 波',
+      kind: 'coding',
+      mark: 'opencode',
+      plan: '波套餐',
+      status: 'ok',
+      source: '走查固件',
+      windows: [
+        {
+          name: '5 小时',
+          used: 4.8,
+          limit: 12,
+          unit: 'usd',
+          percent: 40,
+          resetAt: new Date(Date.now() + 3.4 * 3_600_000).toISOString()
+        }
+      ]
+    }
+  ]
+}
+/**
  * 温度计定量夹具（10-04-edge-sip-column）：单供应商单窗口 70%。
  * 单家无轮播（count<=1 不推进，idx 恒定），贴边隐藏后柱高确定可解码
  * （满管 70% ≈ 39px/78px@2x —— AC 逐值对拍的实机点位）。

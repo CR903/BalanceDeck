@@ -850,9 +850,9 @@ ok(
   /fluid-drift-c/.test(css) && /column-drift/.test(css),
   'K2c 第三层位移 + 水柱波浪位移的关键帧都在（只挂类名不写关键帧 = 静止的假波浪）'
 )
-// K2d · 位移距离必须是各自波长的整数倍（否则循环播放每轮跳一格：B 层曾写成 28px，
-//     而它的波长是 36 —— 2 秒一次的错位抽动，肉眼在 0.3 透明度下照样看得出）。
-//     A=28（1×28）/ B=36（1×36，反向）/ C=36（2×18）；柱顶小波浪周期 4px 走 -4。
+// K2d · 位移距离必须是各自波长的整数倍（R1 后走变量：keyframes 只写 var，
+//     具体像素由 --wave-len-* 给 —— :root 默认 28/36/18 见 K9a，逐皮肤同步见 test-fluid 用例 9）。
+//     A=1×len-a / B=1×len-b（反向）/ C=2×len-c；柱顶小波浪周期 4px 走 -4（固定形状，不变量化）。
 //     ⚠ 按块切片再取数：跨 `@keyframes` 边界贪过去会读到下一块的数，删掉整块照样绿。
 const kfBlock = (name) => {
   const start = css.indexOf(`@keyframes ${name}`)
@@ -860,16 +860,14 @@ const kfBlock = (name) => {
   const cuts = [css.indexOf('@keyframes', start + 1), css.indexOf('@media', start + 1)].filter((i) => i > 0)
   return css.slice(start, cuts.length ? Math.min(...cuts) : undefined)
 }
-for (const [name, want] of [
-  ['fluid-drift-a', 28],
-  ['fluid-drift-b', 36],
-  ['fluid-drift-c', 36],
-  ['column-drift', 4]
+for (const [name, expr] of [
+  ['fluid-drift-a', 'calc(var(--wave-len-a) * -1)'],
+  ['fluid-drift-b', 'calc(var(--wave-len-b) * -1)'],
+  ['fluid-drift-c', 'calc(var(--wave-len-c) * -2)'],
+  ['column-drift', 'translateX(-4px)']
 ]) {
   const block = kfBlock(name)
-  const nums = block ? [...block.matchAll(/translateX\((-?[\d.]+)(?:px)?\)/g)].map((m) => Math.abs(parseFloat(m[1]))) : []
-  const got = nums.length ? Math.max(...nums) : null
-  ok(got === want, `K2d ${name} 位移 ${got ?? '未找到'}px（应为波长整数倍 ${want}px）`)
+  ok(block != null && block.includes(expr), `K2d ${name} 位移经 ${expr}（波长整数倍，不断裂）`)
 }
 
 // K3 · 水体令牌：顶层 :root + 5 个内置皮肤逐个有定义（与 D3 的 --ball-bg 同纪律：
@@ -907,30 +905,42 @@ ok(
   'K3d 三层波 fill + 柱内液 background 都绑内联 water（少绑一处，那处的水就恒三档）'
 )
 
-// K7 · 倒水入场（10-04-pour-in-slosh）：data-pour 三段 + 取帧 + 降级，缺一件都算半态
+// K7 · 倒水入场（10-04-pour-in-slosh + R2 细射流）：data-pour 三段 + 取帧 + 降级，缺一件都算半态
 ok(/data-pour=/.test(petBallCode), 'K7a 重播信号落在 data-pour 属性上（--shots 不靠猜样式读状态）')
 ok(
   /POUR_TOTAL_MS/.test(petBallCode) && /className="slosh"/.test(petBallWater),
   'K7b 摘属性计时经 shared POUR_TOTAL_MS + 荡漾有独立 .slosh 位移层（不复用波浪 svg 本体）'
 )
 ok(
-  /pour-fill/.test(css) && /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
-  'K7c 灌入/冲顶/荡漾/闪峰四段 keyframes 都在（少一段，入场就缺一拍）'
+  /pour-stream/.test(css) && /pour-splash/.test(css) && /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
+  'K7c 射流/触水/冲顶/荡漾/闪峰五段 keyframes 都在（少一段，入场就缺一拍）'
 )
 ok(
-  /\[data-pour='in'\][^{]*\.fluid-waves[^}]*pour-fill/.test(css) &&
+  !/@keyframes pour-fill\s*\{/.test(css),
+  'K7c2 整坨 pour-fill 已删（同一目标两套位移是漂移源，R2 替代为射流）'
+)
+ok(
+  /\[data-pour='in'\][^{]*\.pour-stream[^}]*pour-stream/.test(css) &&
+    /\[data-pour='in'\][^{]*\.pour-splash[^}]*pour-splash/.test(css) &&
     /\[data-pour='in'\][^{]*\.slosh[^}]*pour-slosh/.test(css),
-  'K7d 三段动画挂在 data-pour 上（属性摘掉即无入场 = 回滚点 R2，不断言具体时长，时长归单测用例 8）'
+  'K7d 三段动画挂在 data-pour 上（属性摘掉即无入场 = 回滚点 R2；射流落点按 surfaceY 内联，不读死位置）'
 )
 ok(
-  /\.slosh\s*\{[^}]*position:\s*absolute/.test(css),
-  'K7e .slosh 抽离 grid 流（static 会挤进环心两行，数字错位）'
+  /\.slosh\s*\{[^}]*position:\s*absolute/.test(css) &&
+    /\.pour-clip\s*\{[^}]*clip-path:\s*circle\(27px/.test(css),
+  'K7e 位移层抽离布局 + 射流裁进水盘圆（r=27 与 svg clip 同口径，不画出界）'
+)
+ok(
+  /className="pour-stream"/.test(petBallWater) &&
+    /className="pour-splash"/.test(petBallWater) &&
+    /surfaceY - 6/.test(petBallWater),
+  'K7e2 射流跟水色（与波同源）+ ripple 落点跟液面（surfaceY 内联，不悬空不沉底）'
 )
 ok(
   /pour-mid/.test(petBallCode) &&
-    /\[data-freeze='pour-mid'\]/.test(css) &&
+    /\[data-freeze='pour-mid'\][^{]*\.pour-stream/.test(css) &&
     /\[data-freeze='pour-top'\]/.test(css),
-  'K7f 取帧钩子认 pour-mid/pour-top + CSS 有对应定帧（--shots 5l/5m 不拍空）'
+  'K7f 取帧钩子认 pour-mid/pour-top + CSS 有对应定帧（--shots 5l/5m 不拍空；mid 定在射流半程）'
 )
 ok(
   /prefers-reduced-motion/.test(petBallCode),
@@ -980,6 +990,56 @@ ok(
 ok(
   /\[data-fluid='hidden'\][^{]*\.petball-goo[^}]*filter:\s*none/.test(css),
   'K8h 隐藏稳态关 goo 滤镜（无可融合形状；离屏 SVG 滤镜子树画不出，5n 取证）'
+)
+ok(
+  /disc-absorb-h/.test(css) &&
+    /disc-absorb-v/.test(css) &&
+    !/@keyframes disc-absorb\s*\{/.test(css),
+  'K8i 球盘按边拉丝吸入（横/纵两套，R3 整球变形；旧刚性缩小单套已删）'
+)
+
+// K9 · 皮肤水效性格（10-04-skin-fluid-redesign）：变量全覆盖 + 球面各异 + 高光同步
+// 速度/透明度 6 变量：:root 默认 + 5 皮肤逐个覆盖（minimal 也有自己的值 —— 静与淡本身即性格）。
+// declScopes 与 K3 同口径（顶层 :root + 5 皮肤，缺一个，那个皮肤的水就与其他皮肤同速）。
+for (const prop of [
+  '--wave-speed-a',
+  '--wave-speed-b',
+  '--wave-speed-c',
+  '--wave-opacity-a',
+  '--wave-opacity-b',
+  '--wave-opacity-c',
+  '--wave-len-a',
+  '--wave-len-b',
+  '--wave-len-c'
+]) {
+  const scopes = declScopes(prop)
+  const missing = ['root', ...SKINS].filter((s) => !scopes.has(s))
+  ok(
+    missing.length === 0,
+    `K9a ${prop} 在顶层 :root + 5 个皮肤都有（缺 ${missing.join(',') || '无'}）`
+  )
+}
+ok(
+  /\[data-skin='ink'\][^{]*\.fluid-wave-c[^}]*display:\s*none/.test(css),
+  'K9b ink 只开两层水（留白；C 层 display:none，不是 opacity 0 —— 占位层仍耗合成）'
+)
+for (const skin of SKINS) {
+  ok(
+    new RegExp(`\\[data-skin='${skin}'\\][^{]*\\.fluid-disc[^}]*background:`).test(css),
+    `K9c ${skin} 球面 background 整组覆盖（质感各异，不共用默认盘）`
+  )
+}
+ok(
+  /\.fluid-surface[^}]*var\(--wave-speed-a\)/.test(css),
+  'K9d 高光线与 A 层读同一速度变量（两处写死数字会慢慢错开，高光脱离波峰）'
+)
+ok(
+  !/fluid-drift|wave-speed|wave-opacity/.test(petBallCode),
+  'K9e 波动数学不出 JS（时长/透明度/漂移距离全在 CSS；JS 只给液面高度 + 按皮肤选波形）'
+)
+ok(
+  /from '\.\/skin-waves'/.test(petBallWater) && /skinWaves\(skinId\)/.test(petBallWater),
+  'K9f 波形逐皮肤取表（R1；ext 回退默认，不断裂）'
 )
 
 // K4 · 水柱几何：CSS 的四条边规则与 shared/fluid.waterColumn 同形

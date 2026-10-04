@@ -5,6 +5,11 @@
 // dock:fluid 通道的唯一口径。渲染层与主进程状态机共用同一实现，不各自硬编码）。
 
 import { loadTs } from './lib/load-ts.mjs'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const fluid = await loadTs('src/shared/fluid.ts')
 const dockHide = await loadTs('src/shared/dock-hide.ts')
@@ -165,6 +170,33 @@ eq(fluid.POUR_SLOSH_MS, 1600, '荡漾 1600ms（接冲顶尾）')
 eq(fluid.POUR_TOTAL_MS, 2450, '总 2450ms（≤ AC 2.5s，播完 JS 摘 data-pour）')
 eq(fluid.POUR_TOTAL_MS, fluid.POUR_FILL_MS + fluid.POUR_TOP_MS + fluid.POUR_SLOSH_MS, '总数 = 三段之和（不手算 2450）')
 ok(fluid.POUR_TOTAL_MS < 2600 && fluid.POUR_TOTAL_MS > fluid.ABSORB_TOTAL_MS, '入场比吸入 morph 长（存在感优先于克制，G1 结论）')
+
+console.log('用例 9：各皮肤波形表（R1：逐皮肤振幅/波长 + CSS 漂移距离跨钉）')
+const skinWaves = await loadTs('src/renderer/src/skin-waves.ts')
+const SKINS9 = ['aero', 'dark', 'minimal', 'candy', 'ink']
+const table = Object.fromEntries(SKINS9.map((s) => [s, skinWaves.skinWaves(s)]))
+// 未知皮肤（含 ext:*)回默认（不断裂；回退值与 aero 同源，不手写第二份数字）
+eq(JSON.stringify(skinWaves.skinWaves('ext:foo')), JSON.stringify(skinWaves.defaultWaves()), 'ext 未知皮肤 → 默认波形')
+eq(JSON.stringify(skinWaves.skinWaves('aero')), JSON.stringify(skinWaves.defaultWaves()), 'aero 即默认波形')
+eq(JSON.stringify(skinWaves.skinWaves('')), JSON.stringify(skinWaves.defaultWaves()), '空 id → 默认波形')
+// 每皮肤振幅 A>B>C 递减（能量向大层集中）+ 波长为正
+for (const s of SKINS9) {
+  const t = table[s]
+  ok(t.a.A > t.b.A && t.b.A > t.c.A, `${s} 振幅递减（${t.a.A}>${t.b.A}>${t.c.A}）`)
+  ok(t.a.L > 0 && t.b.L > 0 && t.c.L > 0, `${s} 波长为正`)
+}
+// 皮肤之间真不一样（A 层振幅至少三档 distinct，否则"换皮如换汤"）
+const distinctA = new Set(SKINS9.map((s) => table[s].a.A))
+ok(distinctA.size >= 3, `A 层振幅 ${distinctA.size} 档 distinct（aero/minimal/candy 必须拉开）`)
+// CSS --wave-len-* 与表中 L 逐值相等（漂移距离恒 = 波长整数倍，无缝循环不断裂）
+const skinCss9 = readFileSync(resolve(ROOT, 'src/renderer/src/skins.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+for (const s of SKINS9) {
+  for (const [layer, key] of [['a', 'a'], ['b', 'b'], ['c', 'c']]) {
+    const re = new RegExp(`\\[data-skin='${s}'\\][\\s\\S]{0,1200}?--wave-len-${layer}:\\s*([\\d.]+)px`)
+    const m = skinCss9.match(re)
+    eq(m && Number(m[1]), table[s][key].L, `${s} --wave-len-${layer} == 表中 L（${table[s][key].L}）`)
+  }
+}
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
 process.exit(fail === 0 ? 0 : 1)

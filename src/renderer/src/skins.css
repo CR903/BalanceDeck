@@ -50,6 +50,20 @@
      平涂，而不是透明/错位的水（与 --ball-bg 的兜底同理：看不见比不好看更糟）。 */
   --water-foam: rgba(255, 255, 255, 0.85);
   --water-deep: rgba(20, 60, 100, 0.16);
+  /* 水效性格变量（10-04-skin-fluid-redesign）：三层波各自的速度与透明度。
+     逐皮肤覆盖即换性格；振幅/波长 JS 统一（无缝循环数学只有一套，不在此开洞）。
+     ⚠ :root 必须有全套 —— 外部皮肤（ext:*）没写时退化为统一默认水效（当前值）。 */
+  --wave-speed-a: 3.2s;
+  --wave-speed-b: 2s;
+  --wave-speed-c: 5.2s;
+  --wave-opacity-a: 0.45;
+  --wave-opacity-b: 0.3;
+  --wave-opacity-c: 0.22;
+  /* 漂移循环距离（10-04 R1）：恒 = 各层波长的整数倍（与 SKIN_WAVES 表的 L 同值，
+     单测跨钉）。逐皮肤覆盖 --wave-len-* 即换波长；keyframes 里只写 var，不写死数字。 */
+  --wave-len-a: 28px;
+  --wave-len-b: 36px;
+  --wave-len-c: 18px;
   /* 收起态浮在**用户任意壁纸**上的浮层底：固定深底半透明 + 白字，**不随皮肤变**。
      .petball-bubble / .petball-confirm 都属这一族 —— 它们是压在小圆环与壁纸上的
      临时提示，不是像卡片面板那样跟着皮肤的颜色走。
@@ -2241,8 +2255,9 @@ textarea {
     radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%);
 }
 /* R9 全屏水体：球内 clip 圆（r=27，几乎占满 56 盘）+ 三层错速正弦。
-   A 快层 2.2/28（3.2s）/ B 慢层 1.6/36 反向（5.2s）/ C 细纹 0.9/18（4.1s），
-   循环距离取各自波长的整数倍（-28 / -36 / -36）保证首尾无缝。
+   A 快层 2.2/28（--wave-speed-a）/ B 慢层 1.6/36 反向（--wave-speed-b）/
+   C 细纹 0.9/18（--wave-speed-c），循环距离取各自波长的整数倍（-28 / -36 / -36）
+   保证首尾无缝（缺省时长见 :root：3.2s / 2s / 5.2s）。
    颜色跟随等级（--ok/--warn/--danger，与托盘/卡片同源）；余额类与算不出比例的
    窗口根本不渲染这棵 svg（JSX 里不挂，见 showWaves）—— 素盘，无假液位。 */
 .petball.no3d .fluid-waves {
@@ -2264,24 +2279,25 @@ textarea {
 }
 .petball.no3d .fluid-wave {
   fill: var(--ok);
-  opacity: 0.45;
-  animation: fluid-drift-a 3.2s linear infinite;
+  opacity: var(--wave-opacity-a);
+  animation: fluid-drift-a var(--wave-speed-a) linear infinite;
 }
 .petball.no3d .fluid-wave-b {
-  opacity: 0.3;
-  animation: fluid-drift-b 2s linear infinite;
+  opacity: var(--wave-opacity-b);
+  animation: fluid-drift-b var(--wave-speed-b) linear infinite;
 }
 .petball.no3d .fluid-wave-c {
-  opacity: 0.22;
-  animation: fluid-drift-c 5.2s linear infinite;
+  opacity: var(--wave-opacity-c);
+  animation: fluid-drift-c var(--wave-speed-c) linear infinite;
 }
-/* 液面高光线：与 A 层同参数同动画（见 PetBall 的 waveLine 注释），1px 实线 */
+/* 液面高光线：与 A 层同参数同动画（见 PetBall 的 waveLine 注释），1px 实线。
+   时长必须与 A 层读同一个变量 —— 写死两份数字会让高光与波峰慢慢错开（K9d 钉住）。 */
 .petball.no3d .fluid-surface {
   fill: none;
   stroke: var(--water-foam);
   stroke-width: 1;
   opacity: 0.9;
-  animation: fluid-drift-a 3.2s linear infinite;
+  animation: fluid-drift-a var(--wave-speed-a) linear infinite;
 }
 .petball.no3d.lvl-warn .fluid-wave {
   fill: var(--warn);
@@ -2297,23 +2313,24 @@ textarea {
     transform: translateX(0);
   }
   to {
-    transform: translateX(-28px);
+    transform: translateX(calc(var(--wave-len-a) * -1));
   }
 }
 @keyframes fluid-drift-b {
   from {
-    transform: translateX(-36px);
+    transform: translateX(calc(var(--wave-len-b) * -1));
   }
   to {
     transform: translateX(0);
   }
 }
+/* C 层循环距离取波长的 2 倍（-36px @ L=18，保证首尾无缝；倍数本身是数学，不断裂） */
 @keyframes fluid-drift-c {
   from {
     transform: translateX(0);
   }
   to {
-    transform: translateX(-36px);
+    transform: translateX(calc(var(--wave-len-c) * -2));
   }
 }
 /* hidden 态：球内波暂停（PRD R9，省电），柱顶波保持动画（10-04-edge-sip-column
@@ -2544,9 +2561,115 @@ textarea {
   height: 1px;
   background: linear-gradient(to right, var(--water-foam), transparent 70%);
 }
+/* ─── 皮肤水效性格（10-04-skin-fluid-redesign）───
+ *
+ * 速度/透明度走变量（继承自 .app 上的皮肤作用域），球面 background 整组覆盖，
+ * 层数显隐走后代选择器。:root 默认 = 当前值（ext 皮肤零代码，退化为统一默认水效）。
+ * 振幅/波长 JS 统一 —— 此处只调"性格"（速度/透明/质感），不开第二套波动数学。
+ * 皮肤作用域挂在 .app 的 data-skin 上（令牌同一位置，见文件头注释），后代选择器够得着球。 */
+/* aero 玻璃水球：活波 + 双高光（顶部大光 + 底部一线轮廓光，玻璃厚度感） */
+[data-skin='aero'] {
+  --wave-speed-a: 2.6s;
+  --wave-speed-b: 1.8s;
+  --wave-speed-c: 4.2s;
+  --wave-opacity-a: 0.5;
+  --wave-opacity-b: 0.32;
+  --wave-opacity-c: 0.24;
+  --wave-len-a: 28px;
+  --wave-len-b: 36px;
+  --wave-len-c: 18px;
+}
+[data-skin='aero'] .petball.no3d .fluid-disc {
+  background:
+    radial-gradient(circle at 32% 26%, var(--dot-top), transparent 46%),
+    radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%),
+    radial-gradient(circle at 50% 112%, rgba(255, 255, 255, 0.35), transparent 42%);
+}
+/* dark 霓虹深海：慢波 + 高透荧光水 + 霓虹内圈（--accent 沿用本皮肤，不另起色） */
+[data-skin='dark'] {
+  --wave-speed-a: 4.5s;
+  --wave-speed-b: 3.4s;
+  --wave-speed-c: 6.5s;
+  --wave-opacity-a: 0.55;
+  --wave-opacity-b: 0.35;
+  --wave-opacity-c: 0.25;
+  --wave-len-a: 44px;
+  --wave-len-b: 56px;
+  --wave-len-c: 28px;
+}
+[data-skin='dark'] .petball.no3d .fluid-disc {
+  background:
+    radial-gradient(circle at 32% 26%, var(--dot-top), transparent 40%),
+    radial-gradient(circle at 50% 50%, transparent 62%, color-mix(in srgb, var(--accent) 26%, transparent) 78%, transparent 86%),
+    radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%);
+}
+/* minimal 扁平纯净：更静更淡（速度比默认慢半拍，透明度全线压低一档） */
+[data-skin='minimal'] {
+  --wave-speed-a: 3.6s;
+  --wave-speed-b: 2.4s;
+  --wave-speed-c: 5.8s;
+  --wave-opacity-a: 0.3;
+  --wave-opacity-b: 0.2;
+  --wave-opacity-c: 0.14;
+  --wave-len-a: 28px;
+  --wave-len-b: 36px;
+  --wave-len-c: 18px;
+}
+[data-skin='minimal'] .petball.no3d .fluid-disc {
+  background: radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.35), transparent 50%);
+}
+/* candy 果冻糖浆：慢而稠（糖浆感）+ 高饱和厚水 + 大块果冻高光 */
+[data-skin='candy'] {
+  --wave-speed-a: 5s;
+  --wave-speed-b: 3.8s;
+  --wave-speed-c: 7s;
+  --wave-opacity-a: 0.6;
+  --wave-opacity-b: 0.4;
+  --wave-opacity-c: 0.3;
+  --wave-len-a: 24px;
+  --wave-len-b: 32px;
+  --wave-len-c: 16px;
+}
+[data-skin='candy'] .petball.no3d .fluid-disc {
+  background:
+    radial-gradient(circle at 36% 24%, rgba(255, 255, 255, 0.85), transparent 42%),
+    radial-gradient(circle at 50% 88%, rgba(120, 90, 200, 0.28), transparent 55%);
+}
+[data-skin='candy'] .petball.no3d .fluid-ticks {
+  opacity: 0.75;
+}
+/* ink 水墨宣纸：最缓 + 哑光纸面（无高光）+ 只开两层（留白是这款皮肤的语法） */
+[data-skin='ink'] {
+  --wave-speed-a: 6s;
+  --wave-speed-b: 4.5s;
+  --wave-speed-c: 8s;
+  --wave-opacity-a: 0.35;
+  --wave-opacity-b: 0.25;
+  --wave-opacity-c: 0.22;
+  --wave-len-a: 40px;
+  --wave-len-b: 48px;
+  --wave-len-c: 24px;
+}
+[data-skin='ink'] .petball.no3d .fluid-disc {
+  background: radial-gradient(circle at 50% 110%, rgba(60, 50, 30, 0.14), transparent 55%);
+}
+[data-skin='ink'] .petball.no3d .fluid-wave-c {
+  display: none;
+}
+[data-skin='ink'] .petball.no3d .fluid-ticks {
+  opacity: 0.4;
+}
 /* 吸入 morph（530ms = 150 拉伸 → 300 合并 → 80 定形；关键帧 28%/85% 即分段点） */
-.petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-disc {
-  animation: disc-absorb 530ms var(--ease) forwards;
+/* 球盘吸入（R3 整球吸入变形）：先沿贴边轴拉长成液线（30%），再变细没入边中（70%），
+ * 最后收点（100%）。球是先变形再消失，不是整体缩小 —— h/v 两套（左右沿横拉、上下沿纵拉）。
+ * 旧 disc-absorb 单套（刚性缩小）已删，同元素两套 morph 是漂移源。时序沿用 ABSORB 530ms。 */
+.petball.no3d .petball-fallback[data-edge='left'][data-fluid='absorbing'] .fluid-disc,
+.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing'] .fluid-disc {
+  animation: disc-absorb-h 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-edge='top'][data-fluid='absorbing'] .fluid-disc,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing'] .fluid-disc {
+  animation: disc-absorb-v 530ms var(--ease) forwards;
 }
 /* 液桥拉宽成流道（10-04-edge-sip-column）：左右沿横向拉长、上下沿纵向拉长。
  * 两套关键帧，定位 transform 与原版同式（--dx/--dy），只在 85%/100% 处加非均匀缩放；
@@ -2563,15 +2686,29 @@ textarea {
 .petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-pill {
   animation: pill-absorb 530ms var(--ease) forwards;
 }
-@keyframes disc-absorb {
+@keyframes disc-absorb-h {
   0% {
     transform: translate(-50%, -50%) scale(1);
   }
-  28% {
-    transform: translate(calc(-50% + var(--dx) * 4px), calc(-50% + var(--dy) * 4px)) scale(1.08);
+  30% {
+    transform: translate(calc(-50% + var(--dx) * 6px), calc(-50% + var(--dy) * 6px)) scale(1.6, 0.55);
   }
-  85% {
-    transform: translate(calc(-50% + var(--dx) * 12px), calc(-50% + var(--dy) * 12px)) scale(0.55);
+  70% {
+    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(0.9, 0.3);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
+  }
+}
+@keyframes disc-absorb-v {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  30% {
+    transform: translate(calc(-50% + var(--dx) * 6px), calc(-50% + var(--dy) * 6px)) scale(0.55, 1.6);
+  }
+  70% {
+    transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(0.3, 0.9);
   }
   100% {
     transform: translate(calc(-50% + var(--dx) * 20px), calc(-50% + var(--dy) * 20px)) scale(0);
@@ -2673,13 +2810,13 @@ textarea {
     opacity: 0;
   }
 }
-/* ─── 倒水入场（10-04-pour-in-slosh）：data-pour="in" 三段串行 ───
+/* ─── 倒水入场（10-04-pour-in-slosh + R2 细射流）：data-pour="in" 三段串行 ───
  *
- * ① pour-fill：整水体从球顶之上灌入（.fluid-waves translateY -60px→0，600ms ease-in，
- *    被 clip 圆裁出"倒满"感）；② pour-top：整球冲顶 overshoot（fallback scale 1→1.07→1，
- *    250ms，接灌入尾）+ 高光线 pour-flash 闪峰；③ pour-slosh：.slosh 包裹层
- *    translateX ±8px→0 衰减包络（1600ms，接冲顶尾）。
- * 总 600+250+1600=2450ms（= shared/fluid.POUR_TOTAL_MS，播完 JS 摘属性）。
+ * ① 细射流（.pour-stream 5px 从顶落下 600ms）+ 触水 ripple（.pour-splash 450ms 起）；
+ * ② pour-top：整球冲顶 overshoot（fallback scale 1→1.07→1，250ms，500ms 起）
+ *    + 高光线 pour-flash 闪峰；③ pour-slosh：.slosh 包裹层 translateX ±8px→0
+ *    衰减包络（1600ms，450ms 起，接触即晃）。
+ * 总时长仍 ≤ shared/fluid.POUR_TOTAL_MS（播完 JS 摘属性；数值不动，只换 phase 映射）。
  * 位移动画只跑合成器：液面 d 只算一次终态，不逐帧重渲染。
  * ⚠ pour-top 的关键帧必须带 translate(-50%,-50%) —— fallback 靠 transform 定位居中，
  *    animation 会覆盖整条 transform（含 :has(:active) 的按压态，250ms 内可接受）。
@@ -2689,25 +2826,90 @@ textarea {
   inset: 0;
   pointer-events: none;
 }
-.petball.no3d .petball-fallback[data-pour='in'] .fluid-waves {
-  animation: pour-fill 600ms ease-in;
+/* ─── 细射流倒水（R2，替代整坨 pour-fill）：5px 射流从顶落下 + 触水 ripple ───
+ *
+ * .pour-clip 把射流裁进水盘圆（与 svg clip 圆同口径 r=27，CSS 侧不需要第二个圆定义，
+ * 口径注释见 PetBall）；射流颜色内联 water（与波同源同色，CSS 只给形状）。
+ * 时序（POUR_* 数值不动，只换 phase 映射）：射流 0–600ms 生长/回收，
+ * 冲顶 500–750ms，高光闪峰同步，slosh 荡漾 450–2050ms（接触即晃）。
+ * 整坨 pour-fill 已删 —— 同一目标两套位移是漂移源。 */
+.petball.no3d .pour-clip {
+  position: absolute;
+  inset: 0;
+  clip-path: circle(27px at 28px 28px);
+  pointer-events: none;
+}
+.petball.no3d .pour-stream {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 5px;
+  height: 60px;
+  transform: translateX(-50%);
+  border-radius: 3px;
+  background: var(--ok);
+  opacity: 0;
+}
+.petball.no3d .petball-fallback[data-pour='in'] .pour-stream {
+  animation: pour-stream 600ms ease-in;
+}
+@keyframes pour-stream {
+  0% {
+    transform: translateX(-50%) translateY(-100%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  55% {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+  75% {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) translateY(-30%);
+    opacity: 0;
+  }
+}
+/* 触水 ripple：落在液面上（top 由 JSX 按 surfaceY 内联），foam 白点扩散淡出 */
+.petball.no3d .pour-splash {
+  position: absolute;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--water-foam);
+  opacity: 0;
+  pointer-events: none;
+}
+.petball.no3d .petball-fallback[data-pour='in'] .pour-splash {
+  animation: pour-splash 500ms ease-out 450ms;
+}
+@keyframes pour-splash {
+  0% {
+    transform: translateX(-50%) scale(0.3);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateX(-50%) scale(1.8);
+    opacity: 0;
+  }
 }
 .petball.no3d .petball-fallback[data-pour='in'] .slosh {
-  animation: pour-slosh 1600ms ease-out 850ms;
+  animation: pour-slosh 1600ms ease-out 450ms;
 }
 .petball.no3d .petball-fallback[data-pour='in'] {
-  animation: pour-top 250ms ease-out 600ms;
+  animation: pour-top 250ms ease-out 500ms;
 }
 .petball.no3d .petball-fallback[data-pour='in'] .fluid-surface {
-  animation: pour-flash 250ms ease-out 600ms;
-}
-@keyframes pour-fill {
-  from {
-    transform: translateY(-60px);
-  }
-  to {
-    transform: translateY(0);
-  }
+  animation: pour-flash 250ms ease-out 500ms;
 }
 @keyframes pour-top {
   0% {
@@ -2755,9 +2957,9 @@ textarea {
  *
  * .fluid-waves 整体下沉 26px + 向贴边侧偏移 22px（复用 --dx/--dy）+ 淡出，
  * 被 clip 圆裁出"水面下降、被边吸走"。下沉量是呈现值（窗内视觉），不是命中几何，
- * 不进 shared（J2b 只管时序/水渍口径）。
- * 与 pour-fill 同目标（.fluid-waves）：放 pour 规则之后，真撞上（切供应商撞上贴边）
- * drain 赢 —— 吸走优先于倒满。时序沿用 ABSORB 530ms forwards。
+ * 不进 shared（J2b 只管时序/水渍口径）。R2 后 pour 不再碰 .fluid-waves（射流是独立层），
+ * 这里是 waves 唯一的位移动画，无冲突。
+ * 时序沿用 ABSORB 530ms forwards。
  * forwards 结束态（opacity 0）与 hidden 稳态（下面 opacity 0）衔接，无跳变。 */
 .petball.no3d .petball-fallback[data-fluid='absorbing'] .fluid-waves {
   animation: waves-drain 530ms ease-in forwards;
@@ -2822,11 +3024,18 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze] .fluid-wave,
 .petball.no3d .petball-fallback[data-freeze] .slosh,
 .petball.no3d .petball-fallback[data-freeze] .fluid-waves,
-.petball.no3d .petball-fallback[data-freeze] .fluid-surface {
+.petball.no3d .petball-fallback[data-freeze] .fluid-surface,
+.petball.no3d .petball-fallback[data-freeze] .pour-stream,
+.petball.no3d .petball-fallback[data-freeze] .pour-splash {
   animation: none;
 }
 .petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc {
-  transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(1.1);
+  transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(1.4, 0.7);
+}
+/* 上下沿的液线是纵向的（与 disc-absorb-v 同轴，定帧不歪） */
+.petball.no3d .petball-fallback[data-edge='top'][data-freeze='stretch'] .fluid-disc,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-freeze='stretch'] .fluid-disc {
+  transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(0.7, 1.4);
 }
 .petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-bridge {
   transform: translate(calc(-50% + var(--dx) * 9px), calc(-50% + var(--dy) * 9px)) scale(0.55);
@@ -2845,14 +3054,15 @@ textarea {
   scale: 1;
   opacity: 1;
 }
-/* 倒水取帧（10-04-pour-in-slosh）：不依赖 data-pour 是否还在播 —— freeze 规则
-   自带位移终态（mid = 灌入中段 -30px；top = 冲顶峰 scale 1.07），slosh 与波浪
-   由上面的 data-freeze 暂停名单定住。特异度与 data-pour 规则同级，靠文件顺序后胜。 */
-.petball.no3d .petball-fallback[data-freeze='pour-mid'] .fluid-waves {
-  transform: translateY(-30px);
+/* 倒水取帧（R2 细射流）：射流落至半程 + 触水 ripple 半开。 waves/slosh 不参与倒水位移，
+   不定帧（暂停名单已定住漂移）；不依赖 data-pour 是否还在播。 */
+.petball.no3d .petball-fallback[data-freeze='pour-mid'] .pour-stream {
+  transform: translateX(-50%) translateY(-50%);
+  opacity: 1;
 }
-.petball.no3d .petball-fallback[data-freeze='pour-mid'] .slosh {
-  transform: translateX(4px);
+.petball.no3d .petball-fallback[data-freeze='pour-mid'] .pour-splash {
+  transform: translateX(-50%) scale(0.9);
+  opacity: 0.85;
 }
 .petball.no3d .petball-fallback[data-freeze='pour-top'] {
   transform: translate(-50%, -50%) scale(1.07);

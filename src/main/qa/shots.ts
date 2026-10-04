@@ -9,7 +9,7 @@
 // 产物在 /tmp/balancedeck-shots/。
 import { app } from 'electron'
 import { join } from 'path'
-import { demoSnapshot, column70Snapshot } from './fixtures'
+import { demoSnapshot, column70Snapshot, wave40Snapshot } from './fixtures'
 import { BALL_VIEW } from '../../shared/pet-view'
 
 export async function runShots(win: Electron.BrowserWindow): Promise<void> {
@@ -122,12 +122,31 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(collapseBtn)
   await settle(BALL_VIEW)
   await shoot('5-ball', { frames: 3 })
+  // 波形对照（R1）：先推单家 40% 再循环换肤，五帧同一液面，波顶位置不同即振幅不同。
+  // 拍完恢复演示数据（5l 及之后沿用原夹具，轮播行为不变）。
+  await exec(`window.api.debugPush(${JSON.stringify(wave40Snapshot())}, false)`)
+  await sleep(900)
   // 各皮肤下的小水球（水色/底色都走令牌，逐皮肤必须都对）
   for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
     await exec(`window.api.setSkin('${id}')`)
     await sleep(1100)
     await shoot(`5c-ball-${id}`)
+    // 波形自描述：A 层路径纵向极差 = 2×振幅（R1 各皮肤波形对拍，不靠像素猜）
+    const waveRange = String(
+      await exec(`(()=>{
+        const w=document.querySelector('.fluid-wave-a');
+        if(!w) return 'no-waves';
+        const nums=[...((w.getAttribute('d')||'').match(/-?\\d+\\.?\\d*/g)||[])].map(Number);
+        // Y 取奇数位；末尾两个是封口角（L 96 60 L -40 60 Z），不是波面，剔除
+        const ys=nums.filter((_,i)=>i%2===1).slice(0,-2);
+        if(ys.length<4) return 'bad-d';
+        return JSON.stringify({n:ys.length,range:+(Math.max(...ys)-Math.min(...ys)).toFixed(2)});
+      })()`)
+    )
+    process.stdout.write(`5c-wave: ${id} ${waveRange}\n`)
   }
+  await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
+  await sleep(900)
   // 倒水入场取帧（10-04-pour-in-slosh）：freeze 定住灌入中段/冲顶峰（呈现层冻结，
   // 不动状态机；此时候选供应商的切换计时照走，拍完 'off' 恢复）。
   await exec(`window.__bd_fluid_freeze?.('pour-mid')`)
@@ -158,6 +177,18 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(`window.__bd_fluid_freeze?.('stretch')`)
   await sleep(600)
   await shoot('5i-fluid-stretch')
+  // 自描述探针（R3 整球吸入变形）：disc/bridge 定帧 transform 打到日志，
+  // 拉丝与否看 matrix(sx)≠matrix(sy)，不靠像素猜（goo 开时颜色带漂移）。
+  process.stdout.write(
+    `5i-probe: ${String(
+      await exec(`(()=>{
+        const disc=document.querySelector('.fluid-disc');
+        const br=document.querySelector('.fluid-bridge');
+        return JSON.stringify({disc:disc?getComputedStyle(disc).transform:'?',
+          bridge:br?getComputedStyle(br).transform:'?'});
+      })()`)
+    )}\n`
+  )
   await exec(`window.__bd_fluid_freeze?.('bridge')`)
   await sleep(600)
   await shoot('5j-fluid-bridge')
