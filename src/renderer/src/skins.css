@@ -2133,6 +2133,14 @@ textarea {
   background:
     radial-gradient(circle at 32% 15%, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 32%),
     radial-gradient(circle at 50% 126%, rgba(0, 0, 0, 0.58), rgba(0, 0, 0, 0) 55%);
+  /* hidden 下与底盘同门淡出（180ms，与底盘/读数同纪律）：罩子是 inset:0 全覆盖的
+     顶光层，hidden 不藏它 = 球幽灵（K10c 当年只藏了底盘/读数/mark/气泡，漏了这层）。
+     走 opacity 不走 display:none，避免显隐跳变。 */
+  transition: opacity 180ms ease;
+}
+/* 隐藏稳态藏玻璃罩：只剩温度计柱，顶光渐变继续画就是残影。 */
+.petball.no3d .petball-fallback[data-fluid='hidden']::after {
+  opacity: 0;
 }
 .petball.no3d:has(.petball-hit:active) .petball-fallback {
   transform: translate(-50%, -50%) scale(0.94);

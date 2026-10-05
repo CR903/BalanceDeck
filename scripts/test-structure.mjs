@@ -1134,8 +1134,9 @@ ok(
 ok(
   /\[data-fluid='hidden'\][^{]*\{[^}]*background:\s*transparent/.test(css) &&
     /\[data-fluid='hidden'\][^{]*\.dot-value[^}]*opacity:\s*0/.test(css) &&
-    /\.dot-provider[^}]*opacity:\s*0\s*!important/.test(css),
-  'K10c 隐藏稳态藏底盘与读数（原地变柱只留水柱；旧滑出靠离屏遮丑，新口径必须显式藏；mark 内联 opacity 须 !important 盖）'
+    /\.dot-provider[^}]*opacity:\s*0\s*!important/.test(css) &&
+    /\.petball-fallback\[data-fluid='hidden'\]::after[^}]*opacity:\s*0/.test(css),
+  'K10c 隐藏稳态藏底盘与读数（原地变柱只留水柱；旧滑出靠离屏遮丑，新口径必须显式藏；mark 内联 opacity 须 !important 盖；玻璃罩 ::after 同门 opacity 0，否则顶光残影=球幽灵）'
 )
 ok(
   /disc-absorb-h/.test(css) &&
