@@ -2151,6 +2151,9 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* P1 双层浪兜底：读数压在水体上（无白线），靠文字阴影保证对比
+    （原型 .reading 的 text-shadow 口径；goo 容器之外，不影响 crisp）。 */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 .petball.no3d .dot-value.small {
   font-size: 10px;
@@ -2305,18 +2308,22 @@ textarea {
   opacity: var(--wave-opacity-c);
   animation: fluid-drift-c var(--wave-speed-c) linear infinite;
 }
-/* 泡沫带（R4-3）：盖住 B/C 层冒头的泡沫帽 —— 上沿 A 波顶上浮 3px、下沿下沉 3.5px
-   （路径见 PetBall waveBand），与 A 层同参数同 drift-a，同进同退。
-   白线压在带上沿（下面那条 .fluid-surface 规则），读作浪尖的白沫。 */
+/* 泡沫带 → 深色后浪（P1 皮肤落地：原型 waveSvg 双层浪口径）。
+   上沿仍与 A 层同参数同 drift-a（冒头盖进深色里，K9d/K9g 不动）；
+   fill 由 --water-foam 白沫改为 --water-deep 深色 —— 前浪水色（A/B/C 三层内联
+   water）压在深色后浪上，深浅两层，无白线（白线与读数重叠，已拿掉，见修订6）。
+   读数对比靠 .dot-value 的文字阴影兜底，不靠白线。 */
 .petball.no3d .fluid-foam {
-  fill: var(--water-foam);
+  fill: var(--water-deep);
   opacity: 0.85;
   animation: fluid-drift-a var(--wave-speed-a) linear infinite;
 }
-/* 液面高光线：与 A 层同参数同动画（见 PetBall 的 waveLine 注释），1px 实线。
-   时长必须与 A 层读同一个变量 —— 写死两份数字会让高光与波峰慢慢错开（K9d 钉住）。
-   R4-3 起压在泡沫带上沿，不再直接压 A 填充沿（B/C 冒头由泡沫带吃掉）。 */
+/* 液面高光线（已退役，P1）：白色 crest 与读数重叠，拿掉只留深浅两层。
+   DOM 与动画声明保留（K2a/K2b/K9d 的形状不断 —— 删除整个元素要动四处门，
+   留 display:none 的代价只是一条不渲染的 path）；视觉上无白线。
+   倒水闪峰改走 .fluid-foam（见 data-pour 那节），这条不再挂 pour-flash。 */
 .petball.no3d .fluid-surface {
+  display: none;
   fill: none;
   stroke: var(--water-foam);
   stroke-width: 1;
@@ -3060,7 +3067,7 @@ textarea {
 .petball.no3d .petball-fallback[data-pour='in'] {
   animation: pour-top 250ms ease-out 500ms;
 }
-.petball.no3d .petball-fallback[data-pour='in'] .fluid-surface {
+.petball.no3d .petball-fallback[data-pour='in'] .fluid-foam {
   animation: pour-flash 250ms ease-out 500ms;
 }
 @keyframes pour-top {

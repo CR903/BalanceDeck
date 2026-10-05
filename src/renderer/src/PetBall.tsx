@@ -98,20 +98,21 @@ function waveD(surfaceY: number, phase: number, A = 2.2, L = 28): string {
 }
 
 /**
- * 液面高光线：与 A 层**同一组参数**（2.2/28、同一 phase）的开放折线，正好落在
- * A 层填充路径的上边缘上 —— 两者挂同一个 drift-a 位移动画，同进同退，高光永远
- * 贴着液面走。单独一条 path 而不是给填充描边：描边会把底部封口一起勾出来。
+ * 液面高光线（已退役，P1 皮肤落地）：白色 crest 与读数重叠，拿掉只留深浅两层。
+ * 函数与 JSX 的 path 保留（K2a/K2b 的形状不断；CSS 侧 display:none，不渲染）。
+ * 与 A 层同参数同 drift-a 的构造关系不变 —— 万一以后要回白线，直接把 CSS 那条
+ * display:none 摘掉即回旧版（回滚点，不删代码）。
  */
 function waveLine(surfaceY: number, phase: number, A = 2.2, L = 28): string {
   return `M ${wavePoints(surfaceY, phase, A, L).join(' L ')}`
 }
 
 /**
- * 泡沫带（R4-3）：盖住 B/C 层冒头的泡沫帽 —— 上沿 = A 波顶上浮 3px，
+ * 泡沫带 → 深色后浪（P1 皮肤落地，原型 waveSvg 双层浪口径）：上沿 = A 波顶上浮 3px，
  * 下沿 = A 波顶下沉 3.5px，闭合。与 A 同参数同 drift-a，同进同退。
- * 为什么需要：三层错速漂移下相对相位一直在变，B/C 波峰必然周期性超出 A 波峰
- * （aero 最坏 4.7px），白线若只是一条线就会周期性"脱节"。泡沫帽把 ±3px 的冒头
- * 吃进泡沫里，读作浪尖的白沫；极端对齐的残留闪过可接受（瞬态，非稳态错位）。
+ * fill 走 CSS 的 --water-deep（深色后浪），前浪水色（A/B/C 内联 water）压在它上 ——
+ * 深浅两层，无白线。B/C 冒头盖进深色里（aero 最坏 4.7px 错位，吃进 ±3px 深色带里
+ * 读作浪影；极端对齐的残留闪过可接受）。
  */
 function waveBand(surfaceY: number, phase: number, A = 2.2, L = 28, up = 3, down = 3.5): string {
   const top = wavePoints(surfaceY - up, phase, A, L)
@@ -865,7 +866,7 @@ export function PetBall({
                     <path d={waveA} className="fluid-wave fluid-wave-a" style={{ fill: water ?? undefined }} />
                     <path d={waveB} className="fluid-wave fluid-wave-b" style={{ fill: water ?? undefined }} />
                     <path d={waveC} className="fluid-wave fluid-wave-c" style={{ fill: water ?? undefined }} />
-                    {/* 泡沫带（R4-3）：B/C 冒头盖进泡沫里；白线压在带上沿 */}
+                    {/* 深色后浪（P1）：B/C 冒头盖进深色里；白线已退役（CSS display:none） */}
                     <path d={foamBand} className="fluid-foam" />
                     <path d={surfaceLine} className="fluid-surface" />
                   </g>
