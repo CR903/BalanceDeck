@@ -1010,6 +1010,68 @@ ok(
     /fluid-pill::after/.test(css),
   'K8e 温度计三件套：管壁刻度 JSX + 液头弯月（空槽不画假液头）+ 管壁侧光 CSS'
 )
+// K8m · P4 悬停 peek（原型 D 区口径）：柱上停留冒完整波浪预览气泡，不唤出。
+//   · 只在 hidden 下挂（球态 hover 不冒第二颗球）；
+//   · pointer-events:none（预览不拦截点击，单击仍是唤出，不误触）；
+//   · 显现延迟 250ms < REVEAL_DWELL_MS(300)（与唤出计时同源，预览先到，唤出仍靠点击）。
+ok(
+  /className="fluid-peek"/.test(petBallWater) &&
+    /className="fluid-peek-value"/.test(petBallWater) &&
+    /className="fluid-peek-drop/.test(petBallWater),
+  'K8m1 peek 气泡 JSX 在（波浪 + 落雨 + 读数，不另起取数，都复用本次渲染的 waveA/water/shownText）'
+)
+{
+  // K8m1b · peek 与柱顶波/shimmer 同条件（fluidLvl > 0）：空槽 hover 不冒球，不造假水位。
+  // 断法与 K8k1b 同一配平模式（K7h 那套）：peek 的类名必须落在条件块内 ——
+  // 条件被删（最近的条件在 peek 之前根本不存在）或 peek 被搬出块（配平块不含 marker），都红。
+  const peekBlock = condBlock(petBallWater, 'className="fluid-peek"', 'fluidLvl > 0')
+  ok(
+    peekBlock != null && peekBlock.includes('className="fluid-peek"'),
+    'K8m1b peek 气泡包在 fluidLvl > 0 条件块内（无水挂预览即红；删条件即红）'
+  )
+  // K8m1c · peek 不另起取数：波形/水色/读数复用本次渲染的 waveA/water/shownText。
+  ok(
+    peekBlock != null &&
+      peekBlock.includes('d={waveA}') &&
+      peekBlock.includes('fill: water') &&
+      peekBlock.includes('{shownText}'),
+    'K8m1c peek 复用 waveA/water/shownText（d={waveA}、fill: water、{shownText}；另起取数即红）'
+  )
+}
+ok(
+  /:has\(\.petball-hit:hover\)[^{]*\.fluid-peek/.test(css) &&
+    /\[data-fluid='hidden'\][^{]*\.fluid-peek/.test(css) &&
+    /\.fluid-peek[^}]*pointer-events:\s*none/.test(css),
+  'K8m2 peek 经 hit-hover + hidden 双门显现（球态不冒；预览不吃指针）'
+)
+ok(
+  /\.fluid-peek[^}]*transition-delay:\s*250ms/.test(css) &&
+    /data-freeze='peek'/.test(css) &&
+    /'peek'/.test(petBallCode),
+  'K8m3 peek 显现延迟 250ms（< REVEAL_DWELL_MS）+ 取帧 peek 态（--shots 像素对拍）+ freeze 钩子认 peek'
+)
+// K8m4 · 预览先到、唤出靠点击：peek 显现延迟必须 < REVEAL_DWELL_MS。
+// 跨模块算术门（CSS transition-delay vs shared/dock-hide.ts，与
+// test-alert-orchestration.mjs L33 同模式 —— 两处各写一个数必然漂移，
+// 单测把不等式钉住；改任一侧的数都要过这一关）。
+{
+  const dwellSrc = stripTsComments(read('src/shared/dock-hide.ts'))
+  const dwellMs = Number(/REVEAL_DWELL_MS\s*=\s*(\d+)/.exec(dwellSrc)?.[1])
+  const peekCss = decls(ruleBody(css, '.petball.no3d .fluid-peek'))
+  const delayMs = Number(/(\d+)\s*ms/.exec(peekCss['transition-delay'] || '')?.[1])
+  ok(
+    Number.isFinite(dwellMs) && dwellMs > 0,
+    `K8m4a 前置：读得到 REVEAL_DWELL_MS（实际 ${String(dwellMs)}）`
+  )
+  ok(
+    peekCss['transition-delay'] != null && Number.isFinite(delayMs),
+    `K8m4b 前置：读得到 peek transition-delay（实际 ${peekCss['transition-delay'] || '未找到'}）`
+  )
+  ok(
+    Number.isFinite(dwellMs) && Number.isFinite(delayMs) && delayMs < dwellMs,
+    `K8m4 peek 显现延迟 ${String(delayMs)}ms < REVEAL_DWELL_MS ${String(dwellMs)}ms（预览先到，唤出仍只靠点击）`
+  )
+}
 // K8d3 · P3 皮肤落地：hidden 下深色后浪（foam）也暂停 —— 球内四层（A/B/C/后浪）
 // 照停，柱顶波 + 液光流保持动画（K8d 只许柱顶活，球内全停）。
 ok(

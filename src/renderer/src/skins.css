@@ -2661,6 +2661,117 @@ textarea {
   height: 1px;
   background: linear-gradient(to right, var(--water-foam), transparent 70%);
 }
+/* ─── 悬停 peek（P4 皮肤落地，原型 D 区口径）───
+ *
+ * hidden 下柱上停留冒完整波浪预览气泡（波浪 + 落雨 + 读数），移开即散。
+ *   · 双门：只在 `[data-fluid='hidden']` 下经 `:has(.petball-hit:hover)` 显现 ——
+ *     球态 hover 不冒第二颗球；命中层盖在最上（fallback 收不到 :hover），所以经
+ *     .petball 的 :has 读命中层的 hover（与按压态同模式）。
+ *   · 不误触唤出：peek 本体 pointer-events:none，点击穿透到命中层，单击仍是唤出；
+ *     显现延迟 250ms < REVEAL_DWELL_MS（300，shared/dock-hide.ts）—— 与唤出计时
+ *     同源，预览先到，唤出仍只靠点击。
+ *   · 阴影全 inset（56×56 窗口纪律，D6 名单钉住本选择器，写 outer 会被裁方）。
+ *   · 默认 opacity 0 + visibility hidden（5n 柱 shot 像素零影响）；--shots 经
+ *     data-freeze='peek' 强制显现（hover 在取帧里不可达）。 */
+.petball.no3d .fluid-peek {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--ball-bg);
+  box-shadow:
+    inset 0 2px 5px rgba(255, 255, 255, 0.3),
+    inset 0 -12px 20px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.7);
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out,
+    visibility 180ms;
+  transition-delay: 250ms;
+  pointer-events: none;
+}
+.petball.no3d:has(.petball-hit:hover) .petball-fallback[data-fluid='hidden'] .fluid-peek {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+}
+.petball.no3d .fluid-peek-waves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.petball.no3d .fluid-peek-bg {
+  fill: var(--ball-bg);
+}
+/* 预览波：复用 A 层位移动画（同天气时钟），独立类名 —— 不能复用 .fluid-wave，
+   否则 hidden 暂停名单会把它一起停掉（预览要在 hidden 里动，见 K8d3 对照）。 */
+.petball.no3d .fluid-peek-wave {
+  fill: var(--ok);
+  opacity: var(--wave-opacity-a);
+  animation: fluid-drift-a var(--wave-speed-a) linear infinite;
+}
+/* 预览落雨：3 滴固定位（原型 pk-drops 口径），平时 paused（不可见不烧），
+   peek 显现时 running（与显现同门）。 */
+.petball.no3d .fluid-peek-drop {
+  position: absolute;
+  top: -8px;
+  width: 3px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--water-foam);
+  opacity: 0;
+  pointer-events: none;
+  animation: peek-fall 1.6s ease-in infinite;
+  animation-play-state: paused;
+}
+.petball.no3d .fluid-peek-drop.p1 {
+  left: 30%;
+}
+.petball.no3d .fluid-peek-drop.p2 {
+  left: 55%;
+  animation-delay: 0.5s;
+}
+.petball.no3d .fluid-peek-drop.p3 {
+  left: 78%;
+  animation-delay: 1s;
+}
+@keyframes peek-fall {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  70% {
+    transform: translateY(48px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(54px);
+    opacity: 0;
+  }
+}
+.petball.no3d:has(.petball-hit:hover) .petball-fallback[data-fluid='hidden'] .fluid-peek-drop {
+  animation-play-state: running;
+}
+.petball.no3d .fluid-peek-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 680;
+  /* 浮层白字走 --bubble-fg（与 .petball-confirm 同族同深，两条气泡挨着出现时深浅一致；
+     高光/水花字面量（shimmer 渐变/box-shadow inset 白）是原型玻璃质感，不动）。 */
+  color: var(--bubble-fg);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
 /* ─── 皮肤水效性格（10-04-skin-fluid-redesign）───
  *
  * 速度/透明度走变量（继承自 .app 上的皮肤作用域），球面 background 整组覆盖，
@@ -3309,6 +3420,14 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze='pour-mid'],
 .petball.no3d .petball-fallback[data-freeze='pour-top'] {
   animation: none;
+}
+/* peek 取帧（P4）：hover 在 --shots 里不可达，data-freeze='peek' 强制显现气泡
+   （动画照停 —— 上面那条暂停名单已定住预览波与落雨，拍的是静帧）。 */
+.petball.no3d .petball-fallback[data-freeze='peek'] .fluid-peek {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: none;
 }
 /* prefers-reduced-motion：跳过流体与滑动，直接显隐（计时器保留，PRD R5）。
    桥永不出现；pill 只在 hidden 态静态留痕；波浪只显示静态液位。 */

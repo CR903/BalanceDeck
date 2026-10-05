@@ -9,3 +9,4 @@
 | 2026-10-04 | [贴边吸溜水柱温度计](daily/2026-10-04_edge-sip-column.md) | `10-04-edge-sip-column` |
 | 2026-10-04 | [R4返工：雨滴天气泡沫余额水+原地变柱](daily/2026-10-04_rain-weather-column.md) | `10-04-rain-weather-column` |
 | 2026-10-04 | [皮肤差异化返工 R1–R3](daily/2026-10-04_skin-fluid-rework.md) | `10-04-skin-fluid-redesign` |
+| 2026-10-05 | [皮肤视觉原型落地 P1–P4（skin-landing）](daily/2026-10-05_skin-landing-p1p4.md) | `10-04-rain-weather-column` |

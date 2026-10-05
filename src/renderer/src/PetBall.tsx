@@ -512,6 +512,7 @@ export function PetBall({
   // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
   // 把 goo 定在某一 morph 帧并暂停动画，`'pour-mid'|'pour-top'` 定在倒水入场中段
   // （10-04-pour-in-slosh，不依赖 data-pour 是否还在播 —— freeze 规则自带终态位移），
+  // `'peek'` 定在悬停预览（P4：强制显现 peek 气泡，像素对拍 hover 不可达的态）。
   // `'off'` 恢复 live。纯呈现层冻结 ——
   // 返回值是 void（结构化克隆安全），与 __bd_ball 的数据钩子分开。
   useEffect(() => {
@@ -519,7 +520,7 @@ export function PetBall({
     w.__bd_fluid_freeze = (stage: string) => {
       const goo = document.querySelector('.petball-fallback')
       if (!goo) return
-      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-mid' || stage === 'pour-top')
+      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-mid' || stage === 'pour-top' || stage === 'peek')
         goo.setAttribute('data-freeze', stage)
       else goo.removeAttribute('data-freeze')
     }
@@ -995,6 +996,26 @@ export function PetBall({
             <span className="dot-winlabel" aria-hidden="true">
               {shortWindowLabel(active.name)}
             </span>
+          )}
+          {/* 悬停 peek（P4，原型 D 区口径）：hidden 下柱上停留冒完整波浪预览，
+              移开即散。纯视觉层（aria-hidden + CSS pointer-events:none），从不拦截点击 ——
+              单击仍是唤出（dockReveal），悬停永不唤出。波浪/水色/读数全部复用本次渲染的
+              waveA/water/shownText，不另起取数；落雨 3 滴固定位（原型 pk-drops 口径）。
+              与柱顶波/shimmer 同条件（fluidLvl > 0）：空槽不挂预览，不造假水位。
+              默认 opacity 0（5n 柱 shot 像素无影响）；--shots 经 data-freeze='peek' 强制显现。 */}
+          {fluidLvl > 0 && (
+            <div className="fluid-peek" aria-hidden="true">
+              <svg className="fluid-peek-waves" viewBox="0 0 56 56" aria-hidden="true">
+                <circle cx="28" cy="28" r="27" className="fluid-peek-bg" />
+                <g clipPath="url(#fluid-clip)">
+                  <path d={waveA} className="fluid-peek-wave" style={{ fill: water ?? undefined }} />
+                </g>
+              </svg>
+              <span className="fluid-peek-drop p1" aria-hidden="true" />
+              <span className="fluid-peek-drop p2" aria-hidden="true" />
+              <span className="fluid-peek-drop p3" aria-hidden="true" />
+              <span className="fluid-peek-value">{shownText}</span>
+            </div>
           )}
         </div>
       )}
