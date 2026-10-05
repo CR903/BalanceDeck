@@ -2392,7 +2392,8 @@ textarea {
  * ⚠ 柱顶波刻意不在这个名单里 —— K8d 断言 hidden 作用域下没有 column 的 paused。 */
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-wave,
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-wave-c,
-.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-surface {
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-surface,
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-foam {
   animation-play-state: paused;
 }
 /* 隐藏稳态球内水不可见（drain 收尾 opacity 0 的衔接；revealing 用 waves-fill 淡回）。
@@ -2408,6 +2409,10 @@ textarea {
 .petball.no3d .petball-fallback.doc-hidden .fluid-wave,
 .petball.no3d .petball-fallback.doc-hidden .fluid-wave-c,
 .petball.no3d .petball-fallback.doc-hidden .fluid-surface,
+.petball.no3d .petball-fallback.doc-hidden .fluid-foam,
+.petball.no3d .petball-fallback.doc-hidden .fluid-shimmer,
+.petball.no3d .petball-fallback.doc-hidden .fluid-peek-wave,
+.petball.no3d .petball-fallback.doc-hidden .fluid-peek-drop,
 .petball.no3d .petball-fallback.doc-hidden .fluid-column-wave svg {
   animation-play-state: paused;
 }
@@ -2522,7 +2527,9 @@ textarea {
   top: 0;
   width: 12px;
   height: 3px;
-  animation: column-drift 1.6s linear infinite;
+  /* P3：时长走 --wave-speed-a（逐皮肤波性格：aero 2.6s 最快、ink 6s 最慢；
+     位移仍是固定 -4px 整数周期，见 K2d）。柱顶浪与球内 A 层同天气时钟。 */
+  animation: column-drift var(--wave-speed-a) linear infinite;
 }
 .petball.no3d .fluid-column-wave-path {
   fill: none;
@@ -2536,6 +2543,48 @@ textarea {
   }
   to {
     transform: translateX(-4px);
+  }
+}
+/* 柱内液光流（P3 皮肤落地，原型 cshim 口径）：液柱里缓慢漂移的一条横向高光，
+   读作"水活着"。竖柱上下漂（top 6%→52% 往返），横槽左右漂（另起一条 keyframes，
+   不复用竖向那条 —— top/left 是两套定位，复用等于横槽不动）。
+   时长走 --slosh-dur（逐皮肤天气速度：暴雨快、海啸慢）；hidden 下保持动画
+   （柱顶活的第二半 —— K8d 名单里刻意没有它，见 hidden 暂停那节的注释）；
+   页面不可见/降级/取帧时停（省电 + 静态取帧，见 doc-hidden/reduced-motion/freeze）。 */
+.petball.no3d .fluid-shimmer {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 6%;
+  height: 30%;
+  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.26), transparent);
+  pointer-events: none;
+  animation: column-shimmer var(--slosh-dur) ease-in-out infinite alternate;
+}
+@keyframes column-shimmer {
+  from {
+    top: 6%;
+  }
+  to {
+    top: 52%;
+  }
+}
+.petball.no3d .petball-fallback[data-edge='top'] .fluid-shimmer,
+.petball.no3d .petball-fallback[data-edge='bottom'] .fluid-shimmer {
+  top: 2px;
+  bottom: 2px;
+  left: 6%;
+  width: 30%;
+  height: auto;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.26), transparent);
+  animation-name: column-shimmer-h;
+}
+@keyframes column-shimmer-h {
+  from {
+    left: 6%;
+  }
+  to {
+    left: 52%;
   }
 }
 /* ─── 温度计三件套（10-04-edge-sip-column，R4-5 柱宽 12px）───
@@ -3205,6 +3254,9 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze] .fluid-waves,
 .petball.no3d .petball-fallback[data-freeze] .fluid-surface,
 .petball.no3d .petball-fallback[data-freeze] .fluid-foam,
+.petball.no3d .petball-fallback[data-freeze] .fluid-shimmer,
+.petball.no3d .petball-fallback[data-freeze] .fluid-peek-wave,
+.petball.no3d .petball-fallback[data-freeze] .fluid-peek-drop,
 .petball.no3d .petball-fallback[data-freeze] .pour-drop,
 .petball.no3d .petball-fallback[data-freeze] .pour-trickle,
 .petball.no3d .petball-fallback[data-freeze] .pour-splash {
@@ -3270,6 +3322,9 @@ textarea {
   .petball.no3d .fluid-wave-c,
   .petball.no3d .fluid-surface,
   .petball.no3d .fluid-foam,
+  .petball.no3d .fluid-shimmer,
+  .petball.no3d .fluid-peek-wave,
+  .petball.no3d .fluid-peek-drop,
   .petball.no3d .fluid-column-wave svg {
     animation: none;
   }

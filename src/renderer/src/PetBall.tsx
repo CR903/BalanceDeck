@@ -895,11 +895,16 @@ export function PetBall({
                     为 0，波浪无处附着 —— 与「不造假水位」同一条件，不单独再判。
                     hidden 态保持动画（柱内动荡，见 skins.css hidden 暂停名单）。 */}
                 {fluidLvl > 0 && (
-                  <span className="fluid-column-wave" aria-hidden="true">
-                    <svg viewBox="-4 0 16 3" preserveAspectRatio="none" aria-hidden="true">
-                      <path d={COLUMN_WAVE_D} className="fluid-column-wave-path" />
-                    </svg>
-                  </span>
+                  <>
+                    <span className="fluid-column-wave" aria-hidden="true">
+                      <svg viewBox="-4 0 16 3" preserveAspectRatio="none" aria-hidden="true">
+                        <path d={COLUMN_WAVE_D} className="fluid-column-wave-path" />
+                      </svg>
+                    </span>
+                    {/* 液内高光漂移（P3，原型 cshim 口径）：与柱顶波同条件挂载 ——
+                        空槽不挂波浪也不挂光，不造假水位（K8k1）；hidden 下保持动画。 */}
+                    <i className="fluid-shimmer" aria-hidden="true" />
+                  </>
                 )}
               </div>
               {/* 管壁刻度：纯装饰（aria-hidden），温度计读数感；空槽时也在（管子的刻度不依赖有没有水） */}

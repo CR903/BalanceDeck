@@ -1010,6 +1010,53 @@ ok(
     /fluid-pill::after/.test(css),
   'K8e 温度计三件套：管壁刻度 JSX + 液头弯月（空槽不画假液头）+ 管壁侧光 CSS'
 )
+// K8d3 · P3 皮肤落地：hidden 下深色后浪（foam）也暂停 —— 球内四层（A/B/C/后浪）
+// 照停，柱顶波 + 液光流保持动画（K8d 只许柱顶活，球内全停）。
+ok(
+  /\[data-fluid='hidden'\][^{]*\.fluid-foam[^}]*animation-play-state:\s*paused/.test(css),
+  'K8d3 hidden 态暂停深色后浪（球内四层照停；柱顶波不在名单里，见 K8d）'
+)
+// K8j · P3 柱顶浪按天气走：柱顶小波的时长读 --wave-speed-a（逐皮肤各异，
+// 写死 1.6s 等于五皮同浪；位移仍是固定 -4px，见 K2d）。
+ok(
+  /\.fluid-column-wave svg[^}]*var\(--wave-speed-a\)/.test(css),
+  'K8j 柱顶小波时长走 --wave-speed-a（振幅/速度逐皮肤不同）'
+)
+// K8k · P3 液内高光漂移（原型 cshim 口径）：柱内液光流 JSX + CSS + 上下漂移关键帧
+// 都在；hidden 下保持动画（柱顶活的第二半），页面不可见/降级时停。
+ok(
+  /className="fluid-shimmer"/.test(petBallWater),
+  'K8k1 液光流在 JSX 里（与柱顶波同条件挂载，空槽不造假光）'
+)
+// K8k1b · 液光流与柱顶波**同条件**挂载（fluidLvl > 0）：只断存在不断条件，
+// 把光搬出条件（空槽挂假光）照样绿 —— 标签与机制对不上的永真兜底（见 K7h 配平模式）。
+// 断法：从 marker 往回找最近的 `{fluidLvl > 0`，配平花括号取整块，波与光必须在同一块内。
+function condBlock(src, marker, cond) {
+  const mi = src.indexOf(marker)
+  if (mi < 0) return null
+  const open = src.lastIndexOf(`{${cond}`, mi)
+  if (open < 0) return null
+  let depth = 0
+  for (let j = open; j < src.length; j++) {
+    if (src[j] === '{') depth++
+    else if (src[j] === '}') {
+      depth--
+      if (depth === 0) return src.slice(open, j + 1)
+    }
+  }
+  return null
+}
+{
+  const waveBlock = condBlock(petBallWater, 'className="fluid-column-wave"', 'fluidLvl > 0')
+  ok(
+    waveBlock != null && waveBlock.includes('className="fluid-shimmer"'),
+    'K8k1b 液光流与柱顶波在同一 fluidLvl > 0 条件块内（光搬出条件即红；删条件即红）'
+  )
+}
+ok(
+  /\.fluid-shimmer[^}]*var\(--slosh-dur\)/.test(css) && /@keyframes column-shimmer/.test(css),
+  'K8k2 液光流 CSS 走 --slosh-dur（逐皮肤天气速度）+ column-shimmer 关键帧在'
+)
 ok(
   /\(fluidLvl \* 100\)\.toFixed\(1\)/.test(petBallCode),
   'K8f 柱内液高 = fluidLvl 逐值绑定（隐藏态水柱液高与球内液位同一出处，逐值对拍的结构侧）'
