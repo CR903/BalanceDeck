@@ -2841,6 +2841,39 @@ textarea {
   opacity: 1;
   animation: none;
 }
+/* R4-5 原地变柱：hidden 稳态只留水柱 —— 底盘背景、内阴影、读数、标记、
+ * 短标签、角标、气泡、雨全部藏。旧滑出设计下窗口离屏，这些元素留着也看不见；
+ * 原地隐藏必须显式藏，否则球柱并存（用户实拍取证：球完整 + 柱子叠在右侧）。
+ * 底盘与文字走 180ms 淡出（与 waves-drain 衔接，无跳变）；角标/气泡/雨直接 display:none
+ * （它们是覆盖层/外来层，hidden 态下无处安放；确认气泡的按钮在 hidden 下本来就点不着，
+ * reveal 后恢复，不丢交互）。 */
+.petball.no3d .petball-fallback[data-fluid='hidden'] {
+  background: transparent;
+  box-shadow: none;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+.petball.no3d .petball-fallback .dot-value,
+.petball.no3d .petball-fallback .dot-provider,
+.petball.no3d .petball-fallback .dot-winlabel {
+  transition: opacity 180ms ease;
+}
+.petball.no3d .petball-fallback[data-fluid='hidden'] .dot-value,
+.petball.no3d .petball-fallback[data-fluid='hidden'] .dot-winlabel {
+  opacity: 0;
+}
+/* mark 的 opacity 是 JSX 内联的（0.85），样式表必须 !important 才盖得住
+ * （reduced-motion 那节已有 !important 前例）。否则 hidden 态会残留品牌图标。 */
+.petball.no3d .petball-fallback[data-fluid='hidden'] .dot-provider {
+  opacity: 0 !important;
+}
+.petball.no3d .petball-fallback[data-fluid='hidden'] .pour-clip {
+  display: none;
+}
+.petball.no3d:has(.petball-fallback[data-fluid='hidden']) .petball-badge,
+.petball.no3d:has(.petball-fallback[data-fluid='hidden']) .petball-bubble,
+.petball.no3d:has(.petball-fallback[data-fluid='hidden']) .petball-confirm {
+  display: none;
+}
 /* 汇聚 morph 反向 400ms：pill 收起 → 桥拉出 → 球回弹成形（末段微过冲 = elastic 观感） */
 .petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-disc {
   animation: disc-reveal 400ms var(--ease) forwards;
