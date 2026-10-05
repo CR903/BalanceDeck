@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>holo-prototype</title>
+<link rel="stylesheet" href="./holo.css" />
+<script type="importmap">
+{ "imports": { "three": "../../node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl" width="464" height="400"></canvas>
+  <div id="skinbar">
+    <button id="skin-abyss" type="button">深海</button>
+    <button id="skin-ember" type="button">余烬</button>
+  </div>
+</div>
+<div id="hud">
+  <div class="card" id="card-token">
+    <div class="k">TOKEN PLAN</div>
+    <div class="v"><span id="num-token">0</span> / 50M</div>
+    <div class="bar"><i id="bar-token"></i></div>
+  </div>
+  <div class="card" id="card-code">
+    <div class="k">CODING PLAN</div>
+    <div class="row">
+      <svg class="ring" viewBox="0 0 34 34">
+        <circle class="bg" cx="17" cy="17" r="14" fill="none" stroke-width="4" />
+        <circle class="fg" id="ring-code" cx="17" cy="17" r="14" fill="none"
+          stroke-width="4" stroke-dasharray="87.96" stroke-dashoffset="87.96" />
+      </svg>
+      <div class="v"><span id="num-code">0</span>%</div>
+    </div>
+  </div>
+  <div class="card" id="card-charge">
+    <div class="k">DIRECT CHARGE</div>
+    <div class="v">¥<span id="num-charge">0.00</span></div>
+  </div>
+</div>
+<div id="perf">perf: 等待测量…</div>
+<script type="module" src="./scene.mjs"></script>
+</body>
+</html>

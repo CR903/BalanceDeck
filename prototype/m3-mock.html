@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M3 Expressive 球体效果图（静态 + 可点播放动效）</title>
+<style>
+  :root {
+    --accent: #0a84ff;
+    --accent-tonal: rgba(10, 132, 255, 0.22);
+    --water: #30d158;
+    --foam: rgba(255, 255, 255, 0.9);
+    --ball-bg: #1c1c1e;
+    --spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* M3 弹簧感：超调回弹 */
+  }
+  body {
+    margin: 0; background: #101014; color: #f2f2f7;
+    font-family: -apple-system, 'PingFang SC', system-ui, sans-serif;
+    padding: 32px;
+  }
+  h1 { font-size: 20px; }
+  p.hint { color: #98989f; font-size: 13px; }
+  .row { display: flex; gap: 48px; margin: 28px 0; align-items: flex-start; flex-wrap: wrap; }
+  .cell { text-align: center; }
+  .cell h3 { font-size: 14px; margin: 0 0 12px; }
+  .cell .sub { font-size: 12px; color: #98989f; margin-top: 10px; max-width: 220px; }
+  .stage {
+    width: 112px; height: 112px; position: relative; margin: 0 auto;
+    transform: scale(2); transform-origin: top center;
+  }
+  /* —— 56px 球（与 app 同几何：r27 水盘，读数居中） —— */
+  .ball {
+    position: absolute; left: 28px; top: 28px; width: 56px; height: 56px;
+    border-radius: 50%; background: var(--ball-bg);
+    box-shadow: inset 0 1px 1.5px rgba(255,255,255,.22), inset 0 0 0 1px rgba(255,255,255,.14), inset 0 -6px 12px rgba(0,0,0,.36);
+    overflow: hidden;
+  }
+  .water {
+    position: absolute; left: 1px; right: 1px; bottom: 1px; height: 60%;
+    background: linear-gradient(to bottom, var(--water), #1a9e4b);
+    border-radius: 40% 60% 0 0 / 12px;
+  }
+  .foam {
+    position: absolute; left: 1px; right: 1px; top: -3px; height: 7px;
+    background: var(--foam); opacity: .85; border-radius: 50%;
+  }
+  .reading {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 13px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  /* M3 整球：tonal 底 + 更粗的读数 + 胶囊徽章 */
+  .ball.m3 { background: #23232a; box-shadow: inset 0 2px 3px rgba(255,255,255,.28), inset 0 0 0 1.5px rgba(255,255,255,.18), inset 0 -8px 14px rgba(0,0,0,.4); }
+  .ball.m3 .reading { font-size: 14px; font-weight: 800; }
+  .ball.m3 .pill-tag {
+    position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+    font-size: 7px; font-weight: 700; color: #fff; background: var(--accent);
+    border-radius: 999px; padding: 1px 5px; letter-spacing: .04em;
+  }
+  /* —— 隐藏柱（与 app 同几何：12px 宽全高，贴左侧） —— */
+  .column {
+    position: absolute; left: 28px; top: 28px; width: 12px; height: 56px;
+    background: rgba(120,120,128,.25); border-radius: 2px; overflow: hidden;
+  }
+  .column .fill {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 70%;
+    background: linear-gradient(to bottom, #ff9f0a, #f08c00);
+  }
+  .column .fill::before {
+    content: ''; position: absolute; top: -6px; left: 0; width: 100%; height: 12px;
+    border-radius: 50%; background: inherit;
+  }
+  .column .ticks {
+    position: absolute; inset: 0; opacity: .55;
+    background-image: linear-gradient(var(--foam),var(--foam)),linear-gradient(var(--foam),var(--foam)),linear-gradient(var(--foam),var(--foam));
+    background-size: 100% 1px; background-position: 50% 25%, 50% 50%, 50% 75%; background-repeat: no-repeat;
+  }
+  /* M3 柱：全圆角 stadium + tonal 槽 + 更粗刻度 */
+  .column.m3 { border-radius: 999px; background: var(--accent-tonal); }
+  .column.m3 .ticks { opacity: .8; }
+  button {
+    margin-top: 70px; background: var(--accent); color: #fff; border: none;
+    border-radius: 999px; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:active { transform: scale(.96); }
+  /* 动效演示：球→柱 morph（点按钮播放） */
+  .morph .ball { transition: transform 550ms var(--spring), opacity 200ms ease; }
+  .morph .column { transform: scale(0); transition: transform 550ms var(--spring); }
+  .morph.hidden-state .ball { transform: scale(0); opacity: 0; }
+  .morph.hidden-state .column { transform: scale(1); }
+  .morph .column { transform-origin: left center; }
+  .note { font-size: 12px; color: #98989f; max-width: 640px; line-height: 1.7; }
+  code { background: #2a2a2e; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>M3 Expressive 球体效果图</h1>
+  <p class="hint">左 = 现状，右 = M3 方向。动效区点按钮可反复播放 morph（弹簧 easing）。</p>
+
+  <div class="row">
+    <div class="cell">
+      <h3>整球 · 现状</h3>
+      <div class="stage"><div class="ball"><div class="water"><div class="foam"></div></div><div class="reading">41%</div></div></div>
+      <div class="sub">中性灰底盘 + 标准缓动</div>
+    </div>
+    <div class="cell">
+      <h3>整球 · M3</h3>
+      <div class="stage"><div class="ball m3"><div class="water"><div class="foam"></div></div><div class="pill-tag">5H</div><div class="reading">41%</div></div></div>
+      <div class="sub">tonal 深底盘 + 强高光 + 胶囊徽章 + 更粗读数</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="cell">
+      <h3>隐藏柱 · 现状</h3>
+      <div class="stage"><div class="column"><div class="fill"></div><div class="ticks"></div></div></div>
+      <div class="sub">2px 圆角 + 中性灰槽</div>
+    </div>
+    <div class="cell">
+      <h3>隐藏柱 · M3</h3>
+      <div class="stage"><div class="column m3"><div class="fill"></div><div class="ticks"></div></div></div>
+      <div class="sub">全圆角 stadium + accent tonal 槽 + 粗刻度</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="cell">
+      <h3>球→柱 morph · M3 弹簧 easing（可点）</h3>
+      <div class="stage morph" id="morphDemo" style="height:112px">
+        <div class="ball m3" style="left:28px"><div class="water"><div class="foam"></div></div><div class="reading">41%</div></div>
+        <div class="column m3" style="left:28px"><div class="fill"></div><div class="ticks"></div></div>
+      </div>
+      <button onclick="document.getElementById('morphDemo').classList.toggle('hidden-state')">播放 隐藏/唤出</button>
+      <div class="sub">550ms <code>cubic-bezier(0.34,1.56,0.64,1)</code> 超调回弹；现状是无回弹 ease</div>
+    </div>
+  </div>
+
+  <p class="note">
+    说明：几何与 app 同口径（56px 球 / r27 水盘 / 12px 柱），可直接对照。
+    M3 三件套对应关系 —— 形状：stadium 全圆角；颜色：tonal 槽 + 高饱和水色；
+    动效：弹簧超调。确认方向后按此落地到 skins.css 变量。
+  </p>
+</body>
+</html>

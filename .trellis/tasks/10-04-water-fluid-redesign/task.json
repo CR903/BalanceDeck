@@ -1,0 +1,32 @@
+{
+  "id": "water-fluid-redesign",
+  "name": "water-fluid-redesign",
+  "title": "水球流体视觉重设计：水色随量/倒水入场/贴边吸溜水柱/皮肤差异化",
+  "description": "收起态水球4项改造：1水色随用量连续变色 2倒水入场+荡漾平息 3贴边吸溜水柱温度计 4皮肤差异化3D与水效",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "zhou",
+  "assignee": "zhou",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-04-water-color-by-usage",
+    "10-04-pour-in-slosh",
+    "10-04-edge-sip-column",
+    "10-04-skin-fluid-redesign",
+    "10-04-rain-weather-column"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

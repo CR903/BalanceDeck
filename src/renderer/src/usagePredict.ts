@@ -1,4 +1,4 @@
-import type { ProviderSnapshot } from '../../shared/types'
+import type { ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { isPlan, staleLabel } from '../../shared/quality'
 import { windowPercent } from '../../shared/percent'
 import {
@@ -60,6 +60,38 @@ export interface Prediction {
   confidence: Confidence
   /** 数据源降级标注（'' = 官方数据）。取自 staleLabel，**不在这里写第二份字符串** */
   qualityLabel: string
+  /** 该窗口的重置时刻（epoch ms，取自快照 window.resetAt）。缺失/非法/已过 → null（此时按窗口名兜底周期判定） */
+  resetAt: number | null
+  /**
+   * 按当前速率能否在本周期重置前用完。false = 本周期内用不完。
+   *
+   * 为什么需要它：线性外推到 100% 完全不看重置，慢速窗口会算出「本周约 198 天后用完」这种
+   * 超出周期的数 —— 本周最多 7 天、本月最多 30 天，超出的数字没有意义。false 时文案不再报
+   * 「X 天后用完」，而是报「本周期内用不完」。
+   */
+  exhaustsBeforeReset: boolean
+}
+
+// ─── ①a 周期上限（resetAt 缺失时的兜底）──────────────────────────────────────
+
+/**
+ * 按窗口名推断一个周期的最大长度。resetAt 缺失 / 非法 / 已过时用它兜底，
+ * 否则「本周 198 天后用完」这种数在无 resetAt 的窗口上依然会出现。
+ *
+ * 取值（用户确认：月按 30 天算）：
+ *   · 含 '5小时' → 5 小时（含 '5 小时' / 'Gemini Models · 5小时' 等前后缀）
+ *   · 含 '24小时' → 24 小时
+ *   · 含 '本周' → 7 天（含 '本周（7天）'）
+ *   · 含 '本月' → 30 天（含 '本月套餐'）
+ *   · 其他（'Token Plan' 等无周期名）→ null（不兜底，原样显示）
+ */
+export function windowCycleMs(windowName: string): number | null {
+  const n = windowName.replace(/\s+/g, '')
+  if (n.includes('5小时')) return 5 * HOUR
+  if (n.includes('24小时')) return 24 * HOUR
+  if (n.includes('本周')) return 7 * DAY
+  if (n.includes('本月')) return 30 * DAY
+  return null
 }
 
 // ─── ① 重置点切段（D2 的核心）─────────────────────────────────────────────
@@ -182,14 +214,14 @@ export function confidenceOf(points: UsagePoint[]): Confidence | null {
 /**
  * 一个窗口的完整预测。任一判据不满足 → **null**（不显示，而不是显示一个没有依据的数）。
  *
- * @param s 快照只取 id / dataQuality（数据源标注的唯一来源是 staleLabel）
+ * @param s 快照取 id / dataQuality（数据源标注）+ windows（按窗口名找 resetAt，找不到/非法则按窗口名兜底周期）
  * @param windowName 窗口名，进 Prediction 供 UI 说明「说的是哪个窗口」
  * @param points 该窗口的历史采样（**原样传入**，本函数不修改入参）
  * @param now 本轮时刻：既是回看窗口的起点，也是「预测时刻已过」判据的参照
  * @param cfg 回看天数 / 保留天数（内部会 resolve，脏值落向默认）
  */
 export function predictWindow(
-  s: Pick<ProviderSnapshot, 'id' | 'dataQuality'>,
+  s: Pick<ProviderSnapshot, 'id' | 'dataQuality'> & { windows?: Pick<ProviderWindow, 'name' | 'resetAt'>[] },
   windowName: string,
   points: UsagePoint[],
   now: number,
@@ -209,6 +241,19 @@ export function predictWindow(
   // ③ 耗尽时刻；已经算作过去（额度其实已经用完 / 数据早于现在一个周期）→ 不显示
   const runsOutAt = estimateRunsOutAt(seg[seg.length - 1], perHour)
   if (runsOutAt === null || !(runsOutAt > now)) return null
+  // ④ 周期判定：耗尽时刻落在重置之后 → 本周期内用不完（不再报「198 天后用完」）。
+  //    resetAt 优先（服务端真值）；缺失/非法/已过则按窗口名兜底（本周 7 天 / 本月 30 天 / 5 小时 5 小时）；
+  //    都没有则不判定（无周期名的窗口如 'Token Plan'，原样显示）。
+  const win = Array.isArray(s.windows) ? s.windows.find((w) => w.name === windowName) : undefined
+  let resetAt: number | null = null
+  const raw = win?.resetAt
+  if (typeof raw === 'string' && raw) {
+    const t = Date.parse(raw)
+    if (Number.isFinite(t) && t > now) resetAt = t
+  }
+  const cycle = windowCycleMs(windowName)
+  const deadline = resetAt ?? (cycle != null ? now + cycle : null)
+  const exhaustsBeforeReset = deadline == null ? true : runsOutAt <= deadline
   return {
     providerId: s.id,
     windowName,
@@ -218,7 +263,9 @@ export function predictWindow(
     leftMs: runsOutAt - now,
     perHour,
     confidence,
-    qualityLabel: staleLabel(s)
+    qualityLabel: staleLabel(s),
+    resetAt,
+    exhaustsBeforeReset
   }
 }
 
@@ -260,14 +307,20 @@ export function predictAll(
  */
 export function buildPredictionText(p: Prediction, windowDays: number): string {
   const c = resolvePredictConfig({ windowDays })
-  const parts = [`按近 ${c.windowDays} 天速率估算，约 ${humanDur(p.leftMs)}后用完`]
+  // 本周期内用不完：不再报「198 天后用完」这种超出周期的数（本周 ≤7 天 / 本月 ≤30 天）。
+  // 仍保留「估算」二字（AC3）与样本/数据源后缀。
+  const head = p.exhaustsBeforeReset
+    ? `按近 ${c.windowDays} 天速率估算，约 ${humanDur(p.leftMs)}后用完`
+    : `按近 ${c.windowDays} 天速率估算，本周期内用不完`
+  const parts = [head]
   if (p.confidence === 'low') parts.push('样本较少')
   // ⚠ 取自 staleLabel（'' / '缓存' / '本机'），不写第二份「哪些算非官方」的判断
   if (p.qualityLabel) parts.push(`⚠ ${p.qualityLabel}`)
   return parts.join(' · ')
 }
 
-/** 一条预测是不是「值得单独占一行」的（详情页按这个排）—— 按耗尽时刻从近到远 */
+/** 排序：会耗尽的按耗尽时刻从近到远排前面，本周期内用不完的沉底（仍按耗尽时刻排） */
 export function bySoonest(a: Prediction, b: Prediction): number {
+  if (a.exhaustsBeforeReset !== b.exhaustsBeforeReset) return a.exhaustsBeforeReset ? -1 : 1
   return a.runsOutAt - b.runsOutAt
 }

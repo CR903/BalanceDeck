@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "token-driven CSS/skin 约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "tsc+断言脚本门，先红后绿"}

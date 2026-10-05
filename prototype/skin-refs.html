@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>6 参考图 → 球体皮肤效果图（2x 等比）</title>
+<style>
+  body { margin:0; background:#0c0c0e; color:#f2f2f7; font-family:-apple-system,'PingFang SC',system-ui,sans-serif; padding:28px; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .hint { color:#98989f; font-size:12.5px; max-width:900px; line-height:1.7; }
+  .list { margin-top:20px; max-width:900px; }
+  .card { display:flex; gap:22px; align-items:center; background:#141417; border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:20px 22px; margin-bottom:16px; }
+  .stage { width:112px; height:112px; position:relative; flex:0 0 112px; }
+  .ball { position:absolute; inset:0; border-radius:50%; overflow:hidden; }
+  .reading { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1.08; }
+  .reading b { font-size:27px; font-weight:800; letter-spacing:.01em; }
+  .reading span { font-size:14px; font-weight:600; opacity:.75; margin-top:4px; letter-spacing:.06em; }
+  .glyph { font-size:17px; line-height:1; margin-bottom:4px; }
+  svg.ring { position:absolute; inset:0; width:112px; height:112px; }
+  .txt h3 { font-size:14px; margin:0 0 4px; }
+  .txt .src { font-size:11.5px; color:#98989f; margin-bottom:8px; }
+  .txt .v { font-size:12.5px; line-height:1.7; padding:8px 12px; border-radius:8px; }
+  .okv { background:rgba(48,209,88,.12); color:#b9f2c6; }
+  .wrn { background:rgba(255,159,10,.12); color:#ffd9a0; }
+  .v1 { background:radial-gradient(circle at 50% 35%, #3a2415, #17100a 72%); box-shadow:inset 0 0 0 1.5px rgba(255,159,10,.35), inset 0 2px 4px rgba(255,200,120,.35); }
+  .v1 .ticks { position:absolute; inset:4px; border-radius:50%;
+    background:repeating-conic-gradient(from 0deg, #ff9f0a 0deg 2deg, transparent 2deg 15deg);
+    -webkit-mask:radial-gradient(circle, transparent 40px, #000 42px, #000 48px, transparent 50px); mask:radial-gradient(circle, transparent 40px, #000 42px, #000 48px, transparent 50px); opacity:.9; }
+  .v1 .reading b, .v1 .reading span { color:#fff; }
+  .v2 { background:radial-gradient(circle at 50% 60%, #3b1c4e 0%, #16224f 55%, #0b0b12 78%); box-shadow:inset 0 0 0 1.5px rgba(150,140,255,.28); }
+  .v2 .dots i { position:absolute; width:10px; height:10px; border-radius:50%; }
+  .v2 .reading b { color:#fff; }
+  .v2 .badge { width:27px; height:27px; border-radius:50%; background:#fff; color:#3b1c4e; font-size:15px; display:grid; place-items:center; margin-top:5px; }
+  .v3 { background:radial-gradient(circle at 50% 40%, #0e3a22 0%, #07180f 70%); box-shadow:inset 0 0 0 4px #22b573, inset 0 0 0 9px rgba(34,181,115,.28), inset 0 0 0 14px rgba(34,181,115,.14); }
+  .v3 .reading b { color:#fff; } .v3 .reading span { color:#9fe8c1; }
+  .v4 { background:radial-gradient(circle at 50% 38%, #4d1010 0%, #1c0606 68%); box-shadow:inset 0 0 0 1.5px rgba(255,80,80,.3); }
+  .v4 .dots i { position:absolute; width:7px; height:7px; border-radius:50%; background:#a02323; }
+  .v4 .heart { color:#ff3b30; font-size:19px; }
+  .v4 .reading b { color:#fff; } .v4 .reading span { color:#e8a0a0; }
+  .v5 { background:radial-gradient(circle at 50% 40%, #1d2b12 0%, #0b0f07 70%); box-shadow:inset 0 0 0 1.5px rgba(190,255,60,.25); }
+  .v5 .reading b { color:#fff; } .v5 .reading b i { font-style:normal; color:#8a93a0; }
+  .v5 .glyph { color:#beff3c; font-size:13px; letter-spacing:2px; }
+  .v6 { background:#0b1626; }
+  .v6 .wclip { position:absolute; inset:0; border-radius:50%; overflow:hidden; }
+  .v6 .water { position:absolute; left:0; right:0; bottom:0; height:58%; background:linear-gradient(to bottom,#5aa9ffe6,#3f9dff 45%,#3f9dff99); }
+  .v6 .wsurf { position:absolute; top:-13px; left:0; width:100%; height:26px; }
+  .v6 .reading { text-shadow:0 1px 3px rgba(0,0,0,.45); }
+  .v6 .gloss { position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    background:radial-gradient(circle at 32% 20%, rgba(255,255,255,.55), rgba(255,255,255,0) 42%); }
+  .v6 .rim { position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    box-shadow:inset 0 0 0 2px rgba(140,190,255,.35), inset 0 8px 16px rgba(255,255,255,.16), inset 0 -14px 24px rgba(0,20,60,.55); }
+  .v6 .reading b { color:#fff; } .v6 .batt { font-size:15px; color:#cfe5ff; margin-top:2px; }
+</style>
+</head>
+<body>
+<h1>6 参考图 → 球体皮肤效果图（2x 等比，112px = 56px×2）</h1>
+<p class="hint">几何与 App 同比例放大 2 倍。读数用“41%”占位，图标为字符替代（落地换 SVG）。结论先行：<b>可做皮肤外观，但 6 套不能全要</b>——刻度圈类在 56px 下会糊，建议只取配色故事 + 中央排布 + 徽章，水体只保留 V6 一款。</p>
+<div class="list">
+  <div class="card"><div class="stage"><div class="ball v1"><div class="ticks"></div>
+    <svg class="ring" viewBox="0 0 112 112"><circle cx="56" cy="56" r="44" fill="none" stroke="rgba(255,159,10,.25)" stroke-width="8"/><circle cx="56" cy="56" r="44" fill="none" stroke="#ff9f0a" stroke-width="8" stroke-linecap="round" stroke-dasharray="192 400" transform="rotate(120 56 56)"/></svg>
+    <div class="reading"><b>41%</b><span>7 MIN</span></div></div></div>
+    <div class="txt"><h3>V1 · 余烬计时橙（来源 图1 · 候选 dark）</h3><div class="src">深底 + 橙环 + 白字 + 24 粒刻度圈</div>
+    <div class="v okv">可用：对比足；刻度圈 24 粒是 56px 上限，再细会糊。</div></div></div>
+  <div class="card"><div class="stage"><div class="ball v2"><div class="dots" id="d2"></div>
+    <div class="reading"><b>41%</b><div class="badge">O</div></div></div></div>
+    <div class="txt"><h3>V2 · 睡眠极光（来源 图2 · 候选 candy）</h3><div class="src">紫蓝渐变底 + 12 颗渐变点环 + 月亮徽章</div>
+    <div class="v wrn">半可用：点环每颗 56px 下仅 ~5px，已是上限；徽章挤读数，建议徽章只放隐藏柱。</div></div></div>
+  <div class="card"><div class="stage"><div class="ball v3"><div class="reading"><div class="glyph">~</div><b>41%</b><span>MBPS</span></div></div></div>
+    <div class="txt"><h3>V3 · 极速绿环（来源 图3 · 候选 dark-霓虹变体）</h3><div class="src">三同心绿环 + 顶图标 + 大数字</div>
+    <div class="v okv">可用：小尺寸下最清晰的一款，无细碎元素。</div></div></div>
+  <div class="card"><div class="stage"><div class="ball v4"><div class="dots" id="d4"></div>
+    <div class="reading"><div class="heart">H</div><b>68</b><span>BPM</span></div></div></div>
+    <div class="txt"><h3>V4 · 心跳红（来源 图4 · 候选 danger 等级态）</h3><div class="src">深红底 + 红点环 + 心形 + 数字</div>
+    <div class="v wrn">慎用：红色 = App 内 danger 语义，常驻皮肤会和“爆表警告”撞衫；只做 warn/danger 等级态。</div></div></div>
+  <div class="card"><div class="stage"><div class="ball v5">
+    <svg class="ring" viewBox="0 0 112 112"><circle cx="56" cy="56" r="42" fill="none" stroke="rgba(190,255,60,.22)" stroke-width="12"/><circle cx="56" cy="56" r="42" fill="none" stroke="#beff3c" stroke-width="12" stroke-linecap="round" stroke-dasharray="60 16 60 16 60 120" transform="rotate(-90 56 56)"/></svg>
+    <div class="reading"><div class="glyph">=&gt;</div><b>3<i>/4</i></b></div></div></div>
+    <div class="txt"><h3>V5 · 柠檬分段环（来源 图5 · 候选 minimal-活力变体）</h3><div class="src">粗分段柠檬绿环 + 哑铃位图标 + 分数读数</div>
+    <div class="v okv">可用：粗分段环小尺寸识别度最高；缺口做法落地可直接复用现有环形位。</div></div></div>
+  <div class="card"><div class="stage"><div class="ball v6"><div class="wclip"><div class="water"><svg class="wsurf" viewBox="0 0 112 26" preserveAspectRatio="none"><path d="M0,10 Q14,2 28,10 T56,10 T84,10 T112,10 V18 H0 Z" fill="rgba(0,15,50,.42)"/><path d="M0,17 Q14,9 28,17 T56,17 T84,17 T112,17 V26 H0 Z" fill="#3f9dff"/></svg></div></div><div class="gloss"></div><div class="rim"></div>
+    <svg class="ring" viewBox="0 0 112 112"><circle cx="56" cy="56" r="48" fill="none" stroke="rgba(80,150,255,.25)" stroke-width="8"/><circle cx="56" cy="56" r="48" fill="none" stroke="#3f9dff" stroke-width="8" stroke-linecap="round" stroke-dasharray="180 400" transform="rotate(-90 56 56)"/></svg>
+    <div class="reading"><b>58</b><div class="batt">E</div></div></div></div>
+    <div class="txt"><h3>V6 · 潮汐水位蓝（来源 图6 · 候选 aero 水体保留款）</h3><div class="src">深蓝底 + 底部水体 + 蓝色进度环</div>
+    <div class="v okv">最可用：唯一保留水体的款，与现有水位语义零冲突；环与水双编码二选一。</div></div></div>
+</div>
+<script>
+  var cols2 = ['#5ac8fa','#64d2ff','#0a84ff','#5e5ce6','#bf5af2','#ff375f','#ff453a','#ff9f0a','#ffd60a','#30d158','#64d2ff','#5e5ce6'];
+  var d2 = document.getElementById('d2');
+  cols2.forEach(function(c,i){ var a=i/12*Math.PI*2; var el=document.createElement('i'); el.style.background=c;
+    el.style.left=(56+Math.cos(a)*46-5)+'px'; el.style.top=(56+Math.sin(a)*46-5)+'px'; d2.appendChild(el); });
+  var d4 = document.getElementById('d4');
+  for(var i=0;i<20;i++){ var a=i/20*Math.PI*2; var el=document.createElement('i');
+    el.style.left=(56+Math.cos(a)*46-3.5)+'px'; el.style.top=(56+Math.sin(a)*46-3.5)+'px'; d4.appendChild(el); }
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "name": "holo-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "description": "全息悬浮球 Phase 0 可丢弃原型（不进主干）",
+  "main": "main.js"
+}
