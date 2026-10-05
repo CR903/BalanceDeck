@@ -14,3 +14,6 @@ resources/
 
 # 参考图（他人版权素材，仅本地用；见 README 第三方素材说明）
 refs/
+
+# 本地记忆（mnemon CLI 数据 + 运行时状态，见 SqlDiff/.gitignore 同款规则）
+.mnemon/
