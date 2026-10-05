@@ -2478,10 +2478,14 @@ textarea {
   height: 12px;
 }
 /* 柱内液：竖柱从底起（液高 = 100% × level）、横槽从左起（液宽同），水色跟 lvl。
-   液位 0（余额类/算不出比例）时高度/宽度就是 0 —— 空槽，不造假水位。 */
+   液位 0（余额类/算不出比例）时高度/宽度就是 0 —— 空槽，不造假水位。
+   圆角与 .fluid-pill 同值（6px，上下全圆）：方形 fill 底顶着圆角槽 = 底部尖耳朵；
+   方形 fill 顶 + 圆形弯月（::before 12px 整圆）相交 = 顶部两侧掐出尖。
+   同半径后弯月圆与圆顶融为连续胶囊。横槽短边同为 12px，同一半径两向通用。 */
 .petball.no3d .fluid-column-fill {
   position: absolute;
   background: var(--ok);
+  border-radius: 6px;
 }
 .petball.no3d.lvl-warn .fluid-column-fill {
   background: var(--warn);

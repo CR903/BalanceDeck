@@ -1254,6 +1254,17 @@ ok(
     ruleBody(css, '.petball.no3d .fluid-column-wave svg') != null,
   'K4c 柱内液 + 柱顶波浪的 CSS 规则都在'
 )
+// K4e · 柱内液圆角与槽同值（方形 fill 底顶着圆角槽 = 底部尖耳朵；方形 fill 顶 +
+// 圆形弯月相交 = 顶部两侧掐出尖。上下全圆与 pill 同半径，弯月圆与圆顶融为连续胶囊；
+// 横槽的短边同为 12px，同一半径两向通用，不另起值）。
+{
+  const pillR = decls(ruleBody(css, '.petball.no3d .fluid-pill'))['border-radius']
+  const fillR = decls(ruleBody(css, '.petball.no3d .fluid-column-fill'))['border-radius']
+  ok(
+    pillR != null && fillR != null && fillR === pillR,
+    `K4e 柱内液圆角与槽同值（pill ${pillR || '缺'}/fill ${fillR || '缺'}，不等=尖耳朵回归）`
+  )
+}
 
 // K5 · 三处暂停都在（hidden 相位 / 页面不可见 / reduced-motion），不是注释。
 ok(
