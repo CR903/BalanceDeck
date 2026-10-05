@@ -290,6 +290,13 @@ const PET_WINDOW_FULLBLEED = [
   ['.petball.no3d:has(.petball-hit:active) .petball-fallback', '球盘按压态：同一元素、同一尺寸'],
   ['.petball-rename input', '改名输入框：168×28 却活在 56×56 窗口里，20px 光晕照样铺满'],
   ['.petball-hit', '命中层：inset:0 = 整块窗口'],
+  // P2 玻璃罩与 P4 预览气泡同样是 56×56 窗口纪律的管辖对象：
+  //   · ::after 是 inset:0 全覆盖 fallback 的玻璃层，本体无阴影（写 outer 同样被裁方）；
+  //   · .fluid-peek 是 inset:0 的整球预览，阴影全 inset（两层 inset，见规则本体）。
+  // 判据与上表同一条（body != null + outer 0 层）：无阴影的 0 层同样合规，
+  // 有人加上 outer 即红 —— 补的是"名单不全"的机器门空洞，不是新纪律。
+  ['.petball.no3d .petball-fallback::after', '玻璃罩：inset:0 全覆盖球盘，本体无阴影'],
+  ['.petball.no3d .fluid-peek', '预览气泡：inset:0 = 整块窗口，阴影全 inset'],
   // ⚠ 曾经把 `.petball-debugring` 也列进来，理由写的是「按投影上报的外接框 = 整个窗口」——
   //   **那条理由是假的**（`PetBall.tsx:812` 写明它只可能是人物形态：ringBox 由 3D 场景的
   //   hitRect 填，球形态 w 恒为 0，所以它在 56×56 窗口里**根本不存在**）。人物形态下它也

@@ -2074,12 +2074,17 @@ textarea {
        逐像素解码就能看见。2026-09-28 曾把这两件事混成一句「拍不到屏幕合成」，并据此
        认定前两轮「无法证伪任何假设」；那是错的，详见 design.md §9.8 的复核补记。 */
   box-shadow:
-    inset 0 1px 1.5px var(--dot-top),
+    /* P2 玻璃罩落地（原型 .ball::after 口径）：顶光加重、底缘压暗加重，
+       仍全 inset —— 外阴影在 56×56 窗口里无处容身（D6 那条纪律，见下）。
+       几何放大、颜色仍走令牌（minimal 的 --dot-top alpha 0 = 不要高光，
+       逐皮肤的选择保留，不强制统一）。 */
+    inset 0 2px 5px var(--dot-top),
     /* 盘缘（轮廓）：方向与盘相反的 --ball-rim 是球在桌面上读作「一个物体」的唯一保证。
        顶部发丝高光仍取 --dot-top（逐皮肤的「顶部高光」；minimal 是 alpha 0 = 不要高光），
        盘缘与高光是两件事，不要合成一个令牌。 */
     inset 0 0 0 1px var(--ball-rim),
-    inset 0 -6px 12px var(--dot-bottom);
+    inset 0 -15px 24px var(--dot-bottom),
+    inset 0 0 26px rgba(0, 0, 0, 0.12);
   /* ⚠⚠ 这里**不能**加任何 outer box-shadow —— 那就是「球外面套一圈浅色方框」的成因，
      而且它骗过了三轮诊断（详见 .trellis/tasks/09-28-dot-frame-label-carousel/design.md §9）：
 
@@ -2113,6 +2118,21 @@ textarea {
      命中层在球形态下与 fallback 同为 56×56，所以改用 :has() 让命中层的
      按压态驱动视觉层，纯 CSS、无需 JS 状态。 */
   transition: transform var(--dur) var(--ease);
+}
+/* 球体玻璃罩（P2 皮肤落地，原型 .ball::after 口径）：左上顶光 + 底部压暗，
+   全皮肤统一一层玻璃质感。各皮肤自有的水面 gloss/depth 保留（叠加不过曝，
+   渐变中心透明，读数不受影响）。无 box-shadow（立体边缘走元素本体的 inset；
+   更无 outer shadow —— D6 名单钉住本选择器（与球盘同一纪律），写 outer
+   在 56×56 窗口里同样会被裁成方框，见上面那条注释）。 */
+.petball.no3d .petball-fallback::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 32% 15%, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 32%),
+    radial-gradient(circle at 50% 126%, rgba(0, 0, 0, 0.58), rgba(0, 0, 0, 0) 55%);
 }
 .petball.no3d:has(.petball-hit:active) .petball-fallback {
   transform: translate(-50%, -50%) scale(0.94);
