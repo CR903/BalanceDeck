@@ -66,32 +66,3 @@ export function skinWaves(skinId: string): SkinWaves {
 export function defaultWaves(): SkinWaves {
   return DEFAULT_WAVES
 }
-
-/**
- * 雨滴表（R4-1）：倒水入场的 7 滴固定落位（确定性可测，不用 Math.random ——
- * 快照/取帧每次同形，单测 pin 分布）。
- *
- *   · `left` —— 球内横向 %（20..80，圆内；近壁滴靠 clip 圆自然裁出"砸中穹顶"感）；
- *   · `delay` —— 相对 pour 起播的延迟 ms（错峰，不齐发）；
- *   · `dur` —— 相对 POUR_FILL_MS 的时长系数（壁滴慢一档）；
- *   · `kind` —— center 触水溅 splash；wall 触水转 trickle（沿内壁流下，不挂 splash）。
- *
- * 顺序即重要度：每皮按 nth-child 藏尾巴（minimal 只留前 3，见 skins.css），
- * 所以前 3 必须是中间滴。
- */
-export interface PourDrop {
-  left: number
-  delay: number
-  dur: number
-  kind: 'center' | 'wall'
-}
-
-export const POUR_DROPS: PourDrop[] = [
-  { left: 50, delay: 0, dur: 1, kind: 'center' },
-  { left: 38, delay: 120, dur: 1, kind: 'center' },
-  { left: 62, delay: 60, dur: 1, kind: 'center' },
-  { left: 30, delay: 200, dur: 1.25, kind: 'wall' },
-  { left: 70, delay: 140, dur: 1.25, kind: 'wall' },
-  { left: 45, delay: 260, dur: 1, kind: 'center' },
-  { left: 55, delay: 320, dur: 1, kind: 'center' }
-]

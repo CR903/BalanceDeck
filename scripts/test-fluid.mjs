@@ -211,14 +211,5 @@ ok(
   '弧长随进度严格单调递增（按数值比，不按字符串字典序）'
 )
 
-console.log('用例 9：雨滴表（R4-1：7 滴固定落位 + 中/壁分工 + 前 3 为中间滴）')
-const drops = skinWaves.POUR_DROPS
-eq(drops.length, 7, '7 滴（minimal 3 / ink 4 / aero 5 / dark 6 / candy 7 全开）')
-eq(drops.filter((d) => d.kind === 'center').length, 5, '中间滴 5（splash 一一对应）')
-eq(drops.filter((d) => d.kind === 'wall').length, 2, '近壁滴 2（转 trickle，不挂 splash）')
-ok(drops.every((d) => d.left >= 20 && d.left <= 80), '横向全在 20..80（圆内，clip 裁出穹顶感）')
-ok(drops.every((d) => d.delay >= 0 && d.dur > 0), '延迟非负、时长系数为正')
-eq(drops.slice(0, 3).every((d) => d.kind === 'center'), true, '前 3 必须全是中间滴（藏尾顺序即重要度）')
-
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
 process.exit(fail === 0 ? 0 : 1)

@@ -248,6 +248,30 @@ ok(
   missingRim.length === 0,
   `D3 ball-bg-defined-per-skin --ball-rim 在顶层 :root + 5 个皮肤都有（缺 ${missingRim.join(',') || '无'}）`
 )
+// D3b · 三款环皮肤的球盘必须是暗色 radial-gradient（demo 还原，用户 2026-10-06 拍板）。
+// candy/minimal 此前是浅色盘（#f1eafb / #f2f2f6），demo 里四款全是暗盘 —— 同一套辉光环
+// 在浅盘上观感完全不同，这是 App 与 demo 不像的主因。只判 radial-gradient 子串，
+// 不 pin 具体色值（色值抄原型，见各皮注释）；把某皮改回纯色必须红。
+for (const skin of ['dark', 'candy', 'minimal']) {
+  const v = tokenInScope('--ball-bg', skin) || ''
+  ok(
+    /radial-gradient/.test(v),
+    `D3b ${skin} --ball-bg 是暗盘 radial-gradient（实际 ${v.slice(0, 72) || '未找到'}；改回纯色即红）`
+  )
+}
+// D3c · 深盘配浅缘（skins.css :root 注释里的可算判据：深色盘的 rim 是浅色且 alpha ≥ 0.12）。
+// candy/minimal 由浅盘改为暗盘时 rim 必须跟着翻成浅色，否则轮廓在深盘上消失。
+// 「浅色」操作化为 rgb 均值 ≥ 200（白/近白；橙色身份 rim 另议，见注释）。
+for (const skin of ['dark', 'candy', 'minimal']) {
+  const rim = tokenInScope('--ball-rim', skin) || ''
+  const m = rim.match(/rgba\(\s*(\d+)[^,]*,\s*(\d+)[^,]*,\s*(\d+)[^,]*,\s*([\d.]+)\s*\)/)
+  const alpha = m ? Number(m[4]) : NaN
+  const light = m ? (Number(m[1]) + Number(m[2]) + Number(m[3])) / 3 >= 200 : false
+  ok(
+    m != null && light && alpha >= 0.12,
+    `D3c ${skin} --ball-rim 浅色且 alpha≥0.12（深盘配浅缘；实际 ${rim.slice(0, 48) || '未找到'}）`
+  )
+}
 
 // D4 短标签换字体观感 + 更小（AC3.3）。判据是「解析后不是 body 那一套栈」。
 //    ⚠ 「字面量 ≠ body 的 stack」这个写法本身是**假护栏**（已实测踩过）：
@@ -321,6 +345,10 @@ const PET_WINDOW_FULLBLEED = [
   // 判据与上表同一条（body != null + outer 0 层）：无阴影的 0 层同样合规，
   // 有人加上 outer 即红 —— 补的是"名单不全"的机器门空洞，不是新纪律。
   ['.petball.no3d .petball-fallback::after', '玻璃罩：inset:0 全覆盖球盘，本体无阴影'],
+  // P6-demo 还原新增的两条皮肤级 ::after（aero/ink 立体层）：ruleBody 整选择器匹配
+  // 会跳过带 [data-skin…] 前缀的规则，不列进来就是名单缺口（check minor-2）。
+  ["[data-skin='aero'] .petball.no3d .petball-fallback::after", 'aero 立体层：全 inset 玻璃，无外阴影'],
+  ["[data-skin='ink'] .petball.no3d .petball-fallback::after", 'ink 立体层：全 inset 玻璃，无外阴影'],
   // P6 环形进度层：56×56 = 球形态窗口，与球盘同尺寸（写 outer shadow 同样被裁成方框）。
   // 这层**本来就没有阴影**（立体感全在 ::after 与 inset 上），列进来是补"名单不全"的
   // 机器门空洞：有人给环加 glow 用 outer shadow，这条立刻红。
@@ -941,71 +969,55 @@ ok(
   'K3d 三层波 fill + 柱内液 background 都绑内联 water（少绑一处，那处的水就恒三档）'
 )
 
-// K7 · 倒水入场（R4-1 雨滴）：data-pour 三段 + 取帧 + 降级，缺一件都算半态
+// K7 · 倒水入场（去雨后：slosh 荡漾 + pour-top 冲顶 + pour-flash 闪峰，无雨滴/水花/壁流）。
+// 用户 2026-10-06 拍板去掉下雨与两侧流水：雨滴/触水花/壁流水全部退役，POUR_DROPS 表一并删除。
+// 倒水入场现在只剩荡漾 + 冲顶 + 闪峰，缺一件都算半态，回来一条雨即红。
 ok(/data-pour=/.test(petBallCode), 'K7a 重播信号落在 data-pour 属性上（--shots 不靠猜样式读状态）')
 ok(
   /POUR_TOTAL_MS/.test(petBallCode) && /className="slosh"/.test(petBallWater),
   'K7b 摘属性计时经 shared POUR_TOTAL_MS + 荡漾有独立 .slosh 位移层（不复用波浪 svg 本体）'
 )
 ok(
-  /pour-drop/.test(css) && /pour-trickle/.test(css) && /pour-splash/.test(css) && /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
-  'K7c 雨滴/壁流/触水/冲顶/荡漾/闪峰六段 keyframes 都在（少一段，入场就缺一拍）'
+  /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
+  'K7c 冲顶/荡漾/闪峰三段 keyframes 都在（少一段，入场就缺一拍）'
 )
 ok(
-  !/@keyframes pour-fill\s*\{/.test(css) && !/@keyframes pour-stream\s*\{/.test(css),
-  'K7c2 整坨 pour-fill 与单条 pour-stream 已删（同一目标多套雨是漂移源，R4-1 只留雨滴）'
+  !/@keyframes pour-fill\s*\{/.test(css) && !/@keyframes pour-stream\s*\{/.test(css) &&
+    !/pour-drop/.test(css) && !/pour-trickle/.test(css) && !/pour-splash/.test(css),
+  'K7c2 整坨 pour-fill / 单条 pour-stream / 雨滴 / 壁流 / 触水花全无残留（同一目标多套雨是漂移源；回来一条即红）'
 )
 ok(
-  /\[data-pour='in'\][^{]*\.pour-drop[^}]*pour-drop/.test(css) &&
-    /\[data-pour='in'\][^{]*\.pour-trickle[^}]*pour-trickle/.test(css) &&
-    /\[data-pour='in'\][^{]*\.pour-splash[^}]*pour-splash/.test(css) &&
-    /\[data-pour='in'\][^{]*\.slosh[^}]*pour-slosh/.test(css),
-  'K7d 四段动画挂在 data-pour 上（属性摘掉即无入场；落距/落点按 surfaceY 内联，不读死位置）'
+  /\[data-pour='in'\][^{]*\.slosh[^}]*pour-slosh/.test(css) &&
+    /\[data-pour='in'\][^{]*\.fluid-foam[^}]*pour-flash/.test(css) &&
+    /\[data-pour='in'\][^{]*\{[^}]*pour-top/.test(css),
+  'K7d 荡漾/闪峰/冲顶挂在 data-pour 上（属性摘掉即无入场；雨删了，落距/落点内联不复存在）'
 )
 ok(
-  /\.slosh\s*\{[^}]*position:\s*absolute/.test(css) &&
-    /\.pour-clip\s*\{[^}]*clip-path:\s*circle\(27px/.test(css),
-  'K7e 位移层抽离布局 + 雨裁进水盘圆（r=27 与 svg clip 同口径，不画出界）'
+  /\.slosh\s*\{[^}]*position:\s*absolute/.test(css),
+  'K7e 荡漾位移层抽离布局（position:absolute；雨的裁剪圆随 pour-clip 一并退役）'
 )
 ok(
-  /className={`pour-drop/.test(petBallWater) &&
-    /POUR_DROPS\.map/.test(petBallWater) &&
-    /className="pour-splash"/.test(petBallWater) &&
-    /className="pour-trickle/.test(petBallWater) &&
-    /pourSurfaceY - 6/.test(petBallWater) &&
-    /waterAnchors\.accent/.test(petBallWater),
-  'K7e2 雨滴按表渲染 + 触水落点跟液面（pourSurfaceY 内联：套餐真实液面、余额钳 24 没入水中）+ 壁 trickle 两条 + 余额水走 accent'
+  css.length > 0 && !/pour-clip/.test(css),
+  'K7e2 pour-clip 无残留（CSS 里回来一个即红；css 非空前置防空洞通过）'
 )
 ok(
-  /POUR_DROPS/.test(petBallCode) && /from '\.\/skin-waves'/.test(petBallCode),
-  'K7e3 雨滴表经 ./skin-waves 的 POUR_DROPS（不手写第二份落位）'
+  !/pour-clip|pour-drop|pour-trickle|pour-splash|POUR_DROPS|pourSurfaceY/.test(petBallWater),
+  'K7e3 PetBall 无雨 JSX（pour-clip 整块 / POUR_DROPS import / 落点内联全删；回来一个即红）'
+)
+const skinWavesSrc = stripTsComments(read('src/renderer/src/skin-waves.ts'))
+ok(
+  skinWavesSrc.length > 0 && !/POUR_DROPS|PourDrop/.test(skinWavesSrc) && /function skinWaves\(/.test(skinWavesSrc),
+  'K7e3b skin-waves 无 POUR_DROPS 表（波形函数仍在；删表不断波）'
 )
 ok(
-  /pour-mid/.test(petBallCode) &&
-    /\[data-freeze='pour-mid'\][^{]*\.pour-drop/.test(css) &&
-    /\[data-freeze='pour-top'\]/.test(css),
-  'K7f 取帧钩子认 pour-mid/pour-top + CSS 有对应定帧（--shots 5l/5m 不拍空；mid 定在雨滴半空）'
+  !/pour-mid/.test(petBallCode) && /pour-top/.test(petBallCode) &&
+    /\[data-freeze='pour-top'\]/.test(css) && !/\[data-freeze='pour-mid'\]/.test(css),
+  'K7f 取帧只留 pour-top（冲顶峰 --shots 5m；雨的 pour-mid 定帧随雨退役）'
 )
 ok(
   /prefers-reduced-motion/.test(petBallCode),
   'K7g reduced-motion 下不挂 data-pour（JS 门控，直接终态）'
 )
-{
-  // K7h · 雨在 goo 容器之外（R4-1 取证：容器 goo 滤镜把 3px 雨滴糊成无色条，
-  // DOM 全对但像素无色）。断法：goo 开标签与 pour-clip 开标签之间的 <div / </div
-  // 必须配平（配平 = pour-clip 在 goo 闭标签之后，不嵌套；顺序同时保证雨画在水上）。
-  const src = petBallWater
-  const gooOpen = src.indexOf('className="petball-goo"')
-  const clipOpen = src.indexOf('className="pour-clip"')
-  const seg = gooOpen >= 0 && clipOpen > gooOpen ? src.slice(gooOpen, clipOpen) : ''
-  // 自闭合 <div … /> 不算 open（fluid-disc / fluid-bridge 就是自闭合，不减会误报嵌套）
-  const opens = (seg.match(/<div[\s>]/g) || []).length - (seg.match(/<div[^>]*\/>/g) || []).length
-  const closes = (seg.match(/<\/div>/g) || []).length
-  ok(
-    seg !== '' && opens === closes,
-    `K7h pour-clip 不在 goo 容器内（div 配平 ${opens}/${closes}；嵌套会被 goo blur 吃掉）`
-  )
-}
 
 // K8 · 贴边吸溜水柱温度计（10-04-edge-sip-column）：吸走 + 灌满 + 活柱，缺一件都算半态
 ok(
@@ -1222,8 +1234,9 @@ ok(
   /waveBand\(surfaceY/.test(petBallWater) && /className="fluid-foam"/.test(petBallWater),
   'K9g 泡沫带经 waveBand 与 A 同参数构造（不是手写第二份路径；冒头盖进泡沫里）'
 )
-// K9h · 天气变量全覆盖（R4-4）：:root 默认 + 5 皮肤逐个覆盖（与 K9a 同口径）。
-for (const prop of ['--drop-w', '--drop-speed', '--splash-s', '--slosh-amp', '--slosh-dur']) {
+// K9h · 荡漾变量全覆盖（去雨后只剩 --slosh-amp / --slosh-dur：:root 默认 + 5 皮肤逐个覆盖，
+// 与 K9a 同口径）。--drop-w / --drop-speed / --splash-s 无消费者即僵尸令牌，一并退役（K9h2）。
+for (const prop of ['--slosh-amp', '--slosh-dur']) {
   const scopes = declScopes(prop)
   const missing = ['root', ...SKINS].filter((s) => !scopes.has(s))
   ok(
@@ -1235,14 +1248,10 @@ ok(
   /pour-slosh[^}]*var\(--slosh-amp\)/.test(css) && /pour-slosh[^}]*var\(--slosh-dur\)/.test(css),
   'K9i 荡漾幅度与时长走变量（每皮不同性格；写死数字等于五皮同浪）'
 )
-// K9j · 每皮雨滴数不同（R4-4）：minimal 3 / ink 4 / aero 5 / dark 6 / candy 7 全开。
-// nth-child 藏尾，顺序即重要度（POUR_DROPS 表注释）；splash 与雨滴同进退。
-for (const [skin, keep] of [['minimal', 3], ['ink', 4], ['aero', 5], ['dark', 6]]) {
-  ok(
-    new RegExp(`\\[data-skin='${skin}'\\][^{]*\\.pour-drop:nth-child\\(n\\+${keep + 1}\\)`).test(css),
-    `K9j ${skin} 留前 ${keep} 滴（nth-child 藏尾）`
-  )
-}
+ok(
+  css.length > 0 && !/--drop-w|--drop-speed|--splash-s/.test(css),
+  'K9h2 雨天气令牌已退役（--drop-w / --drop-speed / --splash-s 无消费者不留令牌；回来一个即红）'
+)
 
 // K10 · 稳态无溢出（R4-2）：::after 深度罩与 goo 输出都裁进 r=27 水盘圆。
 // 底缘 1px 环就是"波浪超出球体"的真凶（5-ball 像素取证）；morph 态不裁（桥要出圆）。
@@ -1605,11 +1614,11 @@ ok(
     `K11h .fluid-ring 不在 .petball-goo 容器内（div 配平 ${opens}/${closes}；嵌套会被 goo blur 吃掉）`
   )
 }
-// 环形态皮不挂水/雨：display 走 --water-display（不是 opacity 0 —— 与 K9b 同纪律）。
+// 环形态皮不挂水：display 走 --water-display（不是 opacity 0 —— 与 K9b 同纪律）。
+// 倒水雨已删（用户 2026-10-06 拍板去雨），「不留雨打空盘」由 K7c2/K7e2 守，这里只剩水体半句。
 ok(
-  /\.slosh\s*\{[^}]*display:\s*var\(--water-display/.test(css) &&
-    /\.pour-clip\s*\{[^}]*display:\s*var\(--water-display/.test(css),
-  'K11i 球内水体与倒水雨的显隐走 --water-display（环形态皮整体退场，不留雨打空盘）'
+  /\.slosh\s*\{[^}]*display:\s*var\(--water-display/.test(css),
+  'K11i 球内水体的显隐走 --water-display（环形态皮整体退场）'
 )
 // peek 跟随本体形态：预览不能与本体不同形（P4 的口径是"预览完整形态"）。
 ok(

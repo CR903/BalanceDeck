@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppState, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { BALL_VIEW } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
-import { level as fluidLevel, POUR_FILL_MS, POUR_TOTAL_MS, type FluidPhase } from '../../shared/fluid'
+import { level as fluidLevel, POUR_TOTAL_MS, type FluidPhase } from '../../shared/fluid'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { fmtAmount, fmtPercent, windowPercent, dataTime, isStale } from './format'
 import { ballLevel, severityRank } from './read-model'
@@ -13,7 +13,7 @@ import {
   waterColor,
   type WaterAnchors
 } from '../../shared/water-color'
-import { skinWaves, POUR_DROPS } from './skin-waves'
+import { skinWaves } from './skin-waves'
 import { ringDash, RING_DASH_SPACE } from './skin-rings'
 import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
@@ -515,12 +515,7 @@ export function PetBall({
    */
   const water = !showWaves || !s ? null : isPlan(s) ? waterColor(pct, waterAnchors) : rgbStr(waterAnchors.accent)
   /**
-   * 雨落点（R4-6）：满水时液面在顶（surfaceY=1），雨若落到 1 就只剩 9px 的 drizzle；
-   * 钳到 24 —— 雨没入水体，溅落读作水花没入水中。套餐类用真实液面。
-   */
-  const pourSurfaceY = !s || isPlan(s) ? surfaceY : Math.max(surfaceY, 24)
-  /**
-   * 倒水入场（10-04-pour-in-slosh）：mount + 每次切供应商/窗口都播完整三段（G1 结论）。
+   * 倒水入场（10-04-pour-in-slosh，去雨后只剩三段）：mount + 每次切供应商/窗口都播完整三段（G1 结论）。
    * `data-pour="in"` 挂载 → CSS 三段动画（灌入 600 / 冲顶 250 / 荡漾 1600，
    * 时序归 shared/fluid POUR_*）→ POUR_TOTAL_MS 后摘属性，不留尾巴。
    * reduced-motion 下不挂（直接终态，计时器不启动）；unmount/重切时清计时器。
@@ -553,8 +548,9 @@ export function PetBall({
   }, [])
 
   // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
-  // 把 goo 定在某一 morph 帧并暂停动画，`'pour-mid'|'pour-top'` 定在倒水入场中段
-  // （10-04-pour-in-slosh，不依赖 data-pour 是否还在播 —— freeze 规则自带终态位移），
+  // 把 goo 定在某一 morph 帧并暂停动画，`'pour-top'` 定在倒水冲顶峰
+  // （10-04-pour-in-slosh，不依赖 data-pour 是否还在播 —— freeze 规则自带终态位移；
+  // 雨的 'pour-mid' 已随雨退役），
   // `'peek'` 定在悬停预览（P4：强制显现 peek 气泡，像素对拍 hover 不可达的态）。
   // `'off'` 恢复 live。纯呈现层冻结 ——
   // 返回值是 void（结构化克隆安全），与 __bd_ball 的数据钩子分开。
@@ -563,7 +559,7 @@ export function PetBall({
     w.__bd_fluid_freeze = (stage: string) => {
       const goo = document.querySelector('.petball-fallback')
       if (!goo) return
-      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-mid' || stage === 'pour-top' || stage === 'peek')
+      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-top' || stage === 'peek')
         goo.setAttribute('data-freeze', stage)
       else goo.removeAttribute('data-freeze')
     }
@@ -968,50 +964,6 @@ export function PetBall({
               <svg viewBox="0 0 56 56" aria-hidden="true">
                 {ringSvg(fluidLvl, water)}
               </svg>
-            </div>
-          )}
-          {/* 雨是 crisp 覆盖层（R4-1 取证结论）：细雨滴经整容器 goo 滤镜会被 blur 吃掉
-              （3px 滴在 stdDeviation=4 下糊成无色条 —— 5l 取证：DOM 全对但像素无色），
-              而雨不需要与水体融合 —— 与读数同理，放在 goo 容器之外，
-              靠 .pour-clip 自己的 circle 裁剪约束（r=27，不画出界）。 */}
-          {showWaves && (
-            <div className="pour-clip" aria-hidden="true">
-              {POUR_DROPS.map((d, i) => (
-                <div
-                  key={i}
-                  className={`pour-drop kind-${d.kind}`}
-                  style={
-                    {
-                      left: `${d.left}%`,
-                      background: water ?? undefined,
-                      animationDelay: `${d.delay}ms`,
-                      '--drop-dur': `${Math.round(POUR_FILL_MS * d.dur)}ms`,
-                      '--drop-travel': `${Math.max(8, pourSurfaceY + 8).toFixed(1)}px`
-                    } as React.CSSProperties
-                  }
-                />
-              ))}
-              {POUR_DROPS.filter((d) => d.kind === 'center').map((d, i) => (
-                <span
-                  key={`s${i}`}
-                  className="pour-splash"
-                  style={{
-                    left: `${d.left}%`,
-                    top: pourSurfaceY - 6,
-                    animationDelay: `${d.delay + Math.round(POUR_FILL_MS * d.dur * 0.55)}ms`
-                  }}
-                />
-              ))}
-              <span
-                className="pour-trickle left"
-                style={{ top: pourSurfaceY, background: water ?? undefined }}
-                aria-hidden="true"
-              />
-              <span
-                className="pour-trickle right"
-                style={{ top: pourSurfaceY, background: water ?? undefined }}
-                aria-hidden="true"
-              />
             </div>
           )}
           {/* 外圈进度环已退役（10-03-holo-sphere 水满 pivot）：进度唯一载体是球盘内的

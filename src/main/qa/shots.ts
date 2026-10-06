@@ -155,8 +155,6 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
         const ringDisp=ring?getComputedStyle(ring).display:'?';
         const slosh=dot.querySelector('.slosh');
         const waterDisp=slosh?getComputedStyle(slosh).display:'(absent)';
-        const pour=dot.querySelector('.pour-clip');
-        const pourDisp=pour?getComputedStyle(pour).display:'(absent)';
         const arc=dot.querySelector('.ring-arc');
         const acs=arc?getComputedStyle(arc):null;
         const cs=arc?getComputedStyle(arc):null;
@@ -164,7 +162,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
         // r 是 CSS 几何属性；Chromium 报 px
         const rNum=parseFloat(r);
         return JSON.stringify({
-          ringDisplay:ringDisp, waterDisplay:waterDisp, pourDisplay:pourDisp,
+          ringDisplay:ringDisp, waterDisplay:waterDisp,
           arcR:r, arcSw:cs?cs.strokeWidth:'?', arcCap:cs?cs.strokeLinecap:'?',
           arcDash:arc?arc.getAttribute('stroke-dasharray'):'?',
           arcStroke:cs?cs.stroke:'?',
@@ -180,34 +178,8 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   }
   await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
   await sleep(900)
-  // 倒水入场取帧（10-04-pour-in-slosh）：freeze 定住灌入中段/冲顶峰（呈现层冻结，
-  // 不动状态机；此时候选供应商的切换计时照走，拍完 'off' 恢复）。
-  await exec(`window.__bd_fluid_freeze?.('pour-mid')`)
-  await sleep(600)
-  // 自描述探针（R4-1）：雨滴是否在 DOM + 定帧位姿，不靠像素猜
-  process.stdout.write(
-    `5l-probe: ${String(
-      await exec(`(()=>{
-        const dot=document.querySelector('.petball-fallback');
-        if(!dot) return 'no-dot';
-        const drops=[...dot.querySelectorAll('.pour-drop')];
-        const vis=drops.filter((d)=>getComputedStyle(d).display!=='none');
-        const d0=vis[0];
-        const r=d0?d0.getBoundingClientRect():null;
-        const el=r?document.elementFromPoint(r.x+r.width/2,r.y+r.height/2):null;
-        return JSON.stringify({freeze:dot.getAttribute('data-freeze'),ring:dot.getAttribute('data-ring'),
-          drops:drops.length,vis:vis.length,
-          op:d0?getComputedStyle(d0).opacity:'?',
-          tf:d0?getComputedStyle(d0).transform:'?',
-          bg:d0?getComputedStyle(d0).backgroundColor:'?',
-          rect:r?{x:+r.x.toFixed(1),y:+r.y.toFixed(1),w:+r.width.toFixed(1),h:+r.height.toFixed(1)}:'?',
-          top:el?(el.className||el.tagName):'?',
-          splash:dot.querySelectorAll('.pour-splash').length,
-          trickle:dot.querySelectorAll('.pour-trickle').length});
-      })()`)
-    )}\n`
-  )
-  await shoot('5l-pour-mid')
+  // 倒水冲顶取帧（去雨后只剩冲顶峰 pour-top：呈现层冻结，不动状态机；
+  // 此时候选供应商的切换计时照走，拍完 'off' 恢复。雨的 pour-mid 定帧随雨退役。）
   await exec(`window.__bd_fluid_freeze?.('pour-top')`)
   await sleep(600)
   await shoot('5m-pour-top')
