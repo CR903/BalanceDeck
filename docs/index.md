@@ -12,3 +12,4 @@
 | 2026-10-05 | [六参考图转皮肤效果图](daily/2026-10-05_skin-refs-mock.md) | `10-04-rain-weather-column` |
 | 2026-10-05 | [皮肤外观×进度语义效果图](daily/2026-10-05_skin-applied-mock.md) | `10-04-rain-weather-column` |
 | 2026-10-05 | [皮肤视觉原型落地 P1–P4（skin-landing）](daily/2026-10-05_skin-landing-p1p4.md) | `10-04-rain-weather-column` |
+| 2026-10-05 | [球体外观四皮互不相同（P6 环替代水体）](daily/2026-10-05_skin-ball-forms-p6.md) | `10-04-rain-weather-column` |
