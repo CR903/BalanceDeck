@@ -3580,8 +3580,17 @@ textarea {
   }
 }
 /* 取帧冻结（--shots 用，window.__bd_fluid_freeze 设 data-freeze）：
-   定在某一 morph 帧并暂停一切动画，拍完 'off' 恢复 live。 */
+   定在某一 morph 帧并暂停一切动画，拍完 'off' 恢复 live。
+   ⚠ `!important` 不是随手加的，是**必需**的（2026-10-06 用户决定，K11n2 守）：
+     本名单是 `[data-freeze]`（无值）= (0,5,0)，而 morph 段给同元素挂动画的是
+     `[data-edge][data-fluid='absorbing']` 那一族 = (0,6,0)。后者胜出，于是
+     **data-freeze 与 data-fluid='absorbing' 共存时球体（disc）与环都不停** —— 而运行中的
+     animation 会盖掉静态 transform，所以下面四条定帧 transform 在那两个相位共存时
+     根本没生效，5i/5j/5k 拍到的是动画中段的 matrix，不是定帧那一帧。
+     这不是「少停一张表」，是取帧机制本身失效。与 K11m 降级段同款修法（文件尾 .pet/.pet *
+     早有先例），门是逐条比 specificity 比特，不是 grep !important。 */
 .petball.no3d .petball-fallback[data-freeze] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze] .fluid-ring,
 .petball.no3d .petball-fallback[data-freeze] .fluid-bridge,
 .petball.no3d .petball-fallback[data-freeze] .fluid-pill,
 .petball.no3d .petball-fallback[data-freeze] .fluid-wave,
@@ -3595,27 +3604,34 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze] .pour-drop,
 .petball.no3d .petball-fallback[data-freeze] .pour-trickle,
 .petball.no3d .petball-fallback[data-freeze] .pour-splash {
-  animation: none;
+  animation: none !important;
 }
-.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc {
+/* ⚠ .fluid-ring 与 .fluid-disc 一并进定帧名单：环形态皮取帧时环必须跟着变形，
+   否则 5i/5j/5k 会拍到"球被拉成液线、环还圆满 56px"的错帧。 */
+.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-ring {
   transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(1.4, 0.7);
 }
 /* 上下沿的液线是纵向的（与 disc-absorb-v 同轴，定帧不歪） */
 .petball.no3d .petball-fallback[data-edge='top'][data-freeze='stretch'] .fluid-disc,
-.petball.no3d .petball-fallback[data-edge='bottom'][data-freeze='stretch'] .fluid-disc {
+.petball.no3d .petball-fallback[data-edge='bottom'][data-freeze='stretch'] .fluid-disc,
+.petball.no3d .petball-fallback[data-edge='top'][data-freeze='stretch'] .fluid-ring,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-freeze='stretch'] .fluid-ring {
   transform: translate(calc(-50% + var(--dx) * 5px), calc(-50% + var(--dy) * 5px)) scale(0.7, 1.4);
 }
 .petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-bridge {
   transform: translate(calc(-50% + var(--dx) * 9px), calc(-50% + var(--dy) * 9px)) scale(0.55);
 }
-.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-disc {
+.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-disc,
+.petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-ring {
   transform: translate(calc(-50% + var(--dx) * 12px), calc(-50% + var(--dy) * 12px)) scale(0.55);
 }
 .petball.no3d .petball-fallback[data-freeze='bridge'] .fluid-bridge {
   transform: translate(calc(-50% + var(--dx) * 14px), calc(-50% + var(--dy) * 14px)) scale(1);
 }
 .petball.no3d .petball-fallback[data-freeze='stain'] .fluid-disc,
-.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-bridge {
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-bridge,
+.petball.no3d .petball-fallback[data-freeze='stain'] .fluid-ring {
   transform: translate(-50%, -50%) scale(0);
 }
 .petball.no3d .petball-fallback[data-freeze='stain'] .fluid-pill {
@@ -3659,8 +3675,17 @@ textarea {
   .petball.no3d .fluid-bridge {
     display: none;
   }
+  /* ⚠ !important 不是随手加的，是**必需**的：morph 段给 .fluid-disc/.fluid-ring 挂
+     动画的选择器是 `[data-edge][data-fluid='absorbing']` 那一族，specificity (0,6,0)；
+     本段只写 `.petball.no3d .fluid-ring` = (0,3,0)，**压不过**它 ——
+     不加 !important 时 reducedMotion=true 实测 ring.animationName 仍是 disc-absorb-h
+     （disc 同样如此）。降级的定义是「直接显隐」，动画必须真的停；K11m 守这条。
+     文件尾 .pet/.pet * 那条已有同款 !important 先例。 */
   .petball.no3d .fluid-disc,
   .petball.no3d .fluid-pill,
+  /* .fluid-ring 与球盘同摆位：环形态皮降级时它也要停/收，否则 reduced-motion 下
+     球不动而环还在吸 —— 那不是"直接显隐"，是半截动画。 */
+  .petball.no3d .fluid-ring,
   .petball.no3d .fluid-wave,
   .petball.no3d .fluid-wave-c,
   .petball.no3d .fluid-surface,
@@ -3669,7 +3694,7 @@ textarea {
   .petball.no3d .fluid-peek-wave,
   .petball.no3d .fluid-peek-drop,
   .petball.no3d .fluid-column-wave svg {
-    animation: none;
+    animation: none !important;
   }
   /* 倒水/吸溜的新位移层同样禁动（drain/rise/fill/slosh/drop/trickle 全是 animation），
    * hidden 的 180ms 淡入淡出也关掉 —— 降级是直接显隐，不是"更快一点"。 */
@@ -3679,12 +3704,13 @@ textarea {
   .petball.no3d .pour-drop,
   .petball.no3d .pour-trickle,
   .petball.no3d .pour-splash {
-    animation: none;
+    animation: none !important;
   }
   .petball.no3d .fluid-waves {
     transition: none;
   }
-  .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc {
+  .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc,
+  .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-ring {
     transform: translate(-50%, -50%) scale(0);
   }
 }
