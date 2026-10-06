@@ -183,6 +183,34 @@ for (const s of SKINS9) {
   }
 }
 
+// 用例 9b：环形进度的弧长口径（P6 环形态皮肤）。半径在 CSS 令牌里，本表只钉"周长归一化"
+// 这一个数学 —— pathLength=100 让 dasharray 的单位变成百分比，于是 --ring-r 逐皮可换而
+// 弧长比例不变。若哪天有人把 pathLength 去掉，这条表的输出仍是绿的（CSS 侧会错），
+// 所以配套的静态断言在 test-structure 的 K11f（pathLength 必须带）。
+console.log('用例 9b：环形进度弧长（P6：pathLength 归一化 + 钳制 + 端点精确命中）')
+const rings = await loadTs('src/renderer/src/skin-rings.ts')
+const { ringDash, RING_DASH_SPACE } = rings
+eq(RING_DASH_SPACE, 100, '归一化空间 = 100（dasharray 的单位是百分比，不是像素）')
+eq(ringDash(0), '0.00 100', '0% → 不画弧（"0.00 100" 而不是 0 长度 dash，后者会渲染成圆点）')
+eq(ringDash(1), '100.00 100', '100% → 满圈')
+eq(ringDash(0.41), '41.00 100', '41% → 41% 弧长（原型 41% 用量的那一格）')
+// 量化粒度 2 位小数：与 shared/fluid.level 的一位小数同源，弧与水位不会一格动一格不动
+eq(ringDash(0.415), '41.50 100', '0.415 → 两位小数（不是 41.499999…）')
+// 端点精确：1/3 不该出现 33.33…0001 这种尾巴（同一输入永远同一输出）
+eq(ringDash(1 / 3), ringDash(1 / 3), '同一输入两次调用恒等（无逐帧抖动）')
+// 钳制与非法输入：与 fluid.level / waterColor 同一纪律（只夹住，不替上游撒谎）
+eq(ringDash(-0.2), '0.00 100', '负数钳到 0')
+eq(ringDash(1.4), '100.00 100', '超 1 钳到 1')
+eq(ringDash(NaN), '0.00 100', 'NaN → 0（未知由调用方不渲染表达）')
+eq(ringDash('0.5'), '0.00 100', '非数字 → 0（不是 50 —— 字符串不该被当数字）')
+// 单调：弧长随进度单调不减（"环不随读数变"的反面）。
+// 比数值不比字符串 —— "9.00 100" > "100.00 100" 在字典序下成立，那是这条门自己的错。
+const dashNum = (s) => Number.parseFloat(s)
+ok(
+  [0, 0.25, 0.5, 0.75, 1].every((p, i, a) => i === 0 || dashNum(ringDash(p)) > dashNum(ringDash(a[i - 1]))),
+  '弧长随进度严格单调递增（按数值比，不按字符串字典序）'
+)
+
 console.log('用例 9：雨滴表（R4-1：7 滴固定落位 + 中/壁分工 + 前 3 为中间滴）')
 const drops = skinWaves.POUR_DROPS
 eq(drops.length, 7, '7 滴（minimal 3 / ink 4 / aero 5 / dark 6 / candy 7 全开）')

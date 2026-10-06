@@ -50,6 +50,36 @@
      平涂，而不是透明/错位的水（与 --ball-bg 的兜底同理：看不见比不好看更糟）。 */
   --water-foam: rgba(255, 255, 255, 0.85);
   --water-deep: rgba(20, 60, 100, 0.16);
+  /* 形态二选一 + 环形进度几何（2026-10-05 球体外观 P6：环**替代**水体，不共存）。
+     两个 display 令牌表达"这皮用哪种形态"，其余是环的几何/配色令牌 ——
+     逐皮肤只覆盖这些值，新增皮肤零代码。⚠ :root 必须给全套：外部皮肤（ext:*）
+     没写时退回水体形态（= 本轮之前的行为），与 --water-foam / --ball-bg 兜底同纪律。 */
+  --water-display: block;
+  --ring-display: none;
+  --ring-r: 22px;
+  --ring-sw: 4px;
+  --ring-cap: round;
+  --ring-track: color-mix(in srgb, var(--fg-faint) 30%, transparent);
+  /* V1 刻度圈：24 粒 × 4（pathLength=96 的归一化空间）：0.7 实 + 3.3 空 */
+  --ring-ticks-display: none;
+  --ring-ticks-dash: 0.7 3.3;
+  --ring-ticks-c: var(--ring-track);
+  --ring-ticks-sw: 1.5px;
+  --ring-ticks-r: 25px;
+  /* V5 分段轨道：原型 112 坐标的「60 16 60 16 60 220」按 pathLength=100 折算 */
+  --ring-seg-display: none;
+  --ring-seg-dash: 22.7 6.1 22.7 6.1 22.7 83.4;
+  /* ⚠ 分段色必须走**身份色**令牌，不能像以前那样直接 `stroke: var(--ok)`：分段不承载
+     fluidLvl（唯一的进度载体是 .ring-arc），它跟轨道/刻度一样是「这张脸」的固定部件 ——
+     绑到 --ok 上就等于「身份 = 等级」，等级一变这张脸就变，两款皮会被同时抹平成「绿环皮」。
+     alpha 写进令牌而不是留在 opacity 属性上（同 --ring-ticks-c / --ring-inner-c 的做法：
+     两处都乘就成了 0.35 × 0.35 = 0.12，比谁都看不见）。 */
+  --ring-seg-c: color-mix(in srgb, var(--fg-faint) 30%, transparent);
+  /* V3 内装饰细环：恒满圈，不承载进度 */
+  --ring-inner-display: none;
+  --ring-inner-c: color-mix(in srgb, var(--fg-faint) 22%, transparent);
+  --ring-inner-sw: 1.5px;
+  --ring-inner-r: 19px;
   /* 水效性格变量（10-04-skin-fluid-redesign）：三层波各自的速度与透明度。
      逐皮肤覆盖即换性格；振幅/波长 JS 统一（无缝循环数学只有一套，不在此开洞）。
      ⚠ :root 必须有全套 —— 外部皮肤（ext:*）没写时退化为统一默认水效（当前值）。 */
@@ -2784,6 +2814,108 @@ textarea {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
+/* ─── 环形进度（V1 刻度圈 / V3 双环 / V5 分段环）────────────────────────────
+ *
+ * 形态分工（用户 2026-10-05 拍板）：**环替代球内水体，不共存** —— 同一个百分比被
+ * 液位和弧长各画一遍就是双重编码。所以每一皮二选一，由两个 display 令牌表达：
+ *   · 水体皮（aero / ink）：--water-display: block（:root 缺省）、--ring-display: none；
+ *   · 环形态皮（dark=V1 / candy=V3 / minimal=V5）：反之。
+ * :root 必须给全套 —— 外部皮肤（ext:*）没写时退回水体形态（= 本轮之前的行为），
+ * 与 --water-foam / --ball-bg 的兜底同纪律。
+ *
+ * 几何为什么能留在 CSS：每个 circle 带 pathLength（JSX，skin-rings.ts 的口径），
+ * 周长被归一化成 100，于是 `r` / `stroke-width` / `stroke-dasharray` 都是
+ * **与半径无关**的量 —— 换皮肤改半径只改令牌，TS 里没有任何几何数字。
+ * （SVG 的 `r` 是 CSS 几何属性，Chromium 支持，故这里能直接 r: var(--ring-r)。）
+ *
+ * 弧色不在这里写死 ok/warn/danger —— 内联 water（shared/water-color.ts 的连续插值），
+ * 下面的 var(--ok) 与 lvl-* 覆写只是内联色不可用时的兜底（与 .fluid-wave 同纪律）。
+ * ⚠ D6 纪律：本节一律无 outer box-shadow（56×56 = 窗口，K11h 把 .fluid-ring 钉进名单）。 */
+.petball.no3d .fluid-ring {
+  /* 摆位与 .fluid-disc 完全一致：hidden/absorbing/revealing 三条既有 [data-fluid]
+     规则把 .fluid-ring 加进选择器列表就随 disc 一起收尽/回弹，不另写一套 morph。 */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  transform: translate(-50%, -50%);
+  display: var(--ring-display, none);
+  pointer-events: none;
+}
+.petball.no3d .ring-track {
+  fill: none;
+  stroke: var(--ring-track);
+  stroke-width: var(--ring-sw);
+  r: var(--ring-r);
+}
+.petball.no3d .ring-arc {
+  fill: none;
+  /* 内联 water 优先；下面是内联色缺席时的三档兜底（阈值同 shared/levels） */
+  stroke: var(--ok);
+  stroke-width: var(--ring-sw);
+  stroke-linecap: var(--ring-cap);
+  r: var(--ring-r);
+}
+.petball.no3d.lvl-warn .ring-arc {
+  stroke: var(--warn);
+}
+.petball.no3d.lvl-danger .ring-arc {
+  stroke: var(--danger);
+}
+.petball.no3d.lvl-muted .ring-arc {
+  stroke: var(--fg-faint);
+}
+/* V1 刻度圈：24 粒，缺口即仪表刻度感。dasharray 在 pathLength=96 的归一化空间里
+   （24 × 4 = 96，每粒占 4：0.7 实 + 3.3 空）。半径另给令牌（比进度弧略大）。 */
+.petball.no3d .ring-ticks {
+  display: var(--ring-ticks-display, none);
+  fill: none;
+  stroke: var(--ring-ticks-c);
+  stroke-width: var(--ring-ticks-sw);
+  stroke-dasharray: var(--ring-ticks-dash);
+  r: var(--ring-ticks-r);
+}
+/* V5 分段轨道：3 段粗弧 + 缺口，缺口兼刻度；pattern 沿用原型 112 坐标的
+   「60 16 60 16 60 220」按 pathLength=100 折算（半径无关，见上）。
+   颜色走 --ring-seg-c（身份色，alpha 含在令牌里）：分段是**量具的格线**而不是读数，
+   读数唯一由 .ring-arc 承担 —— 让分段也跟等级，就是同一个百分比被画两遍色，
+   且等级一变，这张脸的"身份"也跟着变（K11p 守的就是这条）。 */
+.petball.no3d .ring-seg {
+  display: var(--ring-seg-display, none);
+  fill: none;
+  stroke: var(--ring-seg-c);
+  stroke-width: var(--ring-sw);
+  stroke-dasharray: var(--ring-seg-dash);
+  r: var(--ring-r);
+}
+/* V3 内装饰细环：恒满圈、不承载进度（弧长语义唯一载体是 .ring-arc）。 */
+.petball.no3d .ring-inner {
+  display: var(--ring-inner-display, none);
+  fill: none;
+  stroke: var(--ring-inner-c);
+  stroke-width: var(--ring-inner-sw);
+  r: var(--ring-inner-r);
+}
+/* 环形态皮：球内水体与倒水雨整体退场（雨没有可落的水面，留着就是雨打空盘）。
+   display 而非 opacity —— 与 K9b（ink 藏 C 层）同一纪律：opacity 0 的层仍占合成。 */
+.petball.no3d .slosh {
+  display: var(--water-display, block);
+}
+.petball.no3d .pour-clip {
+  display: var(--water-display, block);
+}
+/* peek 预览气泡跟随本体形态：环形态皮预览环，水体皮预览波（不出现"预览与本体
+   不同形"的错位 —— P4 的口径是"预览完整形态"，形态换了预览就得跟着换）。
+   预览的环与本体共用同一批 circle 类名，半径/线宽/弧长全部同源（同一个 ringSvg）。 */
+.petball.no3d .fluid-peek-wave,
+.petball.no3d .fluid-peek-drop {
+  display: var(--water-display, block);
+}
+.petball.no3d .fluid-peek-ring {
+  display: var(--ring-display, none);
+}
+
 /* ─── 皮肤水效性格（10-04-skin-fluid-redesign）───
  *
  * 速度/透明度走变量（继承自 .app 上的皮肤作用域），球面 background 整组覆盖，
@@ -2807,6 +2939,10 @@ textarea {
   --splash-s: 10px;
   --slosh-amp: 8px;
   --slosh-dur: 1600ms;
+  /* 形态：V6 潮汐水位蓝 = 水体（唯一编码，不画环）。此处显式写出来是为了让
+     「每皮形态」在一处可读（K11b 逐皮断言这两个令牌），值与 :root 缺省相同。 */
+  --water-display: block;
+  --ring-display: none;
 }
 /* 春雨留前 5 滴 */
 [data-skin='aero'] .petball.no3d .pour-drop:nth-child(n+6) {
@@ -2844,6 +2980,21 @@ textarea {
   --splash-s: 16px;
   --slosh-amp: 10px;
   --slosh-dur: 2200ms;
+  /* 形态：V1 余烬计时橙环（P6）—— 24 粒刻度圈 + 粗进度弧，**替代**球内水体。
+     弧色跟等级（内联 water），身份橙只出现在刻度与轨道上；41% 时弧用等级绿，
+     warn 以上才回到橙→红 —— 语义优先，身份让路（与效果图同口径）。
+     几何 22/4 = 原型 112 坐标的 44/8 折半。 */
+  --water-display: none;
+  --ring-display: block;
+  --ring-r: 22px;
+  --ring-sw: 4px;
+  --ring-cap: round;
+  --ring-track: rgba(255, 159, 10, 0.22);
+  --ring-ticks-display: block;
+  --ring-ticks-dash: 0.7 3.3;
+  --ring-ticks-c: rgba(255, 159, 10, 0.85);
+  --ring-ticks-sw: 1.5px;
+  --ring-ticks-r: 25px;
 }
 /* 海啸留前 6 滴 */
 [data-skin='dark'] .petball.no3d .pour-drop:nth-child(n+7) {
@@ -2872,6 +3023,30 @@ textarea {
   --splash-s: 8px;
   --slosh-amp: 4px;
   --slosh-dur: 1800ms;
+  /* 形态：V5 柠檬分段环（P6）—— 3 段粗弧带缺口、缺口兼刻度，**替代**球内水体。
+     进度弧 butt 端点（原型口径）：圆头会让分段缺口的两端糊在一起，读不出"分段"。
+     21/6 = 原型 112 坐标的 42/12 折半。
+     配色口径（2026-10-06 用户决定）：**轨道/分段 = 身份色（柠檬），弧 = 等级色** ——
+     与 dark 的 --ring-track / --ring-ticks-c 同口径（那里是身份橙）。以前这两条写的是
+     color-mix(var(--ok) 22%)，而 minimal 的 --ok 是绿 #1a9e4b，于是三个部件全是语义绿，
+     一眼认不出是哪款皮（K11p 守的就是这条：身份色不得由语义色推导）。
+     ⚠ alpha 比原型抬高（原型 0.22 / 0.35 → 这里 0.5 / 0.7），**不是随手调的**：
+       原型 V5 的盘是**深色**（#1d2b12），柠檬在深盘上 0.22 就够读；minimal 的盘是近白
+       #f2f2f6，照搬 0.22 会把柠檬混成 rgb(231,245,205) —— 几乎就是盘面本身。
+     判据（实算，不是目测）：柠檬 #beff3c 对 #f2f2f6 的 WCAG 对比度只有 **1.07**（纯柠檬
+     也是），所以此处**亮度对比度不适用**，可见性只能靠**色相位移**（合成后的 G−B 级差）：
+     0.22 → 40 级、0.35 → 66 级（读不出来）；0.5 → 96 级、0.7 → 135 级（读得出是柠檬）。
+     对照：弧的绿 #1a9e4b 对该盘是 3.12，是**唯一**靠亮度读出来的部件 —— 即「弧抢眼、
+     身份环靠色相」。这个分工不能反：反了就变成亮绿弧压着一圈柠檬，身份又被读没了。 */
+  --water-display: none;
+  --ring-display: block;
+  --ring-r: 21px;
+  --ring-sw: 6px;
+  --ring-cap: butt;
+  --ring-track: rgba(190, 255, 60, 0.5);
+  --ring-seg-display: block;
+  --ring-seg-dash: 22.7 6.1 22.7 6.1 22.7 83.4;
+  --ring-seg-c: rgba(190, 255, 60, 0.7);
 }
 [data-skin='minimal'] .petball.no3d .pour-drop:nth-child(n+4) {
   display: none;
@@ -2896,6 +3071,24 @@ textarea {
   --splash-s: 15px;
   --slosh-amp: 12px;
   --slosh-dur: 1400ms;
+  /* 形态：V3 极速双环（P6）—— 外环进度 + 内装饰细环，**替代**球内水体。
+     顶图标位是既有的 .dot-provider（供应商标记，读数正上方），不另开一个位置。
+     24/2.5 + 19/1.5 = 原型 112 坐标的 48/5 + 38/3 折半。
+     ⚠ 轨道与内环写成**字面量**而不是 color-mix(var(--ok) …)（2026-10-06，K11p）：
+       这两个是身份色（环的固定外形），不是等级色 —— 绑到 --ok 上就等于「身份 = 等级」。
+       数值与原型 V3 的 rgba(34,181,115,.22)/(.16) **逐位相同**（candy 的 --ok 恰好就是
+       #22b573 = rgb(34,181,115)），所以这次改动**渲染结果一个像素都不变**，
+       变的只是「它从哪来」：从语义令牌推导 → 回到真相源。 */
+  --water-display: none;
+  --ring-display: block;
+  --ring-r: 24px;
+  --ring-sw: 2.5px;
+  --ring-cap: round;
+  --ring-track: rgba(34, 181, 115, 0.22);
+  --ring-inner-display: block;
+  --ring-inner-c: rgba(34, 181, 115, 0.16);
+  --ring-inner-sw: 1.5px;
+  --ring-inner-r: 19px;
 }
 [data-skin='candy'] .petball.no3d .fluid-disc {
   background:
@@ -2922,6 +3115,17 @@ textarea {
   --splash-s: 11px;
   --slosh-amp: 6px;
   --slosh-dur: 2000ms;
+  /* 形态：墨色纸面 + 球内水体（保留现状，本轮未换）。与 aero 同形态但不同波性格
+     （雾雨 4 滴 / 只开两层），"一眼可辨"由水效承担，不由形态承担。
+     环几何四个令牌也逐皮写出（值同 :root）：水体皮用不到它们，写出来是为了
+     「形态令牌成对」这条纪律不被"反正不画环"糊弄过去 —— 哪天把 ink 改成环形态，
+     改一行 --ring-display 就够，不必同时想起半径/线宽（K11c 钉的就是这个）。 */
+  --water-display: block;
+  --ring-display: none;
+  --ring-r: 22px;
+  --ring-sw: 4px;
+  --ring-cap: round;
+  --ring-track: color-mix(in srgb, var(--fg-faint) 30%, transparent);
 }
 [data-skin='ink'] .petball.no3d .pour-drop:nth-child(n+5) {
   display: none;
@@ -2938,13 +3142,19 @@ textarea {
 /* 吸入 morph（530ms = 150 拉伸 → 300 合并 → 80 定形；关键帧 28%/85% 即分段点） */
 /* 球盘吸入（R3 整球吸入变形）：先沿贴边轴拉长成液线（30%），再变细没入边中（70%），
  * 最后收点（100%）。球是先变形再消失，不是整体缩小 —— h/v 两套（左右沿横拉、上下沿纵拉）。
- * 旧 disc-absorb 单套（刚性缩小）已删，同元素两套 morph 是漂移源。时序沿用 ABSORB 530ms。 */
+ * 旧 disc-absorb 单套（刚性缩小）已删，同元素两套 morph 是漂移源。时序沿用 ABSORB 530ms。
+ * ⚠ .fluid-ring 一并进这些名单：环与球盘摆位完全一致（left/top 50% + translate(-50%,-50%)），
+ *   同一套关键帧即让环随球一起被吸入 —— 环形态皮肤不另写一套 morph（K11g）。 */
 .petball.no3d .petball-fallback[data-edge='left'][data-fluid='absorbing'] .fluid-disc,
-.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing'] .fluid-disc {
+.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing'] .fluid-disc,
+.petball.no3d .petball-fallback[data-edge='left'][data-fluid='absorbing'] .fluid-ring,
+.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing'] .fluid-ring {
   animation: disc-absorb-h 530ms var(--ease) forwards;
 }
 .petball.no3d .petball-fallback[data-edge='top'][data-fluid='absorbing'] .fluid-disc,
-.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing'] .fluid-disc {
+.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing'] .fluid-disc,
+.petball.no3d .petball-fallback[data-edge='top'][data-fluid='absorbing'] .fluid-ring,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing'] .fluid-ring {
   animation: disc-absorb-v 530ms var(--ease) forwards;
 }
 /* 液桥拉宽成流道（10-04-edge-sip-column）：左右沿横向拉长、上下沿纵向拉长。
@@ -3031,7 +3241,8 @@ textarea {
 }
 /* 水渍态：球与桥收尽，只留 pill（沿边沿 20px × 探出 4px） */
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc,
-.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-bridge {
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-bridge,
+.petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-ring {
   transform: translate(-50%, -50%) scale(0);
   animation: none;
 }
@@ -3074,7 +3285,8 @@ textarea {
   display: none;
 }
 /* 汇聚 morph 反向 400ms：pill 收起 → 桥拉出 → 球回弹成形（末段微过冲 = elastic 观感） */
-.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-disc {
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-disc,
+.petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-ring {
   animation: disc-reveal 400ms var(--ease) forwards;
 }
 .petball.no3d .petball-fallback[data-fluid='revealing'] .fluid-bridge {

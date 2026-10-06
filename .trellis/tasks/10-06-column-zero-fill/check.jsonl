@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "CSS/skin 令牌驱动与 JSX 条件挂载约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "门禁先红后绿 + 断言不空洞"}

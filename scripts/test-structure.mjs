@@ -175,6 +175,31 @@ function declScopes(prop) {
   return scopes
 }
 
+/**
+ * 取某个自定义属性在指定作用域块里的**值**（:root 或某个 [data-skin='x']）。
+ *
+ * ⚠ 为什么不能 `css.match(/\[data-skin='x'\]\s*\{([^{}]*)\}/)` 就完事（实测踩过）：
+ *   同一皮肤在文件里有**多个块** —— minimal 有 :186 的主色块和 :3011 的流体块。
+ *   非全局 match 只命中第一个，而那个块里根本没有要找的属性，于是恒「未找到」
+ *   （第一次写成那样时，K11f3 两条都报"实际 未找到"，看着像规则缺失，其实是取错块）。
+ *   所以遍历**所有**候选块，取命中的最后一个 —— 后写的赢，与 CSS 层叠一致。
+ *   这与 declScopes 的分工：那边判「在哪些作用域**存在**」，这边读「**值**是多少」。
+ */
+function tokenInScope(prop, scope) {
+  const re =
+    scope === 'root'
+      ? /:root[^{}]*\{([^{}]*)\}/g
+      : new RegExp(`\\[data-skin='${scope}'\\]\\s*\\{([^{}]*)\\}`, 'g')
+  const rx = new RegExp(`${prop}\\s*:\\s*([^;]+)`)
+  let m
+  let hit = null
+  while ((m = re.exec(css))) {
+    const v = (m[1].match(rx) || [])[1]
+    if (v != null) hit = v.trim()
+  }
+  return hit
+}
+
 console.log('\nD. 球表面令牌化 + 短标签下移（09-28）')
 
 // 骨架必须真的找得到 —— 找错块时下面五条会集体永真，所以先立一条会红的
@@ -296,6 +321,10 @@ const PET_WINDOW_FULLBLEED = [
   // 判据与上表同一条（body != null + outer 0 层）：无阴影的 0 层同样合规，
   // 有人加上 outer 即红 —— 补的是"名单不全"的机器门空洞，不是新纪律。
   ['.petball.no3d .petball-fallback::after', '玻璃罩：inset:0 全覆盖球盘，本体无阴影'],
+  // P6 环形进度层：56×56 = 球形态窗口，与球盘同尺寸（写 outer shadow 同样被裁成方框）。
+  // 这层**本来就没有阴影**（立体感全在 ::after 与 inset 上），列进来是补"名单不全"的
+  // 机器门空洞：有人给环加 glow 用 outer shadow，这条立刻红。
+  ['.petball.no3d .fluid-ring', '环形进度层：56×56 = 整块窗口，弧的立体感不许用 outer shadow'],
   ['.petball.no3d .fluid-peek', '预览气泡：inset:0 = 整块窗口，阴影全 inset'],
   // ⚠ 曾经把 `.petball-debugring` 也列进来，理由写的是「按投影上报的外接框 = 整个窗口」——
   //   **那条理由是假的**（`PetBall.tsx:812` 写明它只可能是人物形态：ringBox 由 3D 场景的
@@ -1225,6 +1254,658 @@ ok(
   /\[data-fluid='edge-visible'\]:not\(\[data-freeze\]\)[^{]*\.petball-goo[^}]*clip-path:\s*circle\(27px/.test(css),
   'K10b 稳态 goo 裁进圆（morph/freeze 不裁：桥要出圆、取帧要看全貌）'
 )
+
+// ─── K11 · 球体外观四皮互不相同（P6：环**替代**水体，不共存）────────────────
+//
+// 用户 2026-10-05 拍板：进度环替代球内水体（不共存，避免同一数字双重编码）。
+// 四皮分配（原型 skin-applied.html 的 V1/V3/V5/V6 四段，112 坐标折半到 56）：
+//   aero    = V6 潮汐水位蓝 → 水体（唯一编码，本轮只复核）
+//   dark    = V1 余烬橙环   → 24 粒刻度圈 + 粗进度弧
+//   candy   = V3 极速双环   → 外环进度 + 内装饰细环
+//   minimal = V5 柠檬分段环 → 3 段粗弧带缺口，缺口兼刻度
+//   ink     = 保留现状（水体；与 aero 同形态但不同波性格，一眼可辨靠水效）
+//
+// 为什么这几条必须存在（不是"为覆盖率写门"）：
+//   · 形态靠 --water-display / --ring-display 两个**令牌**表达，不靠 JS 分支。
+//     删掉任一个 → 该皮退回 :root 缺省（= 水体），于是"三皮环形态"塌成两皮，
+//     而**界面上完全看不出报错**（只是长得像 aero 了）。逐皮断言是唯一能红的网。
+//   · 弧长必须绑 fluidLvl（唯一数据口径）。写成 CSS 里的固定 dasharray = 进度与
+//     图形脱钩 —— 环永远满圈或永远空圈，而柱内液高仍在动，两个数字互相矛盾。
+//   · 环必须随 disc 收尽（hidden 稳态只剩柱）。漏了就是"球收走了、环留在屏边"，
+//     与 R4-5 原地变柱的整个前提相反（5g 取帧能拍到）。
+for (const [skin, form] of [
+  ['aero', 'water'],
+  ['dark', 'ring'],
+  ['candy', 'ring'],
+  ['minimal', 'ring'],
+  ['ink', 'water']
+]) {
+  const scopes = declScopes('--water-display')
+  ok(
+    scopes.has(skin),
+    `K11a ${skin} 显式声明 --water-display（形态靠令牌：缺声明 → 静默退回 :root 水体）`
+  )
+  const ringScopes = declScopes('--ring-display')
+  ok(
+    ringScopes.has(skin),
+    `K11a ${skin} 显式声明 --ring-display（同上；两个令牌必须成对，逐皮各判一次）`
+  )
+  // 取值方向：形态是"二选一"，两个令牌必须互补 —— 两个都 block（水+环共存 =
+  // 同一数字画两遍）或两个都 none（什么都没有）都是错的。
+  const wantWater = form === 'water'
+  const readToken = (prop, s) => {
+    // 只认裸皮肤块 `[data-skin='x'] { … }`（与 test-fluid 用例 9 同口径）
+    const m = css.match(new RegExp(`\\[data-skin='${s}'\\] \\{[^}]*?${prop}:\\s*([a-z]+)`))
+    return m ? m[1] : null
+  }
+  const w = readToken('--water-display', skin)
+  const r = readToken('--ring-display', skin)
+  ok(
+    w === (wantWater ? 'block' : 'none') && r === (wantWater ? 'none' : 'block'),
+    `K11b ${skin} 形态 = ${form}（--water-display=${w} / --ring-display=${r}；必须互补，不共存）`
+  )
+}
+// 环几何令牌：:root 兜底 + 三个环形态皮逐个覆盖（半径/线宽/端点/特色层）。
+// 缺 :root 那套 → 外部皮肤写 --ring-display: block 时拿到 var(--ring-r) 空值，
+// 环的 r 无效 = 半径 0 = 环整个消失（Chromium 里 r: var(--环) 解析失败即不画）。
+for (const prop of ['--ring-r', '--ring-sw', '--ring-cap', '--ring-track']) {
+  const scopes = declScopes(prop)
+  const missing = ['root', ...SKINS].filter((s) => !scopes.has(s))
+  ok(
+    missing.length === 0,
+    `K11c ${prop} 在顶层 :root + 5 个皮肤都有（缺 ${missing.join(',') || '无'}）`
+  )
+}
+for (const [skin, prop] of [
+  ['dark', '--ring-ticks-dash'],
+  ['minimal', '--ring-seg-dash'],
+  ['candy', '--ring-inner-c']
+]) {
+  ok(
+    declScopes(prop).has(skin),
+    `K11d ${skin} 定义 ${prop}（V1 刻度 / V5 分段 / V3 内环各皮特色，缺它 = 三皮长得一样）`
+  )
+}
+// K11c2 · 形态子令牌**成对存在**（2026-10-06 check P6 minor-3）
+//
+// K11c 只覆盖 4 个通用几何令牌（--ring-r/sw/cap/track），而每个**特色形态**还有
+// 一组配套子令牌：刻度圈（display/dash/c/sw/r）、分段环（display/dash）、
+// 内装饰环（display/c/sw/r）。这组此前无任何存在性门：
+// 摘掉 dark 的 --ring-ticks-r 或 candy 的 --ring-inner-sw，红 0。
+//
+// 断法不是「逐个令牌查存在」——那会漏判「整套形态只声明了一半」（比如刻度圈
+// display:block 了却没给 dash，那一圈就是**实心整圈**，不是刻度）。
+// 而是按**形态成组**判：某一层在某个皮下 display:block，那么它该层的**每一个**
+// 子令牌都必须在这个皮下有声明（几何值走 :root 兜底不算 —— 那正是穿帮的来源：
+// 半径 22 兜底给到 r=25 的刻度圈上，圈就跑到环外去了）。
+for (const [feature, props] of [
+  ['ticks', ['--ring-ticks-display', '--ring-ticks-dash', '--ring-ticks-c', '--ring-ticks-sw', '--ring-ticks-r']],
+  ['seg', ['--ring-seg-display', '--ring-seg-dash', '--ring-seg-c']],
+  ['inner', ['--ring-inner-display', '--ring-inner-c', '--ring-inner-sw', '--ring-inner-r']]
+]) {
+  const displayProp = `--ring-${feature}-display`
+  // 哪些皮开了这层？（display:block）
+  const owners = SKINS.filter((s) => (tokenInScope(displayProp, s) || '') === 'block')
+  ok(
+    owners.length > 0,
+    `K11c2 ${feature} 层至少有一皮开启（实得 ${owners.join(',') || '无'}；全关 = 这个形态根本没实现）`
+  )
+  for (const s of SKINS) {
+    // 开了这层的皮：该层子令牌必须**逐个**在本皮声明
+    if ((tokenInScope(displayProp, s) || '') !== 'block') continue
+    const missing = props.filter((p) => !declScopes(p).has(s))
+    ok(
+      missing.length === 0,
+      `K11c2 ${s} 开了 --ring-${feature}-display，其 ${props.length} 个子令牌在本皮齐全（缺 ${missing.join(', ') || '无'}）`
+    )
+  }
+  // :root 必须给全套兜底（外部皮肤 ext:* 只吃得到顶层那份）
+  const rootMissing = props.filter((p) => !declScopes(p).has('root'))
+  ok(
+    rootMissing.length === 0,
+    `K11c2 ${feature} 层全套子令牌在顶层 :root 有兜底（缺 ${rootMissing.join(', ') || '无'}）`
+  )
+}
+// 弧长绑 fluidLevel（唯一数据口径）：JSX 里 strokeDasharray 必须来自 ringDash(fluidLvl)。
+// 内联 dasharray 而不是 CSS 固定值 —— CSS 那条路做不到"每帧随读数变"。
+// 弧长必须来自 fluidLvl。ringSvg 是个纯函数（参数 lvl），所以这条门断的是
+// **两处调用点都传 fluidLvl** —— 传别的数（比如 pct 原值、surfaceY）就红。
+// 内联 dasharray 而不是 CSS 固定值：CSS 那条路做不到"每帧随读数变"。
+{
+  // 只取**调用点**：`{ringSvg(` —— 函数签名 `ringSvg(lvl: number, …)` 不带花括号前缀
+  const calls = (petBallWater.match(/\{ringSvg\(\s*([A-Za-z0-9_.]+)/g) || []).map((s) => s.match(/\(\s*([A-Za-z0-9_.]+)/)[1])
+  const wired = /strokeDasharray=\{ringDash\(lvl\)\}/.test(petBallWater)
+  ok(
+    calls.length >= 2 && calls.every((a) => a === 'fluidLvl') && wired,
+    `K11e 弧长 = ringDash(fluidLvl) 且两处调用点都传 fluidLvl（实得 ${calls.join(' / ') || '无'}；本体的环与 peek 预览的环同源）`
+  )
+}
+ok(
+  /ringDash/.test(petBallCode) && /from '\.\/skin-rings'/.test(petBallCode),
+  "K11e 前置：PetBall 真的经 skin-rings 的 ringDash 取弧长（不是自己拼字符串）"
+)
+// 归一化空间：没有 pathLength，dasharray 的单位是像素，那么 --ring-r 一改半径
+// 弧长比例就错（22px 与 24px 半径下同一个 "41" 画出不同的百分比）。ringSvg 里
+// 四个 circle 走 RING_DASH_SPACE(=100)，刻度圈走 96（24 粒 × 4）。
+{
+  const start = petBallWater.indexOf('function ringSvg')
+  const seg = start >= 0 ? petBallWater.slice(start, petBallWater.indexOf('\n}', start) + 2) : ''
+  const spaceN = (seg.match(/pathLength=\{RING_DASH_SPACE\}/g) || []).length
+  const ticksN = (seg.match(/pathLength=\{96\}/g) || []).length
+  const bare = (seg.match(/<circle(?![^>]*pathLength)/g) || []).length
+  ok(
+    seg !== '' && spaceN === 4 && ticksN === 1 && bare === 0,
+    `K11f ringSvg 的 5 个 circle 全带 pathLength 归一化（RING_DASH_SPACE×${spaceN}/4 + 刻度圈 96×${ticksN}，裸 circle ${bare} 个）`
+  )
+}
+// K11f2 · 跨 TS/CSS 自洽：pathLength 与 dash 周期必须凑出整数粒数（2026-10-06 check P6 M3）
+//
+// **这是「几何不许进 TS」纪律的唯一泄漏点**：刻度圈的周长归一化写在 TS 里
+// （PetBall.tsx 的 `pathLength={96}`），缺口 pattern 写在 CSS 里
+// （--ring-ticks-dash: 0.7 3.3）。两者单独都合法，合起来才有意义：
+// dasharray 的单位是 pathLength 空间，一个 pattern 周期 = pathLength/周期数 粒。
+// 改任一侧而不改另一侧 → 刻度圈画出 34 粒或 12 粒，界面上看不出报错，
+// K11f 那种「数一数有几个 pathLength」的断言照样全绿（实测 0.7 3.3 → 0.7 2.3 双绿）。
+//
+// 为什么锁 24：原型 skin-applied.html 的 .v1 .ticks 是
+// `repeating-conic-gradient(… 0deg 2deg, transparent 2deg 15deg)` —— 15° 一粒 = 360/15 = 24。
+{
+  const ticksPathLength = (() => {
+    const m = petBallWater.match(/className="ring-ticks"[\s\S]{0,120}?pathLength=\{(\d+(?:\.\d+)?)\}/)
+    return m ? Number(m[1]) : null
+  })()
+  const rootTickDash = tokenInScope('--ring-ticks-dash', 'root')
+  const norm = (v) => (v == null ? null : v.trim().split(/\s+/).map(Number))
+  const darkDash = norm(tokenInScope('--ring-ticks-dash', 'dark'))
+  const rootNums = norm(rootTickDash)
+  const period = rootNums ? rootNums.reduce((a, b) => a + b, 0) : null
+  const ticks = period && ticksPathLength ? ticksPathLength / period : null
+  ok(
+    ticksPathLength != null && rootNums != null && period != null,
+    `K11f2 前置：读得到 TS 的 pathLength（${ticksPathLength}）与 CSS 的 --ring-ticks-dash（${rootTickDash}）`
+  )
+  ok(
+    ticks != null && Number.isInteger(ticks) && ticks === 24,
+    `K11f2 刻度粒数 = pathLength(${ticksPathLength}) / dash 周期(${period}) = ${ticks}，必须是整数 24（原型 15°/粒 × 360；非整数 = 画不出接缝的圈）`
+  )
+  ok(
+    darkDash != null && rootNums != null &&
+      darkDash.reduce((a, b) => a + b, 0) === period,
+    `K11f2 dark 的 --ring-ticks-dash 与 :root 兜底同周期（${(darkDash || []).join(' ')} vs ${(rootNums || []).join(' ')}；否则刻度数逐皮漂移，K11f 的 24 粒只对 :root 成立）`
+  )
+}
+// 环随 disc 收尽（hidden 稳态只剩柱；absorbing/revealing 走同一套 disc 关键帧）。
+// K11f3 · --ring-seg-dash 的**取值**（不只是存在性）（2026-10-06 check P6 M4）
+//
+// K11d 只断 minimal 声明了 --ring-seg-dash，断不了「声明了但值是编的」：
+// 变异 `22.7 6.1 22.7 6.1 22.7 83.4` → `30 10 30 10 10 10` 双绿。
+// 真相源是原型 skin-applied.html V5 的
+//   stroke-dasharray="60 16 60 16 60 220"（112 坐标系，r=42，周长 C=2π·42≈263.89）
+// 折到 pathLength=100 空间：60/C*100=22.7、16/C*100=6.1、220/C*100=83.4 —— 与现值逐位吻合。
+// 这里把折算在门里**重算一遍**（不是抄一个魔数）：改了周长或 pattern，断言自己会红。
+{
+  const PROTO_R = 42
+  const PROTO_DASH = [60, 16, 60, 16, 60, 220]
+  const C = 2 * Math.PI * PROTO_R
+  const folded = PROTO_DASH.map((v) => (v / C) * 100).map((v) => v.toFixed(1))
+  // 取值同样走 tokenInScope（同 K11f2 的理由：同皮肤有多个块，不能只取第一个）。
+  const segAt = (scope) => tokenInScope('--ring-seg-dash', scope) || ''
+  const want = folded.join(' ')
+  const gotRoot = segAt('root')
+  const gotMinimal = segAt('minimal')
+  ok(
+    gotRoot === want,
+    `K11f3 :root 的 --ring-seg-dash = 原型折算值 ${want}（实际 ${gotRoot || '未找到'}）`
+  )
+  ok(
+    gotMinimal === want,
+    `K11f3 minimal 的 --ring-seg-dash = 原型折算值 ${want}（实际 ${gotMinimal || '未找到'}；V5 柠檬分段环 3 段 + 缺口兼刻度）`
+  )
+  ok(
+    folded.length === 6 && folded.filter((_, i) => i % 2 === 0).length === 3,
+    `K11f3 原型 pattern 是 3 段弧 + 3 段缺口（${folded.join(' ')}）`
+  )
+}
+//
+/**
+ * 找出「phase 作用域下、选择器列表里同时含 anchor 与 .fluid-ring」的那条规则，
+ * 返回 {body, sel, reduced, at}（选哪条由 where 定）。
+ *
+ * `where` 是**互斥认人**的关键（'top' vs 'reduced'，见下）：
+ *   - 'top'     → 只认顶层规则（morph 那条）
+ *   - 'reduced' → 只认 `@media (prefers-reduced-motion: reduce)` 内层的规则（降级态那条）
+ *   传别的值 → 抛错（防止有人顺手传个新值得到一条永不匹配 → 恒红的门）。
+ *
+ * 为什么不能用一条正则（实测踩过两次）：
+ *   ① `[data-fluid='hidden'] … .fluid-ring … scale(0)` 会匹配到文件尾
+ *      `@media (prefers-reduced-motion: reduce)` 里的**另一条**同形状规则
+ *      （降级态也要收环）。把 morph 那条里的 .fluid-ring 删掉，断言照样全绿
+ *      —— 假绿集 = 3。
+ *   ② 按 @media 切段也不可靠：本文件有 **4 处** prefers-reduced-motion 块，
+ *      morph 那条藏在第 2 处之前，切哪一刀都躲不开（切第一处 → morph 段被整段切掉，
+ *      恒红；切最后一处 → ②照旧）。
+ * 所以改成按**选择器列表的内容 + 所在层**认人：morph 那条在顶层、降级态那条在
+ * reduced-motion 内层，两者形状几乎一样，只能靠 at-rule 内外来区分。
+ * ⚠ 这也是 K11g2 曾经是空断言的根因：它写的是
+ *   `@media (prefers-reduced-motion: reduce)[\s\S]*?\[data-fluid='hidden'\]…scale(0)`，
+ *   `[\s\S]*?` 从**第一处** reduced-motion 块一路吞到文件尾的 morph 段，
+ *   于是判的其实是 morph 那条 —— 删掉降级态段里的 .fluid-ring 仍红 0（实测）。
+ */
+function phaseRingRule(phase, anchor, bodyMust, where = 'top') {
+  if (where !== 'top' && where !== 'reduced') {
+    throw new Error(`phaseRingRule: where 只认 'top' / 'reduced'，收到 ${JSON.stringify(where)}（新值会让门恒红或恒绿）`)
+  }
+  const re = new RegExp(`\\[data-fluid='${phase}'\\]`, 'g')
+  let m
+  while ((m = re.exec(css))) {
+    const brace = css.indexOf('{', m.index)
+    if (brace < 0) continue
+    // 选择器列表：从这条 data-fluid 往回退到规则边界（} 或 ;），往前看到 {
+    let head = m.index - 1
+    while (head >= 0 && css[head] !== '}' && css[head] !== ';') head--
+    const sel = css.slice(head + 1, brace)
+    if (!/\.fluid-ring\b/.test(sel) || !anchor.test(sel)) continue
+    // ⚠ 跳过 at-rule 内层的同名规则（最要紧的一条）：文件尾
+    // `@media (prefers-reduced-motion: reduce)` 里那条降级态 hidden 规则
+    // 也是「disc + ring + scale(0)」，形状与 morph 那条几乎一样 —— 认不准就会
+    // 由它代答（实测：morph 那条删掉 .fluid-ring，三条断言仍全绿，假绿集 = 3）。
+    // 判法同 declScopes：维护开括号栈，栈里出现 at-rule 即内层。
+    //
+    // ⚠ 栈要扫到 `m.index`（本规则自己的头），**不能**扫到回退出来的 `head`：
+    //   head 指向的是**上一条规则的那个 `}`**，把它排除在扫描外就等于少弹一次栈，
+    //   于是 `@keyframes pill-absorb {` 永远留在栈里 → 每条规则都被误判成
+    //   「在 keyframes 内层」→ K11g 三条恒红（实测踩过，另一方向的假红）。
+    const stack = []
+    for (let i = 0; i <= m.index; i++) {
+      const c = css[i]
+      if (c === '{') {
+        let s = i - 1
+        while (s >= 0 && css[s] !== '}' && css[s] !== ';') s--
+        stack.push(css.slice(s + 1, i))
+      } else if (c === '}' && i < m.index) stack.pop()
+    }
+    const inReduced = stack.some((h) => /^\s*@media\s*\(prefers-reduced-motion/.test(h))
+    const inOtherAt = stack.some((h) => /^\s*@/.test(h))
+    // 互斥认人：'top' 只认顶层，'reduced' 只认 reduced-motion 内层。
+    // 两者都不许由对方代答 —— 这正是 K11g2 曾经恒绿的原因。
+    if (where === 'top' ? inOtherAt : !inReduced) continue
+    let depth = 0
+    for (let j = brace; j < css.length; j++) {
+      if (css[j] === '{') depth++
+      else if (css[j] === '}' && --depth === 0) {
+        const body = css.slice(brace + 1, j)
+        if (body.includes('{')) continue // 嵌套块不是平面声明块
+        if (bodyMust && !bodyMust.test(body)) continue
+        return { body, sel: sel.trim(), reduced: inReduced, at: inOtherAt }
+      }
+    }
+  }
+  return null
+}
+/** 只要声明体（多数门只判声明）；找不到返回 null */
+function phaseRingBody(phase, anchor, bodyMust, where = 'top') {
+  const r = phaseRingRule(phase, anchor, bodyMust, where)
+  return r ? r.body : null
+}
+
+for (const [phase, bodyMust, why] of [
+  ['hidden', /scale\(0\)/, '环随 disc 收尽（hidden 稳态只剩柱，不留在屏边）'],
+  ['revealing', /disc-reveal/, '环随 disc 回弹（disc-reveal 与 disc 同一关键帧）']
+]) {
+  const b = phaseRingBody(phase, /\.fluid-disc\b/, bodyMust)
+  ok(b != null, `K11g [data-fluid='${phase}'] 的水渍态名单含 .fluid-ring（${why}）`)
+}
+ok(
+  phaseRingBody('absorbing', /\.fluid-disc\b/, /disc-absorb-h/) != null &&
+    phaseRingBody('absorbing', /\.fluid-disc\b/, /disc-absorb-v/) != null,
+  'K11g absorbing 名单含 .fluid-ring 且 h/v 两套齐全（环随球盘一起被吸入，不另写 morph）'
+)
+// reduced-motion 降级态：环也要收（不收 = 球不动而环还留在屏边）。
+// ⚠ 断法是 phaseRingBody(..., 'reduced')，**不是**一条跨文件的正则：
+//   旧写法 `@media (prefers-reduced-motion: reduce)[\s\S]*?\[data-fluid='hidden'\]…scale(0)`
+//   里那个 [\s\S]*? 从**第一处** reduced-motion 块一路吞到文件尾的 morph 段，
+//   于是判的其实是 morph 那条 —— 删掉降级态段里的 .fluid-ring 仍红 0（实测）。
+// 现在 K11g（'top'）与 K11g2（'reduced'）各认各的层，互不冒充（变异双向可红）。
+const reducedRule = phaseRingRule('hidden', /\.fluid-disc\b/, /scale\(0\)/, 'reduced')
+ok(
+  reducedRule != null,
+  'K11g2 reduced-motion 下降级态也把环收尽（直接显隐，不是半截动画；判的是 at-rule 内层那条，不是 morph 那条）'
+)
+// ⚠ 把「判到的确实在 reduced-motion 里」显式断出来：where 参数是**可被悄悄改掉**的，
+//   把 'reduced' 改成 'top' 后 K11g2 会去判 morph 那条 —— 而 morph 那条同样存在，
+//   于是门照样绿、K11g2 实际已失效（实测：这么改，红 0）。这条把语义钉死。
+//   ⚠ 这里只断 reduced，**不要**顺带断 !at：降级那条本来就该在 at-rule 内层，
+//   at 是「在任意 at-rule 内」的意思，拿它当反条件会把这条门变成恒红（试过）。
+ok(
+  reducedRule != null && reducedRule.reduced === true,
+  `K11g2c K11g2 判到的那条真的在 @media (prefers-reduced-motion) 内层（${reducedRule ? reducedRule.sel.replace(/\s+/g, ' ').slice(0, 90) : '未找到'}）`
+)
+// 反向对照：morph 那条**必须**在顶层且不在降级层。两条合起来 = 两个不同的源码位置，
+// 谁也代答不了谁。
+const morphRule = phaseRingRule('hidden', /\.fluid-disc\b/, /scale\(0\)/, 'top')
+ok(
+  morphRule != null && morphRule.reduced === false,
+  `K11g2d 对照：morph 的 hidden 规则在顶层、不在降级层（${morphRule ? morphRule.sel.replace(/\s+/g, ' ').slice(0, 90) : '未找到'}）`
+)
+// ⚠ 这里**不再**补一条「降级块里同时出现 .fluid-ring 与 scale(0)」的整块扫描：
+//   它与 K11g2 判同一件事，且更弱 —— 降级块里另有 `animation: none` 那条名单也含
+//   .fluid-ring，所以删掉 hidden 规则里的 .fluid-ring 时它照样绿（实测红 0）。
+//   停不停得下来是另一条事实，由 K11m 独立守（animation 那半，见下）。
+// 环不吃 goo 滤镜：goo 容器只融合形状，2px 的弧经 stdDeviation=4 会被 blur 吃掉
+// （与雨/读数同一取证结论：5l「DOM 全对但像素无色」）。断法同 K7h：goo 开标签与
+// fluid-ring 开标签之间的 <div / </div 必须配平（配平 = 环在 goo 闭标签之后）。
+{
+  const gooOpen = petBallWater.indexOf('className="petball-goo"')
+  const ringOpen = petBallWater.indexOf('className="fluid-ring"')
+  const seg = gooOpen >= 0 && ringOpen > gooOpen ? petBallWater.slice(gooOpen, ringOpen) : ''
+  const opens = (seg.match(/<div[\s>]/g) || []).length - (seg.match(/<div[^>]*\/>/g) || []).length
+  const closes = (seg.match(/<\/div>/g) || []).length
+  ok(
+    seg !== '' && opens === closes,
+    `K11h .fluid-ring 不在 .petball-goo 容器内（div 配平 ${opens}/${closes}；嵌套会被 goo blur 吃掉）`
+  )
+}
+// 环形态皮不挂水/雨：display 走 --water-display（不是 opacity 0 —— 与 K9b 同纪律）。
+ok(
+  /\.slosh\s*\{[^}]*display:\s*var\(--water-display/.test(css) &&
+    /\.pour-clip\s*\{[^}]*display:\s*var\(--water-display/.test(css),
+  'K11i 球内水体与倒水雨的显隐走 --water-display（环形态皮整体退场，不留雨打空盘）'
+)
+// peek 跟随本体形态：预览不能与本体不同形（P4 的口径是"预览完整形态"）。
+ok(
+  /\.fluid-peek-ring\s*\{[^}]*display:\s*var\(--ring-display/.test(css) &&
+    /\.fluid-peek-wave[^{]*\{[^}]*display:\s*var\(--water-display/.test(css),
+  'K11j peek 预览跟随本体形态（环皮预览环、水体皮预览波；两者都是 display 不是 opacity）'
+)
+// K11m · reduced-motion 的 animation:none 必须真的压过 morph 段（2026-10-06 check P6 M1）
+//
+// **实测过的缺陷**：降级段写 `.petball.no3d .fluid-ring { animation: none }` = (0,3,0)，
+// 而 morph 段给同元素挂动画的是 `[data-edge][data-fluid='absorbing']` 那一族 = (0,6,0)。
+// 后者胜出 → reducedMotion=true 时 ring.animationName 实测仍是 `disc-absorb-h`
+// （disc 同理；那是既有行为，不是 P6 引入的，但注释宣称的能力就该兑现）。
+// 修法是 !important（文件尾 .pet/.pet * 已有同款先例）。
+//
+// 为什么门要自己算 specificity 而不是只 grep `!important`：
+//   只断「降级段里有 !important」是**弱门** —— 把 !important 加到一条无关的
+//   声明上（哪怕降级块里另一个选择器）它照样绿。这里改成：把降级段那条规则
+//   与**所有**给 .fluid-ring/.fluid-disc 挂 animation 的非降级规则逐对比特，
+//   要求降级侧要么带 !important，要么 specificity 严格更高。任一条竞争规则
+//   都能单独把这条门打红。
+function specificity(sel) {
+  const s = sel.trim()
+  // 去伪类参数里的内容，避免 :not(.a) 被数成两个 class
+  const noArgs = s.replace(/\([^)]*\)/g, ' ')
+  // ⚠ 伪类那一项写的是 ::?[\w-]+（**方括号**）。第一版误写成 ::?[-w]+ ——
+  //   那是字符类 [-w]，只含「连字符」和字母 w，于是 `:root` / `:hover` 都被数成 0，
+  //   伪类完全不计。当前 K11m 的几条选择器里没有伪类，所以门照样绿 —— 典型的
+  //   「错得不影响这批输入」的潜伏错误。K11m0 那条自检就是为它立的。
+  return [
+    (noArgs.match(/#[-\w]+/g) || []).length,
+    (noArgs.match(/\.[-\w]+|\[[^\]]*\]|::?[\w-]+/g) || []).length,
+    (noArgs.match(/(?:^|[\s>+~])[a-z][-\w]*/g) || []).length
+  ]
+}
+// K11m0 · specificity 计算器的自检（先证明尺子本身是准的，再拿它量别人）
+// 少算伪类会让「靠伪类提权压过降级段」的那条规则被误判成压不过 ——
+// 尺子不准比没尺子更糟：门会一直红或一直绿，且没人知道为什么。
+{
+  const cases = [
+    [':root', [0, 1, 0]],
+    ['.fluid-ring', [0, 1, 0]],
+    ['.petball.no3d .petball-fallback[data-fluid=\'hidden\'] .fluid-ring', [0, 5, 0]],
+    ['.a:hover', [0, 2, 0]],
+    ['.a:not(.b)', [0, 2, 0]], // 参数里的 .b 要去掉，只数 :not 与 .a
+    ['#x .y', [1, 1, 0]]
+  ]
+  const wrong = cases.filter(([sel, want]) => specificity(sel).join() !== want.join()).map(([sel, want]) => `${sel} 应 ${want} 实 ${specificity(sel)}`)
+  ok(
+    wrong.length === 0,
+    `K11m0 specificity 尺子准（含伪类/属性/id/去参数；不对的：${wrong.join(' | ') || '无'}）`
+  )
+}
+const specCmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+const specStr = (s) => `(${s.join(',')})`
+
+/**
+ * 扫出样式表里**每一条选择器**（顶层与 at-rule 内层都算，@keyframes 的百分比步不算），
+ * 连带它的声明体、所在层与 specificity。
+ *
+ * 为什么不用 ruleBody：那条只认「整条就是它」的顶层规则，取不到
+ * `[data-edge][data-fluid=…]` 那种多段选择器，也取不到 at-rule 内层的
+ * （ruleBody 遇嵌套块直接返回 null —— 见它自己的注释）。
+ * 一次全扫，多条门共用（K11m 比 specificity、K11n 断 freeze 名单）。
+ *
+ * ⚠ 开括号栈必须**增量**维护（从上次位置往前推），不能每条规则都从头重扫一遍：
+ *   从头重扫是 O(规则数 × 文件长) = O(n²)，实测把本文件从 0.25s 拖到 0.6s ——
+ *   一个「便宜静态检查」的脚本不该有这种平方项（这里 4400 行已翻倍，再长一倍就 4 倍）。
+ */
+function scanSelectors() {
+  const out = []
+  const re = /([^{}]+)\{/g
+  const stack = []
+  let pos = 0
+  let m
+  while ((m = re.exec(css))) {
+    const head = m[1]
+    // 把栈从 pos 推进到本规则头（单调前进，总代价 O(n)）
+    for (let i = pos; i < m.index; i++) {
+      const c = css[i]
+      if (c === '{') {
+        let s = i - 1
+        while (s >= 0 && css[s] !== '}' && css[s] !== ';') s--
+        stack.push(css.slice(s + 1, i))
+      } else if (c === '}') {
+        stack.pop()
+      }
+    }
+    pos = m.index
+    if (/^\s*[\d.]+%/.test(head)) continue // @keyframes 的 0% / 100% 步
+    let depth = 0
+    let end = -1
+    for (let j = m.index + m[0].length - 1; j < css.length; j++) {
+      if (css[j] === '{') depth++
+      else if (css[j] === '}' && --depth === 0) { end = j; break }
+    }
+    if (end < 0) continue
+    const body = css.slice(m.index + m[0].length, end)
+    if (body.includes('{')) continue // 嵌套块不是平面声明块
+    const reduced = stack.some((h) => /^\s*@media\s*\(prefers-reduced-motion/.test(h))
+    const atRule = stack.some((h) => /^\s*@/.test(h))
+    for (const sel of head.split(',').map((x) => x.trim()).filter(Boolean)) {
+      out.push({ sel, body, spec: specificity(sel), reduced, atRule })
+    }
+  }
+  return out
+}
+const ALL_SELECTORS = scanSelectors()
+
+/** 列出「给 target 挂 animation:」的规则：{sel, spec, important, reduced, value} */
+function animationRules(target) {
+  return ALL_SELECTORS
+    .filter((r) => new RegExp(`\\.${target}\\b`).test(r.sel) && /\banimation\s*:/.test(r.body))
+    .map((r) => {
+      const am = r.body.match(/\banimation\s*:\s*([^;}]+)/)
+      return {
+        ...r,
+        important: /!important/.test(am ? am[1] : ''),
+        value: (am ? am[1] : '').replace('!important', '').trim()
+      }
+    })
+}
+for (const target of ['fluid-ring', 'fluid-disc']) {
+  const rules = animationRules(target)
+  const reducedOff = rules.filter((r) => r.reduced && r.value === 'none')
+  const competitors = rules.filter((r) => !r.reduced && r.value !== 'none')
+  // 前置：降级段与竞争段都非空（否则下面的循环是空转 = 恒绿）
+  ok(
+    reducedOff.length > 0 && competitors.length > 0,
+    `K11m 前置 ${target}：降级段有 animation:none（${reducedOff.length} 条）、非降级段有挂动画的规则（${competitors.length} 条）`
+  )
+  ok(
+    reducedOff.length > 0,
+    `K11m ${target} 的 reduced-motion 段真的写了 animation: none（${reducedOff.length} 条）`
+  )
+  // 逐条竞争规则比：任一条能赢 = 降级形同虚设
+  const losers = []
+  for (const c of competitors) {
+    const beaten = reducedOff.some((r) => r.important || specCmp(r.spec, c.spec) > 0)
+    if (!beaten) losers.push(`${c.sel} ${specStr(c.spec)}`)
+  }
+  ok(
+    reducedOff.length > 0 && losers.length === 0,
+    `K11m ${target} 的降级 animation:none 压得过全部 ${competitors.length} 条 morph 规则（压不过的：${losers.join(' | ') || '无'}；!important 或 specificity 更高）`
+  )
+}
+// K11n · 取帧冻结的停表名单与定帧 transform 名单都要含 .fluid-ring（2026-10-06 check P6 M2）
+//
+// **实测过的缺陷（两处，不止报告里写的那一处）**：
+//   ① 停表名单（`[data-freeze] … animation: none`）里有 .fluid-disc、没有 .fluid-ring。
+//      morph 段给 ring 挂的 disc-absorb-h/v 仍在跑，而**运行中的 animation 会盖掉
+//      静态 transform** —— 实测（headless Chromium 最小复现）：freeze='stretch' 下
+//      ring 的 computed transform 是动画中段的 matrix，不是 freeze 规则里那个
+//      scale(1.4, 0.7)。于是「球被拉成液线、环还圆满 56px」的错帧正是这条漏项造成的。
+//   ② 四条定帧 transform 规则（stretch / stretch 纵向 / bridge / stain）里虽然
+//      写了 .fluid-ring，但当时无门 —— 摘掉任一条的红 0。
+//
+// 逐个 phase 断言，不合并成一条：合并的话「stretch 缺了但 bridge 在」会被平均掉。
+const freezeRules = ALL_SELECTORS.filter((r) => /data-freeze/.test(r.sel))
+const freezeRingRules = freezeRules.filter((r) => /\.fluid-ring\b/.test(r.sel))
+// ① 停表名单（无值 [data-freeze]）必须有 .fluid-ring
+{
+  const pauseRing = freezeRules.filter((r) => /\.fluid-ring\b/.test(r.sel) && /\[data-freeze\](?!=)/.test(r.sel))
+  const pauseBody = pauseRing.find((r) => /\banimation\s*:\s*none/.test(r.body))
+  ok(
+    pauseBody != null,
+    `K11n freeze 停表名单含 .fluid-ring（animation:none；命中 ${pauseRing.length} 条选中器${pauseBody ? '' : '，其中没有 animation:none'}）`
+  )
+}
+// ② 每个定帧 phase：凡是给 .fluid-disc 定了帧 transform 的规则，.fluid-ring 必须在同一条里。
+//    断法是「disc 在 ⇒ ring 也在」——只断 ring 存在会被无关的 ring 规则顶包。
+for (const phase of ['stretch', 'bridge', 'stain']) {
+  const selRe = new RegExp(`\\[data-freeze='${phase}'\\]`)
+  const at = (cls, vertical) =>
+    freezeRules.filter(
+      (r) => selRe.test(r.sel) && new RegExp(`\\.${cls}\\b`).test(r.sel) && (vertical ? /data-edge=/.test(r.sel) : !/data-edge=/.test(r.sel))
+    ).length
+  const d = at('fluid-disc', false)
+  const r0 = at('fluid-ring', false)
+  const vd = at('fluid-disc', true)
+  const vr = at('fluid-ring', true)
+  ok(
+    d > 0 && d === r0 && vd === vr,
+    `K11n freeze='${phase}' 的 disc/ring 定帧名单等长（横 ${d}/${r0}；纵向 ${vd}/${vr}）`
+  )
+}
+// 定帧 transform 名单（带 phase 值的那些）每条都要真给 transform。
+// 不把停表名单那条（animation:none，本就不该有 transform）混进来算。
+const freezeFrameRing = freezeRingRules.filter((r) => /\[data-freeze='[^']+'\]/.test(r.sel))
+ok(
+  freezeFrameRing.length >= 4 && freezeFrameRing.every((r) => /transform\s*:/.test(r.body)),
+  `K11n freeze 定帧规则里的 .fluid-ring 每条都给了 transform 且覆盖 ≥4 处（实际 ${freezeFrameRing.length} 条，其中带 transform 的 ${freezeFrameRing.filter((r) => /transform\s*:/.test(r.body)).length} 条）`
+)
+// K11n2 · freeze 停表名单的 animation:none 必须**真压过**全部非降级 morph animation 规则
+// （2026-10-06 用户决定：freeze 提权封死；disc 与 ring 一并真停）
+//
+// **实测过的缺陷**：停表名单是 `[data-freeze]` 无值那一族 = (0,5,0)，morph 段给同元素
+// 挂动画的是 `[data-edge][data-fluid='absorbing']` 那一族 = (0,6,0)。后者胜出，于是
+// `data-freeze` 与 `data-fluid='absorbing']` **共存**时 disc/ring 的 animation 照跑 ——
+// 而运行中的 animation 会盖掉静态 transform，所以下面四条 freeze 定帧 transform
+// （stretch / bridge / stain）在这两个相位共存时**根本没生效**，5i/5j/5k 拍到的是
+// 动画中段的 matrix，不是定帧那一帧。这不是"少停一张表"，是取帧机制本身失效。
+//
+// 修法是 !important（与 K11m 降级段同款，文件尾 .pet/.pet * 已有先例）。
+//
+// **为什么不复用 K11m 那条门**：K11m 判的是 `reduced` 层的降级段，停表名单在顶层、
+// 且是**另一条**规则。两条门共用同一个比法（逐条比比特 + !important 兜底），但认人不同。
+//
+// ⚠ 逐个目标（disc / ring）各判一次，不合并：morph 段给两者的选择器列表高度重合，
+//   "disc 被压过就当 ring 也被压过"在名单被拆开时会假绿。
+for (const target of ['fluid-disc', 'fluid-ring']) {
+  const rules = animationRules(target)
+  // 停表名单 = 带 [data-freeze]（**无值**）且真的写了 animation:none 的那些。
+  // 带值的（='stretch' 等）是定帧 transform 规则，本就不该有 animation，不算竞争者。
+  const pause = rules.filter((r) => /\[data-freeze\](?!=)/.test(r.sel) && r.value === 'none')
+  const competitors = rules.filter((r) => !r.reduced && r.value !== 'none')
+  ok(
+    pause.length > 0 && competitors.length > 0,
+    `K11n2 前置 ${target}：停表名单有 animation:none（${pause.length} 条）、非降级段有挂动画的规则（${competitors.length} 条；任一为 0 下面就是空转 = 恒绿）`
+  )
+  const losers = []
+  for (const c of competitors) {
+    // 任一条竞争规则压过停表名单 = 定帧 transform 失效 = 停表形同虚设
+    const beaten = pause.some((r) => r.important || specCmp(r.spec, c.spec) > 0)
+    if (!beaten) losers.push(`${c.sel} ${specStr(c.spec)}`)
+  }
+  ok(
+    pause.length > 0 && losers.length === 0,
+    `K11n2 ${target} 的 freeze 停表 animation:none 压得过全部 ${competitors.length} 条非降级 morph 规则（压不过的：${losers.join(' | ') || '无'}；!important 或 specificity 更高）`
+  )
+}
+// 弧色不写死等级色：CSS 里 .ring-arc 的兜底是 var(--ok) + lvl-* 覆写，
+// 真值走内联 water（连续插值）。若有人把 --warn/--danger 的硬编码色值搬进
+// .ring-arc 的 stroke，弧就不再随等级连续变化（会在阈值处跳变）。
+const arcDecls = decls(ruleBody(css, '.petball.no3d .ring-arc'))
+ok(
+  arcDecls.stroke != null && /var\(\s*--ok\s*\)/.test(arcDecls.stroke),
+  `K11k .ring-arc 的兜底 stroke 是 var(--ok)（实际 ${JSON.stringify(arcDecls.stroke || '未找到')}；真值走内联 water）`
+)
+for (const lvl of ['warn', 'danger', 'muted']) {
+  ok(
+    ruleBody(css, `.petball.no3d.lvl-${lvl} .ring-arc`) != null,
+    `K11k lvl-${lvl} 的弧色覆写都在（删掉一级，那一级的弧就恒绿）`
+  )
+}
+// K11p · 身份色不得由语义色推导（2026-10-06 用户决定：minimal 环找回柠檬身份色）
+//
+// **实测过的缺陷（两处，都不是"画错颜色"而是"认不出是哪款皮"）**：
+//   minimal 的 `--ring-track` 写成 `color-mix(in srgb, var(--ok) 22%, transparent)`，
+//   而 minimal 的 --ok 是绿 #1a9e4b —— 于是 V5「柠檬分段环」三个部件（轨道/分段/弧）
+//   全是语义绿，一点身份色都不剩，跟原型（轨道 `rgba(190,255,60,.22)` 柠檬）不是同一款皮。
+//   candy 的 `--ring-track` / `--ring-inner-c` 同病（--ok #22b573）。
+//
+// **为什么用"不是 color-mix(var(--ok))"当判据，而不是"等于某个色值"**：
+//   逐皮钉死具体 hex 会把"调色"变成改测试（换皮就得改门），而这条要守的是**一条纪律** ——
+//   身份色是皮肤自己的长相，等级色是数据的读数，两者被绑在一起时，等级一变身份就变。
+//   所以只断"有没有从 --ok 推导"，具体值留给逐像素取帧验收。K11k 断另一半（弧必须走等级令牌）。
+//
+// ⚠ 逐令牌断言而不是合并成一条：合并的话"轨道干净了但分段还是绿的"会被平均掉 ——
+//   而"轨道柠檬、分段还是绿"正是本次要消灭的半吊子形态。
+const RING_IDENTITY_SKINS = ['dark', 'candy', 'minimal']
+const RING_IDENTITY_TOKENS = ['--ring-track', '--ring-ticks-c', '--ring-seg-c', '--ring-inner-c']
+const OK_DERIVED = /color-mix\([^;]*var\(\s*--ok\s*\)/
+for (const skin of RING_IDENTITY_SKINS) {
+  const declared = RING_IDENTITY_TOKENS.filter((t) => declScopes(t).has(skin))
+  // 前置：这层没有身份色令牌 = 下面的循环空转 = 恒绿（负断言必须有前置，section D 的纪律）
+  ok(
+    declared.length > 0,
+    `K11p 前置 ${skin} 至少声明一个身份色令牌（实得 ${declared.join(',') || '无'}；一个都没有 = 下面循环空转）`
+  )
+  for (const t of declared) {
+    const v = tokenInScope(t, skin) || ''
+    ok(
+      !OK_DERIVED.test(v),
+      `K11p ${skin} 的 ${t} 不是 --ok 的混色（实际 ${JSON.stringify(v)}；身份色由语义色推导 = 一眼认不出是哪款皮）`
+    )
+  }
+}
+// K11p2 · 令牌干净**还不够**：`.ring-seg` 上不得有 lvl-* 的 stroke 覆写。
+// 少了这半条，一条 `.petball.no3d.lvl-warn .ring-seg { stroke: var(--warn) }` 就能把
+// 分段重新拽回等级色，而 K11p 照样全绿 —— 正是本次要消灭的「轨道柠檬、分段还是绿」。
+// 这与 quality 文档「不要在注释里承诺代码没有的能力」同一类：令牌那层的纪律，
+// 拦不住覆写那层的漂移。
+{
+  const segStroke = ALL_SELECTORS.filter((r) => /\.ring-seg\b/.test(r.sel) && /\bstroke\s*:/.test(r.body))
+  const offenders = segStroke.filter((r) => /lvl-/.test(r.sel) || /var\(\s*--(warn|danger|ok)\s*\)/.test(r.body))
+  ok(
+    segStroke.length === 1 && offenders.length === 0,
+    `K11p2 .ring-seg 的 stroke 只由 --ring-seg-c 一处给（实得 ${segStroke.length} 条 stroke 规则，被等级色拽走的 ${offenders.length} 条：${offenders.map((r) => r.sel.replace(/\s+/g, ' ').slice(0, 70)).join(' | ') || '无'}）`
+  )
+  const base = segStroke[0] ? segStroke[0].body : ''
+  ok(
+    /stroke\s*:\s*var\(\s*--ring-seg-c\s*\)/.test(base),
+    `K11p2 .ring-seg 的 stroke 取自 --ring-seg-c（实际 ${JSON.stringify((base.match(/\bstroke\s*:\s*[^;}]+/) || [])[0] || '未找到')}；直接写 var(--ok) 就是身份=等级）`
+  )
+}
 
 // K4 · 水柱几何（R4-5 原地变柱）：CSS 的四条边规则与 shared/fluid.waterColumn 同形
 //     （竖柱 12×56 / 横槽 56×12；12 = shared/dock-hide.COLUMN_W，56 = shared/pet-view.BALL_VIEW），

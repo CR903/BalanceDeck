@@ -144,6 +144,39 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
       })()`)
     )
     process.stdout.write(`5c-wave: ${id} ${waveRange}\n`)
+    // 形态探针（P6 环替代水体）：逐皮读「环显隐 / 水体显隐 / 弧长 dasharray /
+    // 弧色 / 半径」，不靠像素猜。弧长那一项是本轮的核心取证 ——
+    // 快照是单家 40%（wave40Snapshot），所以弧的 dasharray 必须是 40.xx。
+    const formProbe = String(
+      await exec(`(()=>{
+        const dot=document.querySelector('.petball-fallback');
+        if(!dot) return 'no-dot';
+        const ring=dot.querySelector('.fluid-ring');
+        const ringDisp=ring?getComputedStyle(ring).display:'?';
+        const slosh=dot.querySelector('.slosh');
+        const waterDisp=slosh?getComputedStyle(slosh).display:'(absent)';
+        const pour=dot.querySelector('.pour-clip');
+        const pourDisp=pour?getComputedStyle(pour).display:'(absent)';
+        const arc=dot.querySelector('.ring-arc');
+        const acs=arc?getComputedStyle(arc):null;
+        const cs=arc?getComputedStyle(arc):null;
+        const r=acs?acs.r:'?';
+        // r 是 CSS 几何属性；Chromium 报 px
+        const rNum=parseFloat(r);
+        return JSON.stringify({
+          ringDisplay:ringDisp, waterDisplay:waterDisp, pourDisplay:pourDisp,
+          arcR:r, arcSw:cs?cs.strokeWidth:'?', arcCap:cs?cs.strokeLinecap:'?',
+          arcDash:arc?arc.getAttribute('stroke-dasharray'):'?',
+          arcStroke:cs?cs.stroke:'?',
+          ticksDisplay:dot.querySelector('.ring-ticks')?getComputedStyle(dot.querySelector('.ring-ticks')).display:'(absent)',
+          segDisplay:dot.querySelector('.ring-seg')?getComputedStyle(dot.querySelector('.ring-seg')).display:'(absent)',
+          innerDisplay:dot.querySelector('.ring-inner')?getComputedStyle(dot.querySelector('.ring-inner')).display:'(absent)',
+          pathLength:arc?arc.getAttribute('pathLength'):'?',
+          rNum
+        });
+      })()`)
+    )
+    process.stdout.write(`5c-form: ${id} ${formProbe}\n`)
   }
   await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
   await sleep(900)

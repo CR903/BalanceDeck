@@ -14,6 +14,7 @@ import {
   type WaterAnchors
 } from '../../shared/water-color'
 import { skinWaves, POUR_DROPS } from './skin-waves'
+import { ringDash, RING_DASH_SPACE } from './skin-rings'
 import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
 
@@ -126,6 +127,48 @@ function waveBand(surfaceY: number, phase: number, A = 2.2, L = 28, up = 3, down
  * （见 skins.css），不另画第二份路径。
  */
 const COLUMN_WAVE_D = `M -4 1.5 q 1 -1 2 0${' t 2 0'.repeat(8)}`
+
+/**
+ * 环形进度的五个圆（V1 刻度圈 / V3 双环 / V5 分段环 / 轨道 / 进度弧）。
+ *
+ * 分工（唯一口径，两处消费：球本体与 peek 预览气泡共用本函数，不复制第二份）：
+ *   · **JSX 只负责归一化空间** —— 每个 circle 带 `pathLength`，周长被折算成
+ *     100（弧）/ 96（刻度圈，24 粒 × 4）。有了它 stroke-dasharray 的单位是
+ *     「百分比」而不是像素，于是半径可以留在 CSS 令牌里（--ring-r 逐皮肤不同），
+ *     TS 不必知道任何几何数 —— 见 skin-rings.ts 的注释。
+ *   · **CSS 只负责图案** —— 刻度/分段的 dasharray 走令牌（--ring-ticks-dash /
+ *     --ring-seg-dash），换皮肤改缺口不用动 TS。
+ *   · **进度弧长**由 ringDash(fluidLvl) 内联（唯一的数据口径，与柱内液高同一个
+ *     fluidLvl），弧色内联 water（等级色连续插值，不在 CSS 里写死 ok/warn/danger）。
+ *
+ * 五个圆全部常驻 DOM，逐皮肤的显隐/几何/线宽由 --ring-* 令牌决定
+ * （V5 的分段轨道与 V3 的内环对别的皮肤 display:none —— 省不了这份 DOM，
+ * 但换皮零代码：新增皮肤不写一行 TS）。
+ */
+function ringSvg(lvl: number, water: string | null): React.JSX.Element {
+  return (
+    <>
+      {/* 轨道：满圈底色，走 --ring-track（逐皮肤令牌，默认借 --track） */}
+      <circle className="ring-track" cx="28" cy="28" pathLength={RING_DASH_SPACE} />
+      {/* 分段轨道（V5）：缺口兼刻度；pattern 在 CSS 令牌里，仍是 0..100 归一化空间 */}
+      <circle className="ring-seg" cx="28" cy="28" pathLength={RING_DASH_SPACE} />
+      {/* 刻度圈（V1）：24 粒；24×4 = 96 是它的归一化空间，缺口 pattern 见 CSS */}
+      <circle className="ring-ticks" cx="28" cy="28" pathLength={96} />
+      {/* 内装饰细环（V3）：恒满圈，不承载进度 */}
+      <circle className="ring-inner" cx="28" cy="28" pathLength={RING_DASH_SPACE} />
+      {/* 进度弧：**唯一**承载 fluidLvl 的图形。12 点起画（rotate -90），与原型 arc() 同向 */}
+      <circle
+        className="ring-arc"
+        cx="28"
+        cy="28"
+        pathLength={RING_DASH_SPACE}
+        strokeDasharray={ringDash(lvl)}
+        transform="rotate(-90 28 28)"
+        style={{ stroke: water ?? undefined }}
+      />
+    </>
+  )
+}
 
 /**
  * 中心读数的两态（R5 的核心分离：**显示值 ≠ 目标值**）：
@@ -912,6 +955,21 @@ export function PetBall({
               <i className="fluid-ticks" aria-hidden="true" />
             </div>
           </div>
+          {/* 环形进度（V1/V3/V5 环形态皮肤）：**替代**球内水体，同一数字只编码一次
+              （用户拍板：环与水不共存 —— 两者同时在场等于同一个百分比被画两遍）。
+              DOM 位置在 goo 容器**之外**（goo 只融合形状；2px 的弧经 stdDeviation=4
+              会被 blur 吃掉，与雨/读数同一理由），摆位与 .fluid-disc 一致
+              （left/top 50% + translate(-50%,-50%)），因此 hidden/absorbing/revealing
+              三条既有 [data-fluid] 规则只要把本选择器加进去，就随 disc 一起收尽/回弹，
+              不另写一套 morph。显隐走 --ring-display 令牌（水体皮 none，:root 缺省 none，
+              外部皮肤零代码退回水体形态）。 */}
+          {showWaves && (
+            <div className="fluid-ring" aria-hidden="true">
+              <svg viewBox="0 0 56 56" aria-hidden="true">
+                {ringSvg(fluidLvl, water)}
+              </svg>
+            </div>
+          )}
           {/* 雨是 crisp 覆盖层（R4-1 取证结论）：细雨滴经整容器 goo 滤镜会被 blur 吃掉
               （3px 滴在 stdDeviation=4 下糊成无色条 —— 5l 取证：DOM 全对但像素无色），
               而雨不需要与水体融合 —— 与读数同理，放在 goo 容器之外，
@@ -1007,6 +1065,11 @@ export function PetBall({
             <div className="fluid-peek" aria-hidden="true">
               <svg className="fluid-peek-waves" viewBox="0 0 56 56" aria-hidden="true">
                 <circle cx="28" cy="28" r="27" className="fluid-peek-bg" />
+                {/* 预览跟随本体形态（P6）：环形态皮预览环、水体皮预览波，两者同一条件
+                    由 CSS 的 --ring-display / --water-display 切换（不双份 DOM：
+                    预览要预览的就是本体那张脸）。环复用同一个 ringSvg —— 弧长、弧色、
+                    半径、线宽与本体逐值同源。 */}
+                <g className="fluid-peek-ring">{ringSvg(fluidLvl, water)}</g>
                 <g clipPath="url(#fluid-clip)">
                   <path d={waveA} className="fluid-peek-wave" style={{ fill: water ?? undefined }} />
                 </g>
