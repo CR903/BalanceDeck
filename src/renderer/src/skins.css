@@ -42,6 +42,12 @@
        一个没有底的球比一个浅色的球更糟。 */
   --ball-bg: rgba(246, 246, 248, 0.86);
   --ball-rim: rgba(0, 0, 0, 0.16);
+  /* 球内读数专属前景（10-06-ball-column-fixes B1）：数值 .dot-value 与短标签
+     .dot-winlabel 只走它，不走页面级 --fg/--fg-dim —— minimal/candy 改暗盘后深字
+     压暗盘不可读，而原型三款环球读数钉死白色。暗盘皮写浅色、浅盘皮写深色
+     （D3e lum 判据）；等级语义仍由环色/水色承载，lvl-warn/danger/muted 在暗盘皮上
+     让位给它（见下面的 :is() 覆写）。页面级 --fg 一律不动。 */
+  --ball-fg: #1c1c1e;
   /* 全屏水体的两个专属令牌（10-03-holo-sphere 水满；水色本身跟 `lvl` 走
      --ok/--warn/--danger，这两个只管水的质感）：
        --water-foam  液面高光线 + 柱顶小波浪（浅色，逐皮肤调到在该皮肤的水色上可读）；
@@ -149,6 +155,8 @@
        跟随系统的暗色用户会拿到一个白球。 */
     --ball-bg: rgba(28, 28, 30, 0.68);
     --ball-rim: rgba(255, 255, 255, 0.14);
+    /* 暗色 aero 吃深底：读数跟底走浅色（与 --fg 同值，浅盘深字那套在此不成立）。 */
+    --ball-fg: #f2f2f7;
     /* 暗色下高光更亮一档（深底水面上 0.85 的白线发灰），深度罩换成纯黑压底 */
     --water-foam: rgba(255, 255, 255, 0.92);
     --water-deep: rgba(0, 0, 0, 0.38);
@@ -186,6 +194,8 @@
     （深盘配浅缘判据下限，D3c）。 */
   --ball-bg: radial-gradient(circle at 50% 35%, #3a2415, #17100a 72%);
   --ball-rim: rgba(255, 255, 255, 0.12);
+  /* 暗盘读数钉死白（原型 V1 口径，skin-applied.html:32）。 */
+  --ball-fg: #ffffff;
   /* dark 走冷调：高光带一点青（与 --ok 的 #32d74b 拉开，避免高光被当成水色的一部分） */
   --water-foam: rgba(220, 245, 255, 0.9);
   --water-deep: rgba(0, 0, 0, 0.42);
@@ -222,6 +232,8 @@
     （深盘配浅缘：浅盘深缘那套在此不成立，D3c）。 */
   --ball-bg: radial-gradient(circle at 50% 40%, #1d2b12 0%, #0b0f07 70%);
   --ball-rim: rgba(255, 255, 255, 0.14);
+  /* 暗盘读数钉死白（原型 V5 口径，skin-applied.html:36）。 */
+  --ball-fg: #ffffff;
   /* minimal 不要高光溢价：高光线反而是这款皮肤的刻度（纯白高光 + 浅灰深度罩） */
   --water-foam: rgba(255, 255, 255, 0.95);
   --water-deep: rgba(0, 0, 0, 0.1);
@@ -258,6 +270,8 @@
     （深盘配浅缘：紫 rim 只在浅盘上成立，D3c）。 */
   --ball-bg: radial-gradient(circle at 50% 40%, #0e3a22 0%, #07180f 70%);
   --ball-rim: rgba(255, 255, 255, 0.14);
+  /* 暗盘读数钉死白（原型 V3 口径，skin-applied.html:34）。 */
+  --ball-fg: #ffffff;
   /* candy 的高光带一点粉（纯白在粉水面上发贼），深度罩沿用本皮肤的紫 */
   --water-foam: rgba(255, 235, 245, 0.9);
   --water-deep: rgba(120, 90, 200, 0.22);
@@ -291,6 +305,8 @@
      白 rim 贴在米盘上几乎不可见，而米盘 + 白桌面本来就分不开，正是需要 rim 的场合。 */
   --ball-bg: #f4f1ea;
   --ball-rim: rgba(60, 50, 30, 0.22);
+  /* 纸盘读数跟纸走深色（与 --fg 同值，B1 只修暗盘不可读，浅盘现状不动）。 */
+  --ball-fg: #2a2620;
   /* ink 的高光压成米白（纯白在纸色水面上是唯一的高对比噪点），深度罩用墨色 */
   --water-foam: rgba(255, 253, 245, 0.9);
   --water-deep: rgba(60, 50, 30, 0.18);
@@ -2222,7 +2238,8 @@ textarea {
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
   line-height: 1;
-  color: var(--fg);
+  /* B1：读数走球专属 --ball-fg，不走页面级 --fg（暗盘皮深字压暗盘不可读）。 */
+  color: var(--ball-fg);
   max-width: 42px;
   text-align: center;
   overflow: hidden;
@@ -2257,7 +2274,10 @@ textarea {
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0.04em; /* 等宽下 5H 两个字符偏挤，补一点字距 */
-  color: var(--fg-dim);
+  /* B1：短标签与数值同走 --ball-fg（原型 .reading span 口径：opacity .75 的同色弱化，
+     不是换一套深色 —— 深色在暗盘上同样不可读）。 */
+  color: var(--ball-fg);
+  opacity: 0.75;
   pointer-events: none;
 }
 .petball.no3d.lvl-warn .dot-value {
@@ -2268,6 +2288,20 @@ textarea {
 }
 .petball.no3d.lvl-muted .dot-value {
   color: var(--fg-dim);
+}
+/* B1 · 暗盘三皮的等级色读数让位给白字（每皮一条 :is() 单选择器，D3g 逐级钉）。
+   读数的等级信息仍由环弧/水色承载（内联 water 连续插值，不走这里）；warn 橙 /
+   danger 红 / muted 灰在深绿/深棕/深橄榄盘上对比不足，原型三款环球读数本就钉死白。
+   :is() specificity (0,5,0) 压过上面的 (0,4,0) lvl 覆写，无需 !important。
+   ⚠ muted 也在内：error/nodata 的 !/— 同样是读数（ballLevel 非 ok 即 muted）。 */
+[data-skin='dark'] .petball.no3d:is(.lvl-warn, .lvl-danger, .lvl-muted) .dot-value {
+  color: var(--ball-fg);
+}
+[data-skin='minimal'] .petball.no3d:is(.lvl-warn, .lvl-danger, .lvl-muted) .dot-value {
+  color: var(--ball-fg);
+}
+[data-skin='candy'] .petball.no3d:is(.lvl-warn, .lvl-danger, .lvl-muted) .dot-value {
+  color: var(--ball-fg);
 }
 .petball.no3d .petball-value {
   color: var(--fg);
@@ -2473,6 +2507,13 @@ textarea {
 .petball.no3d .petball-fallback.doc-hidden .fluid-column-wave svg {
   animation-play-state: paused;
 }
+/* B3 三名单同步其三：页面不可见时底盘 morph 也暂停（K10d7；玻璃罩同门，
+   否则底盘停而罩子走，两者错位半帧）。有限 morph（530/400ms），藏起再回来
+   接着播完，终态仍由状态机推送保证。 */
+.petball.no3d .petball-fallback.doc-hidden,
+.petball.no3d .petball-fallback.doc-hidden::after {
+  animation-play-state: paused;
+}
 /* 液桥 blob：平时 scale(0) 藏在球心，吸入时向贴边侧拉伸长大 */
 .petball.no3d .fluid-bridge {
   position: absolute;
@@ -2570,15 +2611,22 @@ textarea {
 }
 .petball.no3d .petball-fallback[data-edge='left'] .fluid-column-wave,
 .petball.no3d .petball-fallback[data-edge='right'] .fluid-column-wave {
-  top: 0;
+  /* B2：波 viewport 顶在 fill 6px 处、底锚定 fill 底 —— 弯月占 fill 顶部 -6..6，
+     对比色泡沫描线横穿圆头会把圆顶切出尖口感；波退到液面主体上，圆头保持干净。
+     viewport = 液面主体（弯月之下到 fill 底）：svg 仍顶锚，涟漪贴弯月下方；
+     微液位（fill 高 < 9px）时波被 viewport 自身的 overflow 裁掉，不飘进空槽造假水位。 */
+  top: 6px;
+  bottom: 0;
   left: 0;
   width: 100%;
-  height: 3px;
 }
 .petball.no3d .petball-fallback[data-edge='top'] .fluid-column-wave,
 .petball.no3d .petball-fallback[data-edge='bottom'] .fluid-column-wave {
+  /* B2：与竖柱同理 —— 弯月占液面前缘 6px，对比色描线横穿圆头切出尖口感；
+     波退到弯月之后（right:6px），圆头保持干净。fill 宽 < 9px 的微液位是已知极限
+     （viewport 在液前悬空 3px 槽位），读作管壁刻度余量，不造假水位（K8k1 同条件）。 */
   top: 0;
-  right: 0;
+  right: 6px;
   width: 3px;
   height: 100%;
 }
@@ -2956,12 +3004,24 @@ textarea {
      「每皮形态」在一处可读（K11b 逐皮断言这两个令牌），值与 :root 缺省相同。 */
   --water-display: block;
   --ring-display: none;
+  /* 浅盘读数跟底走深色（与 :root 同值；aero 亮暗跟随不受影响，暗态吃 @media 那份）。
+     ⚠ 这条不能裸写在这里 —— 裸写的同特异度规则恒覆盖 @media dark 那份
+     （@media 不加特异度，后写赢），深色 aero 用户会拿到深字压深盘
+     （10-06-ball-column-fixes check Blocker 实锤）。浅色值挪到下面的
+     light-media 独立规则里，与 :root 同值、只做显式声明。 */
 }
 [data-skin='aero'] .petball.no3d .fluid-disc {
   background:
     radial-gradient(circle at 32% 26%, var(--dot-top), transparent 46%),
     radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%),
     radial-gradient(circle at 50% 112%, rgba(255, 255, 255, 0.35), transparent 42%);
+}
+/* aero 浅色值显式声明（与 :root 同值；K11b"每皮形态在一处可读"同纪律）——
+   包在 light-media 里，暗态不参与层叠，@media dark 那份恒生效（见上条注释）。 */
+@media (prefers-color-scheme: light) {
+  [data-skin='aero'] {
+    --ball-fg: #1c1c1e;
+  }
 }
 /* dark 霓虹深海：慢波 + 高透荧光水 + 霓虹内圈（--accent 沿用本皮肤，不另起色） */
 [data-skin='dark'] {
@@ -3217,6 +3277,70 @@ textarea {
     opacity: 1;
   }
 }
+/* 底盘吸入（B3：10-06-ball-column-fixes）：--ball-bg 底盘本体 + ::after 玻璃罩进
+ * 吸入/汇聚时间线，与 disc 同步变形 —— 不再"环飞走、黑盘原地静止淡出"。
+ * 时序与 disc 形态规则同字面量（530 / 400，唯一口径 shared/fluid.ts 的
+ * ABSORB_TOTAL_MS / REVEAL_MS，不另起常量，K10d3 跨钉）。
+ * 手法是"定点退场"不是"跟着拉丝"：background 在 gradient↔transparent 之间不可插值
+ * （离散切换），transition 的翻转点固定在 50% 不可控，故用关键帧把翻转点钉在 70%
+ *（disc 拉丝收细同步点，见 disc-absorb-h 的 70% 帧）；玻璃罩 opacity 同时间线淡出。
+ * transform 一律不碰：fallback 是 pill 的定位祖先，缩放它会连累吸入终态立起的柱子。
+ * 终态 = hidden 稳态值（transparent + 无阴影），forwards 保持到 data-fluid 翻 hidden，
+ * 值与稳态规则逐字相同，无缝交接（K10d4）；hidden 稳态规则本身不动（K10c 照守）。 */
+.petball.no3d .petball-fallback[data-fluid='absorbing'] {
+  animation: fallback-absorb 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='absorbing']::after {
+  animation: glass-absorb 530ms var(--ease) forwards;
+}
+@keyframes fallback-absorb {
+  0%,
+  69% {
+    background: var(--ball-bg);
+  }
+  70%,
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+@keyframes glass-absorb {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* 底盘汇聚（revealing 反向对称）：柱收 → 底盘与 disc 同帧回来（56% ≈ disc-reveal
+ * 的 60% 回弹点）；box-shadow 后半不声明 → 回到底盘 base 的 inset 立体层。 */
+.petball.no3d .petball-fallback[data-fluid='revealing'] {
+  animation: fallback-reveal 400ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-fluid='revealing']::after {
+  animation: glass-reveal 400ms var(--ease) forwards;
+}
+@keyframes fallback-reveal {
+  0%,
+  55% {
+    background: transparent;
+    box-shadow: none;
+  }
+  56%,
+  100% {
+    background: var(--ball-bg);
+  }
+}
+@keyframes glass-reveal {
+  0%,
+  55% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
 /* 水渍态：球与桥收尽，只留 pill（沿边沿 20px × 探出 4px） */
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-disc,
 .petball.no3d .petball-fallback[data-fluid='hidden'] .fluid-bridge,
@@ -3462,6 +3586,13 @@ textarea {
 .petball.no3d .petball-fallback[data-freeze] .fluid-peek-drop {
   animation: none !important;
 }
+/* B3 三名单同步其一：底盘本体也进停表名单（K10d6）—— data-freeze 与 absorbing 共存
+   时底盘动画照跑会盖掉定帧位移（运行中的 animation 盖静态 transform，见本节头注释）。
+   blanket animation:none（确定性复位，不是暂停在任意中段）；pour-top 的定帧位移
+   走下面的静态 transform 规则，不受影响。 */
+.petball.no3d .petball-fallback[data-freeze] {
+  animation: none !important;
+}
 /* ⚠ .fluid-ring 与 .fluid-disc 一并进定帧名单：环形态皮取帧时环必须跟着变形，
    否则 5i/5j/5k 会拍到"球被拉成液线、环还圆满 56px"的错帧。 */
 .petball.no3d .petball-fallback[data-freeze='stretch'] .fluid-disc,
@@ -3545,6 +3676,13 @@ textarea {
   .petball.no3d .slosh,
   .petball.no3d .fluid-waves,
   .petball.no3d .fluid-column-fill {
+    animation: none !important;
+  }
+  /* B3 三名单同步其二：底盘/玻璃罩的 morph 与 pour-top 同停（K10d5）。
+     blanket animation:none —— pour-top 在 reduced-motion 下本就不挂（JS 侧
+     reducedMotion 即 null，不启动计时器），这里只是双保险。 */
+  .petball.no3d .petball-fallback,
+  .petball.no3d .petball-fallback::after {
     animation: none !important;
   }
   .petball.no3d .fluid-waves {

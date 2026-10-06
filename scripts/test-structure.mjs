@@ -273,6 +273,143 @@ for (const skin of ['dark', 'candy', 'minimal']) {
   )
 }
 
+// D3d · 球内读数专属前景 --ball-fg（10-06-ball-column-fixes B1）。
+// minimal/candy 上轮改暗盘后读数仍走页面级 --fg（两皮都是深字）→ 深字压暗盘不可读，
+// 而原型三款环球读数钉死白色（skin-applied.html:32,34,36）。页面级 --fg 一律不动，
+// 只加球专属令牌（与 --ball-bg 同纪律：:root 兜底 + 5 皮逐个声明）。
+const ballFgScopes = declScopes('--ball-fg')
+// aero 例外：它的浅/深两份值分别活在 light/dark-media 里（裸写会恒覆盖 dark 份，
+// skins.css 那条注释），plain 'aero' 缺席是正确的 —— 'aero@media' 存在即满足。
+const missingFg = ['root', 'dark', 'minimal', 'candy', 'ink'].filter((s) => !ballFgScopes.has(s))
+if (!ballFgScopes.has('aero') && !ballFgScopes.has('aero@media')) missingFg.push('aero')
+ok(
+  missingFg.length === 0,
+  `D3d ball-fg-defined-per-skin --ball-fg 在顶层 :root + 5 个皮肤都有（aero 吃 media 份；缺 ${missingFg.join(',') || '无'}；实得 ${[...ballFgScopes].sort().join(',')}）`
+)
+// D3e · 亮暗极性（可算，不靠目测）：暗盘三皮 ball-fg 必须是浅色，深盘写深字必须红；
+// 浅盘两皮 ball-fg 必须是深色，浅盘写浅字必须红。判据与 D3c 同口径（lum，不是目测）。
+function lumOf(v) {
+  const s = (v || '').trim().toLowerCase()
+  let m = s.match(/^#([0-9a-f]{6})$/) || s.match(/^#([0-9a-f]{3})$/)
+  let r, g, b
+  if (m) {
+    const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1]
+    r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16)
+  } else if ((m = s.match(/rgba?\(\s*(\d+)[^,]*,\s*(\d+)[^,]*,\s*(\d+)/))) {
+    r = Number(m[1]); g = Number(m[2]); b = Number(m[3])
+  } else {
+    return NaN
+  }
+  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+for (const skin of ['dark', 'minimal', 'candy']) {
+  const v = tokenInScope('--ball-fg', skin) || ''
+  const lum = lumOf(v)
+  ok(
+    Number.isFinite(lum) && lum >= 0.7,
+    `D3e ${skin} --ball-fg 是浅色（暗盘配浅字，lum ${Number.isFinite(lum) ? lum.toFixed(3) : '不可解析'}；实际 ${v.slice(0, 48) || '未找到'}）`
+  )
+}
+for (const skin of ['ink']) {
+  const v = tokenInScope('--ball-fg', skin) || ''
+  const lum = lumOf(v)
+  ok(
+    Number.isFinite(lum) && lum <= 0.1,
+    `D3e ${skin} --ball-fg 是深色（浅盘配深字，lum ${Number.isFinite(lum) ? lum.toFixed(3) : '不可解析'}；实际 ${v.slice(0, 48) || '未找到'}）`
+  )
+}
+{
+  // aero 是唯一亮暗双值皮：tokenInScope 不识 media（取最后命中），单值断言恒错一半 ——
+  // 分两份验：light-media 份深色（浅盘深字）+ dark-media 份浅色（深盘浅字）。
+  const lm = css.match(/@media\s*\(prefers-color-scheme:\s*light\)[\s\S]*?\[data-skin='aero'\][\s\S]*?--ball-fg\s*:\s*([^;]+);/)
+  const lv = ((lm || [])[1] || '').trim()
+  const llum = lumOf(lv)
+  ok(
+    Number.isFinite(llum) && llum <= 0.1,
+    `D3e aero-light --ball-fg 是深色（lum ${Number.isFinite(llum) ? llum.toFixed(3) : '不可解析'}；实际 ${lv.slice(0, 48) || '未找到'}）`
+  )
+  const dmAero = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)[\s\S]*?\[data-skin='aero'\][\s\S]*?--ball-fg\s*:\s*([^;]+);/)
+  const dv = ((dmAero || [])[1] || '').trim()
+  const dlum = lumOf(dv)
+  ok(
+    Number.isFinite(dlum) && dlum >= 0.7,
+    `D3e aero-dark --ball-fg 是浅色（lum ${Number.isFinite(dlum) ? dlum.toFixed(3) : '不可解析'}；实际 ${dv.slice(0, 48) || '未找到'}）`
+  )
+  // 缺口门（check Blocker）：裸写的 [data-skin='aero'] --ball-fg 会恒覆盖 dark 份 ——
+  // 剥掉所有 @media 块后，aero 不许再有 --ball-fg（浅色值只许活在 light-media 里）。
+  const stripMedia = (src) => {
+    const noComments = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    let out = '', i = 0
+    while (i < noComments.length) {
+      const at = noComments.indexOf('@media', i)
+      if (at < 0) { out += noComments.slice(i); break }
+      out += noComments.slice(i, at)
+      let depth = 0, j = noComments.indexOf('{', at)
+      if (j < 0) break
+      for (; j < noComments.length; j++) {
+        if (noComments[j] === '{') depth++
+        else if (noComments[j] === '}') { depth--; if (depth === 0) { j++; break } }
+      }
+      i = j
+    }
+    return out
+  }
+  const bare = stripMedia(css)
+  // 危险形态：选择器恰为裸 [data-skin='aero']（不含 :root 联合）的规则里声明
+  // --ball-fg —— 同特异度后写恒赢 + @media 不加特异度 = 暗态被盖（本次 Blocker）。
+  // 顶层的 `:root, [data-skin='aero']` 联合块是浅色默认值本身，必须排除。
+  let bareAero = false
+  const reBare = /([^{}]+)\[data-skin='aero'\]\s*\{([^}]*)\}/g
+  let bmatch
+  while ((bmatch = reBare.exec(bare))) {
+    if (/:root/.test(bmatch[1])) continue
+    if (/--ball-fg\s*:/.test(bmatch[2])) { bareAero = true; break }
+  }
+  ok(
+    !bareAero,
+    'D3e aero-no-bare-override 非 media 的 [data-skin=\'aero\'] 不得声明 --ball-fg（裸写恒覆盖 dark 份，浅色值只许活在 light-media 里）'
+  )
+}
+{
+  // 暗色 @media 的 :root（深底 aero 用户吃这份）：也必须是浅色。tokenInScope 取的是
+  // 最后一个 :root 块的值、declScopes 又只判存在，所以这里单独按 @media 块取值。
+  const dm = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)[\s\S]*?--ball-fg\s*:\s*([^;]+);/)
+  const v = (dm || [])[1] || ''
+  const lum = lumOf(v)
+  ok(
+    Number.isFinite(lum) && lum >= 0.7,
+    `D3e dark-mode :root --ball-fg 是浅色（lum ${Number.isFinite(lum) ? lum.toFixed(3) : '不可解析'}；实际 ${v.trim().slice(0, 48) || '未找到'}）`
+  )
+}
+// D3f · 读数走球令牌，不借页面级 --fg/--fg-dim。D0 的整块取值复用：块取不到时
+// decls 是空对象，color 对不上 → 红（与 D2/D5 同一条"块没取到必须一起红"纪律）。
+{
+  const dv = decls(ruleBody(css, '.petball.no3d .dot-value'))
+  ok(
+    dv.color === 'var(--ball-fg)',
+    `D3f dot-value 的 color 走 --ball-fg（实际 ${JSON.stringify(dv.color || '未找到')}；借 --fg 即红）`
+  )
+  const wl2 = decls(ruleBody(css, '.petball.no3d .dot-winlabel'))
+  ok(
+    wl2.color === 'var(--ball-fg)',
+    `D3f dot-winlabel 的 color 走 --ball-fg（实际 ${JSON.stringify(wl2.color || '未找到')}；借 --fg-dim 即红）`
+  )
+}
+// D3g · 暗盘三皮的 lvl-warn/danger/muted 让位给白字（语义由环色/水色承载，
+// 等级一变读数字色不变 —— 与 K11p"身份≠等级"同一纪律在读数侧的投影）。
+// muted 也在内：error/nodata 的 !/— 在暗盘上同样不可读（ballLevel 非 ok 即 muted）。
+// CSS 侧用 :is() 收成每皮一条单选择器（逗号列表会被 ruleBody 拒收，也让"删掉某一级
+// 即红"可断）；:is() 取参数里最高 specificity = (0,5,0)，压过下面的 (0,4,0) lvl 覆写。
+for (const skin of ['dark', 'minimal', 'candy']) {
+  ok(
+    new RegExp(
+      `\\[data-skin='${skin}'\\][^{]*:is\\([^)]*\\.lvl-warn[^)]*\\.lvl-danger[^)]*\\.lvl-muted[^)]*\\)[^{]*\\.dot-value\\s*\\{[^}]*color\\s*:\\s*var\\(\\s*--ball-fg\\s*\\)`
+    ).test(css),
+    `D3g ${skin} lvl-warn/danger/muted 的读数让位给 --ball-fg（:is 三级缺一即红）`
+  )
+}
+
 // D4 短标签换字体观感 + 更小（AC3.3）。判据是「解析后不是 body 那一套栈」。
 //    ⚠ 「字面量 ≠ body 的 stack」这个写法本身是**假护栏**（已实测踩过）：
 //    `font-family: inherit` 与 body 的 stack 字面量当然不同，但**解析结果完全相同**
@@ -1164,6 +1301,54 @@ ok(
   /\(fluidLvl \* 100\)\.toFixed\(1\)/.test(petBallCode),
   'K8f 柱内液高 = fluidLvl 逐值绑定（隐藏态水柱液高与球内液位同一出处，逐值对拍的结构侧）'
 )
+// K8n · 柱两端胶囊（10-06-ball-column-fixes B2）：竖柱 12×56 / 横槽 56×12 的短边
+// 都是 12，radius 6 = 短边一半即两端全圆；液头弯月是 12px 整圆（与柱同宽的温度计
+// 液头，原型 .col radius:12px 口径的折半）；柱顶泡沫波不得横穿弯月（对比色描线压
+// 在圆头上会把圆顶切成尖顶 —— 波退到液面主体上，圆头保持干净）。
+{
+  const pill = decls(ruleBody(css, '.petball.no3d .fluid-pill'))
+  const pillR = parseFloat(pill['border-radius'] || '')
+  const pillL = decls(ruleBody(css, ".petball.no3d .petball-fallback[data-edge='left'] .fluid-pill"))
+  const pillT = decls(ruleBody(css, ".petball.no3d .petball-fallback[data-edge='top'] .fluid-pill"))
+  const pillRok = ruleBody(css, ".petball.no3d .petball-fallback[data-edge='right'] .fluid-pill") != null
+  const pillBok = ruleBody(css, ".petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill") != null
+  ok(
+    pillR === 6 && parseFloat(pillL.width) === 12 && parseFloat(pillL.height) === 56 && pillRok,
+    `K8n1 竖柱胶囊：pill radius 6 = 短边 12 的一半（实际 radius ${pill['border-radius'] || '未找到'} / 左柱 ${pillL.width || '?'}×${pillL.height || '?'}；删任一圆角即红）`
+  )
+  ok(
+    pillR === 6 && parseFloat(pillT.width) === 56 && parseFloat(pillT.height) === 12 && pillBok,
+    `K8n1 横槽胶囊：同上（实际顶槽 ${pillT.width || '?'}×${pillT.height || '?'}；删任一圆角即红）`
+  )
+  const fillR = parseFloat((decls(ruleBody(css, '.petball.no3d .fluid-column-fill'))['border-radius'] || ''))
+  ok(
+    fillR === 6 && pillR === 6,
+    `K8n2 柱内液圆角与槽同值（实际 fill ${Number.isFinite(fillR) ? `${fillR}px` : '未找到'}；方形 fill 顶圆角槽底 = 底部尖耳朵）`
+  )
+  const dome = decls(ruleBody(css, '.petball.no3d .fluid-column-fill:not(:empty)::before'))
+  ok(
+    dome['border-radius'] === '50%',
+    `K8n3 液头弯月是整圆（实际 border-radius ${dome['border-radius'] || '未找到'}；:not(:empty) 空槽不画假液头）`
+  )
+  ok(
+    /\[data-edge='left'\][\s\S]*?fluid-column-fill:not\(:empty\)::before[\s\S]*?\{[^}]*height\s*:\s*12px/.test(css),
+    'K8n3 竖柱弯月 12px 整圆（与柱同宽；删掉即红）'
+  )
+  ok(
+    /\[data-edge='top'\][\s\S]*?fluid-column-fill:not\(:empty\)::before[\s\S]*?\{[^}]*width\s*:\s*12px/.test(css),
+    'K8n3 横槽弯月 12px 整圆（删掉即红）'
+  )
+  // 泡沫波退到弯月之下：竖柱波 viewport 顶在 fill 6px 处（弯月占 -6..6）且底锚定 fill
+  // 底（微液位时波被 viewport 裁掉，不飘进空槽）；横槽波退到弯月之后（right:6px）。
+  ok(
+    /\[data-edge='(left|right)'\][^{]*\.fluid-column-wave[^{]*\{[^}]*top\s*:\s*6px[^}]*bottom\s*:\s*0/.test(css),
+    'K8n4 竖柱柱顶波退到弯月之下（top:6px + bottom:0；波横穿圆头即红）'
+  )
+  ok(
+    /\[data-edge='(top|bottom)'\][^{]*\.fluid-column-wave[^{]*\{[^}]*right\s*:\s*6px/.test(css),
+    'K8n4 横槽柱顶波退到弯月之后（right:6px；波横穿圆头即红）'
+  )
+}
 ok(
   /\[data-fluid='hidden'\][^{]*\.fluid-waves[^}]*opacity:\s*0/.test(css),
   'K8g 隐藏稳态球内水不可见（屏上只剩温度计柱，水位诚实）'
@@ -1850,6 +2035,130 @@ for (const target of ['fluid-disc', 'fluid-ring']) {
     `K11n2 ${target} 的 freeze 停表 animation:none 压得过全部 ${competitors.length} 条非降级 morph 规则（压不过的：${losers.join(' | ') || '无'}；!important 或 specificity 更高）`
   )
 }
+// K10d · morph 底盘参演（10-06-ball-column-fixes B3）：吸入 530ms 只演
+// disc/bridge/ring/pill，--ball-bg 底盘本体不在名单 → "环飞走、黑盘原地淡掉"。
+// 修法：底盘（.petball-fallback 背景 + ::after 玻璃罩）进吸入/汇聚时间线，与 disc
+// 同步；时序常量仍归 shared/fluid.ts（ABSORB_TOTAL_MS=530 / REVEAL_MS=400），
+// CSS 只写与 disc 形态规则相同的字面量，不另起；hidden 稳态规则不动（K10c 照守）。
+{
+  const absorbFallback = /\.petball-fallback\[data-fluid='absorbing'\]\s*\{[^}]*fallback-absorb/.test(css)
+  const absorbGlass = /\.petball-fallback\[data-fluid='absorbing'\]::after\s*\{[^}]*glass-absorb/.test(css)
+  ok(absorbFallback, 'K10d1 吸入名单含底盘本体（.petball-fallback[data-fluid=absorbing] 走 fallback-absorb；删掉即红）')
+  ok(absorbGlass, 'K10d1 吸入名单含玻璃罩（::after 走 glass-absorb；删掉即红）')
+  const revealFallback = /\.petball-fallback\[data-fluid='revealing'\]\s*\{[^}]*fallback-reveal/.test(css)
+  const revealGlass = /\.petball-fallback\[data-fluid='revealing'\]::after\s*\{[^}]*glass-reveal/.test(css)
+  ok(revealFallback, 'K10d2 汇聚名单含底盘本体（走 fallback-reveal；删掉即红）')
+  ok(revealGlass, 'K10d2 汇聚名单含玻璃罩（走 glass-reveal；删掉即红）')
+  // 时序同源：底盘/玻璃罩四条时长必须等于 disc 形态规则的字面量（530 / 400，
+  // 唯一口径 shared/fluid.ts；另起数字即红）。
+  const dur = (name) => [...css.matchAll(new RegExp(`${name}\\s+(\\d+)ms`, 'g'))].map((m) => m[1])
+  const fa = dur('fallback-absorb')
+  const ga = dur('glass-absorb')
+  const fr = dur('fallback-reveal')
+  const gr = dur('glass-reveal')
+  const discA = dur('disc-absorb-h')
+  const discR = dur('disc-reveal')
+  ok(
+    fa.length > 0 && fa.every((d) => d === '530') && discA.includes('530'),
+    `K10d3 吸入底盘与 disc 同 530ms（fallback-absorb 实得 ${fa.join(',') || '未找到'}；disc-absorb-h 实得 ${discA.join(',') || '未找到'}）`
+  )
+  ok(
+    ga.length > 0 && ga.every((d) => d === '530'),
+    `K10d3 吸入玻璃罩同 530ms（实得 ${ga.join(',') || '未找到'}）`
+  )
+  ok(
+    fr.length > 0 && fr.every((d) => d === '400') && discR.includes('400'),
+    `K10d3 汇聚底盘与 disc 同 400ms（fallback-reveal 实得 ${fr.join(',') || '未找到'}；disc-reveal 实得 ${discR.join(',') || '未找到'}）`
+  )
+  ok(
+    gr.length > 0 && gr.every((d) => d === '400'),
+    `K10d3 汇聚玻璃罩同 400ms（实得 ${gr.join(',') || '未找到'}）`
+  )
+  // 交接无跳变：fallback-absorb 终态 = hidden 稳态值（transparent + 无阴影），
+  // 动画 forwards 保持到 data-fluid 翻 hidden 时，值与稳态规则逐字相同才无缝。
+  const kfBlock = (name) => {
+    const at = css.indexOf(`@keyframes ${name}`)
+    if (at < 0) return null
+    let depth = 0
+    for (let j = at; j < css.length; j++) {
+      if (css[j] === '{') depth++
+      else if (css[j] === '}' && --depth === 0) return css.slice(at, j + 1)
+    }
+    return null
+  }
+  const faKf = kfBlock('fallback-absorb') || ''
+  ok(
+    /background\s*:\s*transparent/.test(faKf) && /box-shadow\s*:\s*none/.test(faKf),
+    'K10d4 吸入终态 = hidden 稳态值（transparent + 无阴影；交接跳变即红）'
+  )
+  const frKf = kfBlock('fallback-reveal') || ''
+  ok(
+    /background\s*:\s*transparent/.test(frKf) && /var\(\s*--ball-bg\s*\)/.test(frKf),
+    'K10d4 汇聚起于透明、终于底盘色（reveal 与 absorb 反向对称；不对称即红）'
+  )
+  // hidden 稳态不跑底盘动画：hidden 下只有 180ms 淡出（K10c），morph 动画
+  // 进 hidden 名单 = 稳态柱上底盘闪动。
+  ok(
+    !/\[data-fluid='hidden'\][^{]*fallback-(absorb|reveal)/.test(css),
+    'K10d4 hidden 稳态不挂底盘 morph（只留 K10c 的淡出；混入即红）'
+  )
+}
+// K10d5 · 降级同步其一 reduced-motion：底盘/玻璃罩的新动画必须真停
+// （K11m 同款比法，直接显隐；animationRules/specificity 复用上面的尺子）。
+for (const target of ['petball-fallback']) {
+  // ⚠ 只认"被动画元素就是底盘本体/玻璃罩"的规则（选择器尾段即 .petball-fallback(::after)）：
+  // animationRules 是子串匹配，`.petball-fallback[…] .fluid-disc` 这类后代规则也会命中，
+  // 而底盘的降级规则根本作用不到它们身上 —— 拿跨元素的 !important 当"压过"就是假赢
+  // （disc/ring 的降级由 K11m 守，这里只守本体）。
+  const selfRules = animationRules(target).filter((r) => /\.petball-fallback(\[[^\]]*\]|::after)*\s*$/.test(r.sel))
+  const reducedOff = selfRules.filter((r) => r.reduced && r.value === 'none')
+  const competitors = selfRules.filter((r) => !r.reduced && r.value !== 'none')
+  ok(
+    reducedOff.length > 0 && competitors.length > 0,
+    `K10d5 前置 ${target}：降级段有 animation:none（${reducedOff.length} 条）、非降级段有挂动画的规则（${competitors.length} 条；任一为 0 下面就是空转 = 恒绿）`
+  )
+  const losers = []
+  for (const c of competitors) {
+    const beaten = reducedOff.some((r) => r.important || specCmp(r.spec, c.spec) > 0)
+    if (!beaten) losers.push(`${c.sel} ${specStr(c.spec)}`)
+  }
+  ok(
+    reducedOff.length > 0 && losers.length === 0,
+    `K10d5 ${target} 的降级 animation:none 压得过全部 ${competitors.length} 条动画规则（含 pour-top 与底盘 morph；压不过的：${losers.join(' | ') || '无'}）`
+  )
+}
+// K10d6 · 降级同步其二 freeze：停表名单含底盘本体（K11n2 同款比法），
+// 否则 freeze 与 absorbing 共存时底盘动画照跑、定帧 transform 失效。
+{
+  // 同 K10d5 只认自身规则（后代停表规则作用不到底盘本体上，不算数）。
+  const selfRules = animationRules('petball-fallback').filter((r) =>
+    /\.petball-fallback(\[[^\]]*\]|::after)*\s*$/.test(r.sel)
+  )
+  const pause = selfRules.filter((r) => /\[data-freeze\](?!=)/.test(r.sel) && r.value === 'none')
+  const pauseSelf = pause.filter((r) => /\.petball-fallback\[data-freeze\]\s*$/.test(r.sel))
+  const competitors = selfRules.filter((r) => !r.reduced && r.value !== 'none')
+  ok(
+    pauseSelf.length > 0,
+    `K10d6 freeze 停表名单含底盘本体（.petball-fallback[data-freeze] animation:none；命中 ${pauseSelf.length} 条）`
+  )
+  const losers = []
+  for (const c of competitors) {
+    const beaten = pause.some((r) => r.important || specCmp(r.spec, c.spec) > 0)
+    if (!beaten) losers.push(`${c.sel} ${specStr(c.spec)}`)
+  }
+  ok(
+    pause.length > 0 && losers.length === 0,
+    `K10d6 底盘 freeze 停表压得过全部 ${competitors.length} 条动画规则（压不过的：${losers.join(' | ') || '无'}）`
+  )
+}
+// K10d7 · 降级同步其三 doc-hidden：页面不可见时底盘 morph 也暂停
+// （与波浪名单同一纪律；三名单同步缺一即红）。
+// 判据钉本条独有的 `.doc-hidden::after` 半 —— 波浪名单里没有它，删本条即红
+// （裸判 `.doc-hidden … paused` 会被波浪名单顶包）。
+ok(
+  /\.petball-fallback\.doc-hidden,[\s\S]*?\.petball-fallback\.doc-hidden::after\s*\{[^}]*animation-play-state\s*:\s*paused/.test(css),
+  'K10d7 doc-hidden 暂停底盘动画（删掉即红）'
+)
 // 弧色不写死等级色：CSS 里 .ring-arc 的兜底是 var(--ok) + lvl-* 覆写，
 // 真值走内联 water（连续插值）。若有人把 --warn/--danger 的硬编码色值搬进
 // .ring-arc 的 stroke，弧就不再随等级连续变化（会在阈值处跳变）。

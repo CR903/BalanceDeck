@@ -1,0 +1,3 @@
+{"file": "src/renderer/src/skins.css", "reason": "球盘/读数/柱/morph全部实现"}
+{"file": "src/renderer/src/PetBall.tsx", "reason": "读数与柱JSX结构"}
+{"file": "prototype/skin-applied.html", "reason": "真相源：读数白字/柱全圆/morph"}
