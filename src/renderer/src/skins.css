@@ -86,6 +86,15 @@
   --ring-inner-c: color-mix(in srgb, var(--fg-faint) 22%, transparent);
   --ring-inner-sw: 1.5px;
   --ring-inner-r: 19px;
+  /* V7 端点圆点（ink，10-06-ball-column-fixes B5）：弧开口两端各一个实心点。
+     默认 none —— 其余四皮无圆点，端点是这张脸独有的识别特征。
+     圆点半径与颜色逐皮给令牌，不写死在 .ring-cap 规则里（与 --ring-ticks-r 同纪律：
+     几何留在 CSS，TS 里没有任何数字）。起点固定 12 点（弧的起画点），末端随
+     --arc-pct（PetBall 内联的 fluidLvl×100）绕球心转 —— 角度换算在 CSS 里做，
+     TS 只给百分比，不出现角度像素（K11f 的归一化纪律）。 */
+  --ring-caps-display: none;
+  --ring-caps-r: 2px;
+  --ring-caps-c: #ffffff;
   /* 水效性格变量（10-04-skin-fluid-redesign）：三层波各自的速度与透明度。
      逐皮肤覆盖即换性格；振幅/波长 JS 统一（无缝循环数学只有一套，不在此开洞）。
      ⚠ :root 必须有全套 —— 外部皮肤（ext:*）没写时退化为统一默认水效（当前值）。 */
@@ -234,6 +243,15 @@
   --ball-rim: rgba(255, 255, 255, 0.14);
   /* 暗盘读数钉死白（原型 V5 口径，skin-applied.html:36）。 */
   --ball-fg: #ffffff;
+  /* 球级 accent（10-06-ball-column-fixes 报障①b）：余额弧走 --ball-accent
+     （PetBall.tsx:522 isPlan 分支），本皮原本没声明 → 回落页面级 --accent #111114（近黑），
+     压在 #0b0f07 暗盘上对比度只有 1.03（实算）—— 完全看不见，用户报「直充的余额
+     没有显示进度」。取柠檬 #beff3c（本皮环的身份色，与 ink 用身份琥珀作 ball-accent
+     同一个口径），对暗盘 16.2:1：满圈纯柠檬与「带缺口的 0.7 alpha 柠檬分段」拉开亮度差，
+     读得出是"满"。
+     ⚠ 只补本皮：dark 的 --accent 蓝 #0a84ff 对 #17100a 是 5.1、candy 的紫 #8b5cf6 对
+     #07180f 是 4.0，都读得出，不动（避免无必要的跨皮变更）。 */
+  --ball-accent: #beff3c;
   /* minimal 不要高光溢价：高光线反而是这款皮肤的刻度（纯白高光 + 浅灰深度罩） */
   --water-foam: rgba(255, 255, 255, 0.95);
   --water-deep: rgba(0, 0, 0, 0.1);
@@ -299,17 +317,28 @@
   --btn-primary-fg: #fff;
   --shadow-card: 0 1px 3px rgba(60, 50, 30, 0.1);
   --shadow-pop: 0 10px 30px rgba(60, 50, 30, 0.2);
-  --dot-top: rgba(255, 255, 255, 0.75);
-  --dot-bottom: rgba(60, 50, 30, 0.12);
-  /* 纸色保留（这是这款皮肤的灵魂），但 rim 从白 `rgba(255,255,255,0.5)` 改成墨色 ——
-     白 rim 贴在米盘上几乎不可见，而米盘 + 白桌面本来就分不开，正是需要 rim 的场合。 */
-  --ball-bg: #f4f1ea;
-  --ball-rim: rgba(60, 50, 30, 0.22);
-  /* 纸盘读数跟纸走深色（与 --fg 同值，B1 只修暗盘不可读，浅盘现状不动）。 */
-  --ball-fg: #2a2620;
-  /* ink 的高光压成米白（纯白在纸色水面上是唯一的高对比噪点），深度罩用墨色 */
-  --water-foam: rgba(255, 253, 245, 0.9);
-  --water-deep: rgba(60, 50, 30, 0.18);
+  --dot-top: rgba(255, 255, 255, 0.22);
+  --dot-bottom: rgba(0, 0, 0, 0.45);
+  /* 深墨盘（B5：由米色宣纸反转为深墨暗盘；弧线上跑等级色，白端点标记起止）。
+     页面级 --bg/--surface/--fg/--ok/--warn/--danger 一律不动 —— 卡片、设置、
+     柱内液仍是宣纸色，只有球盘改暗底。 */
+  --ball-bg: radial-gradient(circle at 50% 40%, #18243f 0%, #080c17 70%);
+  --ball-rim: rgba(255, 255, 255, 0.14);
+  --ball-fg: #ffffff;
+  /* 球级锚点（B5）：页面级 --ok/--warn/--danger 是纸色调（#4f7a3a/#b07d20/#a63b2f），
+     压在深墨盘上发泥；球级是同一语义（绿→琥珀→红，等级含义不变）在深盘上要亮的版本。
+     兜底机制在 shared/water-color.ts 的 resolveWaterAnchors：--ball-* 未声明
+     → trim 空串 → 回落页面级 --*（其余四皮与任务前逐值相同，外部皮肤只吃页面级）。
+     --ball-accent 独立一档：页面级 --accent #8a6d3b 是深金棕，压在深盘上余额弧发暗；
+     余额弧不插值，accent 只影响余额球的填色。 */
+  --ball-ok: #5cc86a;
+  --ball-warn: #ffab3d;
+  --ball-danger: #ff5f45;
+  --ball-accent: #ffb84d;
+  /* 柱体/柱顶浪的颜色（--wave-* 与 --slosh-* 保留不动，见下方形态块注释）：
+     深墨盘上泡沫与深罩的对比关系随之反转（泡沫更亮、深罩更深）。 */
+  --water-foam: rgba(255, 246, 226, 0.9);
+  --water-deep: rgba(0, 0, 0, 0.3);
 }
 
 /* ─── 基础 ────────────────────────────────────────────────────────────────── */
@@ -2110,8 +2139,16 @@ textarea {
   align-content: center;
   gap: 1px;
   border-radius: 50%;
-  background: var(--ball-bg);
-  /* 背景只用 --ball-bg，不再借页面级 --bg（见 tokens 段注释）。
+  /* B4 第二轮：底盘视觉（--ball-bg + 4 层 inset 玻璃罩）已整体搬到 ::before，见下面的
+     .petball-fallback::before —— fallback 本体退成空壳：无 background、无 box-shadow。
+     这是「整球一起被吸入」的前提：盘变成独立元素后，才能对它单独跑与 .fluid-disc 同一
+     条 transform 时间线（disk-absorb-h/v、disk-reveal）；盘留在 fallback 上就只能靠
+     background 离散跳变（gradient↔transparent 不可插值，翻转点还得手工钉在 70%），
+     观感就是用户报的「黑盘还在、啪地消失」。
+     fallback 本体**不许**加 morph transform：它是 .fluid-pill 的定位祖先，缩放会连累
+     吸入终态立起的柱子。冲顶的整球外扩也已删（2026-10-06 报障②：球 = 窗口 = 56×56，
+     外扩必被 overflow:hidden 裁边），fallback 上只剩 :active 的按压缩放，不改终态几何。
+     背景只用 --ball-bg，不再借页面级 --bg（见 tokens 段注释）。
      ⚠ 这里原来有 `backdrop-filter: blur(24px) saturate(180%)`，已删 —— 但**要分清两件事**：
        ① 删它的**理由**成立且仍然成立：悬浮窗是 transparent: true（main/overlay.ts），
           页面内 html/body/#root 全是 background: transparent，**页面里不存在任何可被采样
@@ -2124,18 +2161,8 @@ textarea {
        桌面壁纸」这件事），但它**拍得到方框本身** —— 方框是页面自己画在窗口内的 alpha，
        逐像素解码就能看见。2026-09-28 曾把这两件事混成一句「拍不到屏幕合成」，并据此
        认定前两轮「无法证伪任何假设」；那是错的，详见 design.md §9.8 的复核补记。 */
-  box-shadow:
-    /* P2 玻璃罩落地（原型 .ball::after 口径）：顶光加重、底缘压暗加重，
-       仍全 inset —— 外阴影在 56×56 窗口里无处容身（D6 那条纪律，见下）。
-       几何放大、颜色仍走令牌（minimal 的 --dot-top alpha 0 = 不要高光，
-       逐皮肤的选择保留，不强制统一）。 */
-    inset 0 2px 5px var(--dot-top),
-    /* 盘缘（轮廓）：方向与盘相反的 --ball-rim 是球在桌面上读作「一个物体」的唯一保证。
-       顶部发丝高光仍取 --dot-top（逐皮肤的「顶部高光」；minimal 是 alpha 0 = 不要高光），
-       盘缘与高光是两件事，不要合成一个令牌。 */
-    inset 0 0 0 1px var(--ball-rim),
-    inset 0 -15px 24px var(--dot-bottom),
-    inset 0 0 26px rgba(0, 0, 0, 0.12);
+  /* P2 玻璃罩（原型 .ball 的 4 层 inset）原样搬到 .petball-fallback::before 上 ——
+     只换了承载元素，数值一字未改（见下 ::before 规则）。 */
   /* ⚠⚠ 这里**不能**加任何 outer box-shadow —— 那就是「球外面套一圈浅色方框」的成因，
      而且它骗过了三轮诊断（详见 .trellis/tasks/09-28-dot-frame-label-carousel/design.md §9）：
 
@@ -2175,6 +2202,28 @@ textarea {
    渐变中心透明，读数不受影响）。无 box-shadow（立体边缘走元素本体的 inset；
    更无 outer shadow —— D6 名单钉住本选择器（与球盘同一纪律），写 outer
    在 56×56 窗口里同样会被裁成方框，见上面那条注释）。 */
+/* 球盘本体（B4 第二轮）：--ball-bg + 原型 .ball 的 4 层 inset 玻璃罩，从 fallback 原样
+ * 搬到 ::before 上。盘变成独立元素后，absorbing / revealing 能对它单独跑与 .fluid-disc
+ * 同一条 transform 时间线（disk-absorb-h/v、disk-reveal）—— 球盘是真被拉伸收细收点，
+ * 不是 background 在关键帧 70% 处离散跳成 transparent（gradient↔transparent 不可插值，
+ * 旧 fallback-absorb 只能钉翻转点，观感是"黑盘还在、啪地消失"）。
+ * 玻璃罩的顶光/底部压暗渐变仍在 fallback::after 上，两层各跑各的动画：盘缩放、罩淡出。
+ * 仍全 inset —— D6 纪律不变：outer shadow 会被 56×56 窗口裁成方框。 */
+.petball.no3d .petball-fallback::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ball-bg);
+  box-shadow:
+    inset 0 2px 5px var(--dot-top),
+    inset 0 0 0 1px var(--ball-rim),
+    inset 0 -15px 24px var(--dot-bottom),
+    inset 0 0 26px rgba(0, 0, 0, 0.12);
+  /* 与玻璃罩同门：hidden 下走 opacity 180ms 淡出（background 是 gradient，走
+     background-color 插值不了，opacity 是唯一平滑的路径）。 */
+  transition: opacity 180ms ease;
+}
 .petball.no3d .petball-fallback::after {
   content: '';
   position: absolute;
@@ -2228,8 +2277,12 @@ textarea {
   display: block;
   flex-shrink: 0;
   pointer-events: none;
-  /* 空品牌色（7/15 个 mark）= 跟随主题前景色；显式声明避免依赖继承链 */
-  color: var(--fg);
+  /* B1 第二轮：空品牌色（7/15 个 mark）回落球专属 --ball-fg，不走页面级 --fg。
+     JSX 侧是 markColor(s.mark) || 'currentColor' —— 品牌色为空的 mark 走 currentColor，
+     所以这里的 color 才是它真正的回落点。--fg 那版让 minimal 的 #111114 / candy 的
+     #2b1b46 深 logo 压暗盘（实拍 5c-ball-candy = 暗紫方块压深绿盘，不可读）。
+     首版门只验了 --ball-fg 令牌存在、没验这条回落链路，第二轮补 D3f 钉这一行。 */
+  color: var(--ball-fg);
 }
 .petball.no3d .dot-value {
   position: relative;
@@ -2289,11 +2342,14 @@ textarea {
 .petball.no3d.lvl-muted .dot-value {
   color: var(--fg-dim);
 }
-/* B1 · 暗盘三皮的等级色读数让位给白字（每皮一条 :is() 单选择器，D3g 逐级钉）。
+/* B1 · 暗盘四皮的等级色读数让位给白字（每皮一条 :is() 单选择器，D3g 逐级钉）。
    读数的等级信息仍由环弧/水色承载（内联 water 连续插值，不走这里）；warn 橙 /
-   danger 红 / muted 灰在深绿/深棕/深橄榄盘上对比不足，原型三款环球读数本就钉死白。
+   danger 红 / muted 灰在深绿/深棕/深橄榄/深墨盘上对比不足，原型环球读数本就钉死白。
    :is() specificity (0,5,0) 压过上面的 (0,4,0) lvl 覆写，无需 !important。
-   ⚠ muted 也在内：error/nodata 的 !/— 同样是读数（ballLevel 非 ok 即 muted）。 */
+   ⚠ muted 也在内：error/nodata 的 !/— 同样是读数（ballLevel 非 ok 即 muted）。
+   ⚠ ink 是 10-06-ball-column-fixes 第四轮补的：B5 把 ink 由米色宣纸盘翻成深墨盘后
+     忘了把它加进这条名单，于是 warn 档读数走页面级 --warn #b07d20（纸调琥珀）压在
+     #080c17 上，用户报「墨底琥珀弧的圆球内字体看不清」（2026-10-06 报障③）。 */
 [data-skin='dark'] .petball.no3d:is(.lvl-warn, .lvl-danger, .lvl-muted) .dot-value {
   color: var(--ball-fg);
 }
@@ -2301,6 +2357,9 @@ textarea {
   color: var(--ball-fg);
 }
 [data-skin='candy'] .petball.no3d:is(.lvl-warn, .lvl-danger, .lvl-muted) .dot-value {
+  color: var(--ball-fg);
+}
+[data-skin='ink'] .petball.no3d:is(.lvl-warn, .lvl-danger, .lvl-muted) .dot-value {
   color: var(--ball-fg);
 }
 .petball.no3d .petball-value {
@@ -2511,6 +2570,7 @@ textarea {
    否则底盘停而罩子走，两者错位半帧）。有限 morph（530/400ms），藏起再回来
    接着播完，终态仍由状态机推送保证。 */
 .petball.no3d .petball-fallback.doc-hidden,
+.petball.no3d .petball-fallback.doc-hidden::before,
 .petball.no3d .petball-fallback.doc-hidden::after {
   animation-play-state: paused;
 }
@@ -2569,13 +2629,14 @@ textarea {
 }
 /* 柱内液：竖柱从底起（液高 = 100% × level）、横槽从左起（液宽同），水色跟 lvl。
    液位 0（余额类/算不出比例）时高度/宽度就是 0 —— 空槽，不造假水位。
-   圆角与 .fluid-pill 同值（6px，上下全圆）：方形 fill 底顶着圆角槽 = 底部尖耳朵；
-   方形 fill 顶 + 圆形弯月（::before 12px 整圆）相交 = 顶部两侧掐出尖。
-   同半径后弯月圆与圆顶融为连续胶囊。横槽短边同为 12px，同一半径两向通用。 */
+   圆角交给 .fluid-pill 裁切：fill 是**纯矩形**，槽的两端圆角由
+   overflow:hidden + border-radius:6px 裁出来（原型 .cfill 同构，skin-applied.html:56-57
+   没有 border-radius）。fill 自带 6px 圆角会与 ::before 的 12px 弯月圆叠加成
+   "圆头 + 圆帽"的铲形（用户 B3 报的弯月形），两处圆角只留一处。
+   弯月圆宽 = 100% = 柱宽 12px，与矩形 fill 侧边齐平，不存在"掐出尖"。 */
 .petball.no3d .fluid-column-fill {
   position: absolute;
   background: var(--ok);
-  border-radius: 6px;
 }
 .petball.no3d.lvl-warn .fluid-column-fill {
   background: var(--warn);
@@ -3053,12 +3114,8 @@ textarea {
   --ring-ticks-sw: 1.5px;
   --ring-ticks-r: 25px;
 }
-[data-skin='dark'] .petball.no3d .fluid-disc {
-  background:
-    radial-gradient(circle at 32% 26%, var(--dot-top), transparent 40%),
-    radial-gradient(circle at 50% 50%, transparent 62%, color-mix(in srgb, var(--accent) 26%, transparent) 78%, transparent 86%),
-    radial-gradient(circle at 50% 84%, var(--dot-bottom), transparent 56%);
-}
+/* B2 第二轮：本条原为 dark 的 disc 渐变立体层，已删 —— 环球皮肤只留一层立体，
+   统一走下面的 background:none 规则（多一层就是 demo 没有的额外压暗）。 */
 /* minimal 扁平纯净：更静更淡（速度比默认慢半拍，透明度全线压低一档） */
 [data-skin='minimal'] {
   --wave-speed-a: 3.6s;
@@ -3098,9 +3155,7 @@ textarea {
   --ring-seg-dash: 22.7 6.1 22.7 6.1 22.7 83.4;
   --ring-seg-c: rgba(190, 255, 60, 0.7);
 }
-[data-skin='minimal'] .petball.no3d .fluid-disc {
-  background: radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.35), transparent 50%);
-}
+/* B2 第二轮：本条原为 minimal 的 disc 顶光层，已删（同 dark，统一走 background:none）。 */
 /* candy 果冻糖浆：慢而稠（糖浆感）+ 高饱和厚水 + 大块果冻高光 */
 [data-skin='candy'] {
   --wave-speed-a: 5s;
@@ -3134,11 +3189,8 @@ textarea {
   --ring-inner-sw: 1.5px;
   --ring-inner-r: 19px;
 }
-[data-skin='candy'] .petball.no3d .fluid-disc {
-  background:
-    radial-gradient(circle at 36% 24%, rgba(255, 255, 255, 0.85), transparent 42%),
-    radial-gradient(circle at 50% 88%, rgba(120, 90, 200, 0.28), transparent 55%);
-}
+/* B2 第二轮：本条原为 candy 的 disc 高光 + accent 光晕 + 底部压暗三层，已删
+   （三层里最重的一处压暗就来自这里；同 dark/minimal，统一走 background:none）。 */
 [data-skin='candy'] .petball.no3d .fluid-ticks {
   opacity: 0.75;
 }
@@ -3156,26 +3208,70 @@ textarea {
   /* 缓幅荡漾（雨的雾雨档随雨退役） */
   --slosh-amp: 6px;
   --slosh-dur: 2000ms;
-  /* 形态：墨色纸面 + 球内水体（保留现状，本轮未换）。与 aero 同形态但不同波性格
-     （雾雨 4 滴 / 只开两层），"一眼可辨"由水效承担，不由形态承担。
-     环几何四个令牌也逐皮写出（值同 :root）：水体皮用不到它们，写出来是为了
-     「形态令牌成对」这条纪律不被"反正不画环"糊弄过去 —— 哪天把 ink 改成环形态，
-     改一行 --ring-display 就够，不必同时想起半径/线宽（K11c 钉的就是这个）。 */
-  --water-display: block;
-  --ring-display: none;
+  /* 形态：B5 墨色深盘 + 色相进度弧线 + 两端白色端点圆点。
+     替代原「墨色纸面 + 球内水体」（V3 反转：ink 不再保留宣纸色，球盘改深墨暗底，
+     弧线按等级连续插值上色 —— 参考图的琥珀只是该时刻水位恰好落在琥珀段，不写死）。
+     端点圆点是「进度语义」（弧线的起点/终点标记），与 --ring-cap 的
+     stroke-linecap（CSS 属性，控制端点圆角）是**两个概念**。
+     ⚠ 上方 --wave-* / --slosh-* 保留不改：--wave-speed-a 被 .fluid-column-wave
+       （隐藏栏，所有皮肤）消费，--slosh-dur 被 .fluid-shimmer 消费 —— 两者与球内
+       形态无关，删了会让 ink 的柱体性格掉回 aero（K9a/K9h 拦）。
+       只删「球内水体专用」的三条规则（见下方 background: none 列表）。 */
+  --water-display: none;
+  --ring-display: block;
   --ring-r: 22px;
-  --ring-sw: 4px;
+  --ring-sw: 3px;
   --ring-cap: round;
-  --ring-track: color-mix(in srgb, var(--fg-faint) 30%, transparent);
+  --ring-track: rgba(255,184,77,0.22);   /* 身份色琥珀 @22%，非等级色（K11p） */
+  --ring-caps-display: block;             /* 仅 ink 开：两端各一个白色实心圆点 */
+  --ring-caps-r: 2px;
+  --ring-caps-c: #ffffff;
 }
+/* 端点圆点（进度语义：弧线的起点/终点标记）。
+ * 与 --ring-cap（CSS stroke-linecap，端点圆角）是**两个概念**，别混：
+ *   --ring-cap 只决定笔画端头是平是圆；端点圆点是额外的实心小圆，
+ *   用来一眼看出「弧已经走到哪、从哪出发」。
+ * 默认关闭（:root 里 --ring-caps-display: none）→ 其余四款皮肤零端点、零回归。
+ * 放在 .fluid-ring 内继承环的所有摆位/morph/freeze/reduce/dark-hide 名单，
+ * 不另起名单（K11g 同一条纪律）。 */
+.ring-cap-start,
+.ring-cap-end {
+  display: var(--ring-caps-display, none);
+  /* 圆点先落在「3 点位」= 圆心 + 弧半径，再由 rotate(-90deg) 旋到 12 点。
+   * ⚠ cx 不能写 28px（圆心）：transform-origin 也是 28px 28px，绕圆心旋转
+   *   不会移动圆心上的点 —— 两个端点圆点会叠在球心、被白色读数盖住，
+   *   视觉上等于没有端点（2026-10-07 实拍 5c-ball-ink 抓到的就是这个）。
+   *   rotate 只负责「转到哪个角度」，径向距离必须写在 cx 上。 */
+  cx: calc(28px + var(--ring-r, 22px));
+  cy: 28px;
+  r: var(--ring-caps-r, 2px);
+  fill: var(--ring-caps-c, #ffffff);
+  transform-box: view-box;
+  transform-origin: 28px 28px;
+}
+/* 起点固定 12 点（弧线也从 12 点起，rotate(-90) 后正好对准） */
+.ring-cap-start {
+  transform: rotate(-90deg);
+}
+/* 终点 = 当前水位角度。--arc-pct 由 PetBall.tsx 内联写入（0..100，与 ringDash 同源），
+ * 角度换算留在 CSS，TS 不出现几何数字。 */
+.ring-cap-end {
+  transform: rotate(calc(var(--arc-pct, 0) * 3.6deg - 90deg));
+}
+/* B2 第二轮：环球皮肤关掉 disc 的立体渐变层。
+ * 真凶是三层立体叠加，不是数值偏：demo 的环球球只有「--ball-bg 渐变 + 一层 ::after 玻璃罩」
+ *（skin-applied.html:47-52），App 的 fallback 4 层 inset + ::after 玻璃已与 .ball / .ball::after
+ * 同口径，但**又**叠了一层 .fluid-disc 自己的 --dot-top / --dot-bottom 径向渐变（:2373），
+ * candy 还再多一层 accent 光晕 + 底部压暗（:3137 一带）—— 第二层是 demo 没有的额外压暗，
+ * 就是用户报的「渐变彩的绿底发黑」。
+ * 水体皮（aero）的 disc 是水体的 3D，压暗正是水的深度感，不动。
+ * ink（B5 起为深墨暗盘，形态=环球）也进这份列表：它原本的「纸面压暗」径向渐变已删，
+ * 立体感改由 --ball-bg 渐变承担。选择器按形态（环球四皮）写，不必新起一段。 */
+[data-skin='dark'] .petball.no3d .fluid-disc,
+[data-skin='candy'] .petball.no3d .fluid-disc,
+[data-skin='minimal'] .petball.no3d .fluid-disc,
 [data-skin='ink'] .petball.no3d .fluid-disc {
-  background: radial-gradient(circle at 50% 110%, rgba(60, 50, 30, 0.14), transparent 55%);
-}
-[data-skin='ink'] .petball.no3d .fluid-wave-c {
-  display: none;
-}
-[data-skin='ink'] .petball.no3d .fluid-ticks {
-  opacity: 0.4;
+  background: none;
 }
 /* 吸入 morph（530ms = 150 拉伸 → 300 合并 → 80 定形；关键帧 28%/85% 即分段点） */
 /* 球盘吸入（R3 整球吸入变形）：先沿贴边轴拉长成液线（30%），再变细没入边中（70%），
@@ -3287,21 +3383,52 @@ textarea {
  * transform 一律不碰：fallback 是 pill 的定位祖先，缩放它会连累吸入终态立起的柱子。
  * 终态 = hidden 稳态值（transparent + 无阴影），forwards 保持到 data-fluid 翻 hidden，
  * 值与稳态规则逐字相同，无缝交接（K10d4）；hidden 稳态规则本身不动（K10c 照守）。 */
-.petball.no3d .petball-fallback[data-fluid='absorbing'] {
-  animation: fallback-absorb 530ms var(--ease) forwards;
+/* 底盘吸入（B4 第二轮）：球盘本体 = ::before，与 disc / ring 同一条 transform 时间线。
+ * 时序沿用 530 / 400（shared/fluid.ts 的 ABSORB_TOTAL_MS / REVEAL_MS，不另起常量）。
+ * 手法从"定点退场"改成"跟着拉丝"：旧版把 background 在 70% 处离散切 transparent
+ *（gradient↔transparent 不可插值，transition 翻转点钉 50% 不可控，只能钉 70% 硬凑），
+ * 翻转点与 disc 的 530ms 平滑收缩错位，观感是"球还在收缩、底盘先被抹掉"。
+ * 现在盘随 transform 一起 scale 到 0，没有翻转点，天然同步。
+ * 关键帧与 disc-absorb-h/v 逐帧同值，只删掉定位用的 translate(-50%,-50%)
+ *（::before 走 inset:0，不需要定位位移）。
+ * transform 一律不加在 fallback 本体：它是 .fluid-pill 的定位祖先。 */
+.petball.no3d .petball-fallback[data-edge='left'][data-fluid='absorbing']::before,
+.petball.no3d .petball-fallback[data-edge='right'][data-fluid='absorbing']::before {
+  animation: disk-absorb-h 530ms var(--ease) forwards;
+}
+.petball.no3d .petball-fallback[data-edge='top'][data-fluid='absorbing']::before,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-fluid='absorbing']::before {
+  animation: disk-absorb-v 530ms var(--ease) forwards;
 }
 .petball.no3d .petball-fallback[data-fluid='absorbing']::after {
   animation: glass-absorb 530ms var(--ease) forwards;
 }
-@keyframes fallback-absorb {
-  0%,
-  69% {
-    background: var(--ball-bg);
+@keyframes disk-absorb-h {
+  0% {
+    transform: scale(1);
   }
-  70%,
+  30% {
+    transform: translate(calc(var(--dx) * 6px), calc(var(--dy) * 6px)) scale(1.6, 0.55);
+  }
+  70% {
+    transform: translate(calc(var(--dx) * 14px), calc(var(--dy) * 14px)) scale(0.9, 0.3);
+  }
   100% {
-    background: transparent;
-    box-shadow: none;
+    transform: translate(calc(var(--dx) * 20px), calc(var(--dy) * 20px)) scale(0);
+  }
+}
+@keyframes disk-absorb-v {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: translate(calc(var(--dx) * 6px), calc(var(--dy) * 6px)) scale(0.55, 1.6);
+  }
+  70% {
+    transform: translate(calc(var(--dx) * 14px), calc(var(--dy) * 14px)) scale(0.3, 0.9);
+  }
+  100% {
+    transform: translate(calc(var(--dx) * 20px), calc(var(--dy) * 20px)) scale(0);
   }
 }
 @keyframes glass-absorb {
@@ -3315,21 +3442,34 @@ textarea {
 }
 /* 底盘汇聚（revealing 反向对称）：柱收 → 底盘与 disc 同帧回来（56% ≈ disc-reveal
  * 的 60% 回弹点）；box-shadow 后半不声明 → 回到底盘 base 的 inset 立体层。 */
-.petball.no3d .petball-fallback[data-fluid='revealing'] {
-  animation: fallback-reveal 400ms var(--ease) forwards;
+.petball.no3d .petball-fallback[data-fluid='revealing']::before {
+  animation: disk-reveal 400ms var(--ease) forwards;
 }
 .petball.no3d .petball-fallback[data-fluid='revealing']::after {
   animation: glass-reveal 400ms var(--ease) forwards;
 }
-@keyframes fallback-reveal {
+/* 逐帧与 disc-reveal 同值，只删掉定位用的 translate(-50%,-50%)；
+ * 另叠 opacity：hidden 稳态把 ::before 钉在 opacity 0，reveal 若不恢复就永远是鬼。
+ * 与 glass-reveal 同形（0%/55% 透明 → 100% 满），盘与玻璃罩同帧显现。 */
+@keyframes disk-reveal {
   0%,
   55% {
-    background: transparent;
-    box-shadow: none;
+    opacity: 0;
   }
-  56%,
   100% {
-    background: var(--ball-bg);
+    opacity: 1;
+  }
+  0% {
+    transform: translate(calc(var(--dx) * 20px), calc(var(--dy) * 20px)) scale(0);
+  }
+  60% {
+    transform: translate(calc(var(--dx) * 6px), calc(var(--dy) * 6px)) scale(0.9);
+  }
+  80% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
   }
 }
 @keyframes glass-reveal {
@@ -3359,10 +3499,8 @@ textarea {
  * 底盘与文字走 180ms 淡出（与 waves-drain 衔接，无跳变）；角标/气泡/雨直接 display:none
  * （它们是覆盖层/外来层，hidden 态下无处安放；确认气泡的按钮在 hidden 下本来就点不着，
  * reveal 后恢复，不丢交互）。 */
-.petball.no3d .petball-fallback[data-fluid='hidden'] {
-  background: transparent;
-  box-shadow: none;
-  transition: background-color 180ms ease, box-shadow 180ms ease;
+.petball.no3d .petball-fallback[data-fluid='hidden']::before {
+  opacity: 0;
 }
 .petball.no3d .petball-fallback .dot-value,
 .petball.no3d .petball-fallback .dot-provider,
@@ -3430,18 +3568,20 @@ textarea {
     opacity: 0;
   }
 }
-/* ─── 倒水入场（10-04-pour-in-slosh，去雨后只剩三段）：data-pour="in" 串行 ───
+/* ─── 倒水入场（10-04-pour-in-slosh，去雨后只剩两段）：data-pour="in" 串行 ───
  *
  * ① pour-slosh：.slosh 包裹层 translateX ±amp→0 衰减包络（450ms 起，
  *    幅度/时长走 --slosh-amp/--slosh-dur，逐皮不同性格）；
- * ② pour-top：整球冲顶 overshoot（fallback scale 1→1.07→1，250ms，500ms 起）
- *    + 高光线 pour-flash 闪峰（.fluid-foam）。
+ * ② pour-flash：高光线闪峰（.fluid-foam，250ms，500ms 起）。
+ * ⚠ 冲顶的「整球外扩」已删（2026-10-06 报障②，10-06-ball-column-fixes 第四轮）：
+ *    球 = 窗口 = 56×56（D6 禁 outer shadow 的同一条约束），任何 scale > 1 都会让圆盘
+ *    越过窗口边界被 overflow:hidden 裁成四条平直弦——用户实测「自动切换供应商时圆球的
+ *    四边被遮挡」（1.07×56 ≈ 60px，每边外扩 ≈2px）。56×56 的球没有向外呼吸的空间，
+ *    冲顶的观感改由 pour-flash（泡沫闪峰）单独承载。
  * 雨滴/触水花/壁流水已删（用户 2026-10-06 拍板去雨）：POUR_DROPS 表、pour-clip 整块
- * JSX、全部雨规则与 keyframes 一并退役 —— 倒水入场现在只剩荡漾 + 冲顶 + 闪峰。
+ * JSX、全部雨规则与 keyframes 一并退役。
  * 总时长仍 ≤ shared/fluid.POUR_TOTAL_MS（播完 JS 摘属性；数值不动，只换 phase 映射）。
  * 位移动画只跑合成器：液面 d 只算一次终态，不逐帧重渲染。
- * ⚠ pour-top 的关键帧必须带 translate(-50%,-50%) —— fallback 靠 transform 定位居中，
- *    animation 会覆盖整条 transform（含 :has(:active) 的按压态，250ms 内可接受）。
  * ⚠ D6 纪律：位移只用 transform，不触发布局；无 outer shadow。 */
 .petball.no3d .slosh {
   position: absolute;
@@ -3451,22 +3591,8 @@ textarea {
 .petball.no3d .petball-fallback[data-pour='in'] .slosh {
   animation: pour-slosh var(--slosh-dur) ease-out 450ms;
 }
-.petball.no3d .petball-fallback[data-pour='in'] {
-  animation: pour-top 250ms ease-out 500ms;
-}
 .petball.no3d .petball-fallback[data-pour='in'] .fluid-foam {
   animation: pour-flash 250ms ease-out 500ms;
-}
-@keyframes pour-top {
-  0% {
-    transform: translate(-50%, -50%) scale(1);
-  }
-  40% {
-    transform: translate(-50%, -50%) scale(1.07);
-  }
-  100% {
-    transform: translate(-50%, -50%) scale(1);
-  }
 }
 @keyframes pour-flash {
   0% {
@@ -3572,6 +3698,9 @@ textarea {
      根本没生效，5i/5j/5k 拍到的是动画中段的 matrix，不是定帧那一帧。
      这不是「少停一张表」，是取帧机制本身失效。与 K11m 降级段同款修法（文件尾 .pet/.pet *
      早有先例），门是逐条比 specificity 比特，不是 grep !important。 */
+.petball.no3d .petball-fallback[data-freeze],
+.petball.no3d .petball-fallback[data-freeze]::before,
+.petball.no3d .petball-fallback[data-freeze]::after,
 .petball.no3d .petball-fallback[data-freeze] .fluid-disc,
 .petball.no3d .petball-fallback[data-freeze] .fluid-ring,
 .petball.no3d .petball-fallback[data-freeze] .fluid-bridge,
@@ -3625,14 +3754,33 @@ textarea {
   scale: 1;
   opacity: 1;
 }
-/* 倒水取帧（去雨后只剩冲顶峰）：fallback 定在 pour-top overshoot 峰。
+/* B4 三名单同步其三（冻结帧）：底盘 ::before 与 disc / ring 逐帧同位，只是没有定位用的
+   translate(-50%,-50%)（::before 走 inset:0）。**不能**并进上面那几条选择器列表 ——
+   那样 ::before 会吃到 -50% 的位移而偏半格。5i/5j/5k 拍的就是这四条定帧。 */
+.petball.no3d .petball-fallback[data-freeze='stretch']::before {
+  transform: translate(calc(var(--dx) * 5px), calc(var(--dy) * 5px)) scale(1.4, 0.7);
+}
+.petball.no3d .petball-fallback[data-edge='top'][data-freeze='stretch']::before,
+.petball.no3d .petball-fallback[data-edge='bottom'][data-freeze='stretch']::before {
+  transform: translate(calc(var(--dx) * 5px), calc(var(--dy) * 5px)) scale(0.7, 1.4);
+}
+.petball.no3d .petball-fallback[data-freeze='bridge']::before {
+  transform: translate(calc(var(--dx) * 12px), calc(var(--dy) * 12px)) scale(0.55);
+}
+.petball.no3d .petball-fallback[data-freeze='stain']::before {
+  transform: scale(0);
+}
+/* 倒水取帧（去雨后只剩冲顶时刻）：fallback 停在**无缩放**的终位。
+   冲顶的整球外扩已删（56×56 的球外扩必被裁边，见上方 pour 段注释），所以这里没有
+   可定的 overshoot 峰——取帧意义改为「灌入已到位、泡沫闪峰刚过」的那一刻。
    雨的 pour-mid 定帧（3 滴半空 + ripple + trickle）随雨退役；
    waves/slosh/foam 不参与倒水位移，不定帧（暂停名单已定住漂移）；不依赖 data-pour 是否还在播。 */
 .petball.no3d .petball-fallback[data-freeze='pour-top'] {
-  transform: translate(-50%, -50%) scale(1.07);
+  transform: translate(-50%, -50%);
 }
-/* 冻结必须停掉 fallback 本体的 pour-top animation —— running 的 animation 优先级
-   高于 transform 声明，不停的话上面的定帧位移写了也白写（暂停名单里没有 fallback 本体） */
+/* 冻结必须停掉 fallback 本体的所有 animation —— running 的 animation 优先级高于
+   transform 声明，不停的话上面的定帧位移写了也白写（暂停名单里没有 fallback 本体）。
+   冲顶的整球 animation 已删，这条现在停的是 morph 族的 disk-reveal / glass-reveal 等。 */
 .petball.no3d .petball-fallback[data-freeze='pour-top'] {
   animation: none;
 }
@@ -3678,10 +3826,11 @@ textarea {
   .petball.no3d .fluid-column-fill {
     animation: none !important;
   }
-  /* B3 三名单同步其二：底盘/玻璃罩的 morph 与 pour-top 同停（K10d5）。
-     blanket animation:none —— pour-top 在 reduced-motion 下本就不挂（JS 侧
-     reducedMotion 即 null，不启动计时器），这里只是双保险。 */
+  /* B3 三名单同步其二：底盘/玻璃罩的 morph 与倒水段同停（K10d5）。
+     blanket animation:none —— pour-slosh / pour-flash 在 reduced-motion 下本就不挂（JS 侧
+     reducedMotion 即 null，data-pour 恒不赋值，计时器不启动），这里只是双保险。 */
   .petball.no3d .petball-fallback,
+  .petball.no3d .petball-fallback::before,
   .petball.no3d .petball-fallback::after {
     animation: none !important;
   }

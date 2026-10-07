@@ -134,7 +134,7 @@ const resolved = water.resolveWaterAnchors((n) => {
   seen.push(n)
   return skin[n] ?? ''
 })
-eq(seen, ['--ok', '--warn', '--danger', '--accent'], 'getter 按 CSS 变量名取值（与 getPropertyValue 同口径）')
+eq(seen, ['--ball-ok', '--ok', '--ball-warn', '--warn', '--ball-danger', '--danger', '--ball-accent', '--accent'], 'getter 按 CSS 变量名取值（球级 --ball-* 优先，缺省回落页面级 --*；与 getComputedStyle 同口径）')
 ok(resolved != null && resolved.dangerDeep.every((v, i) => v < resolved.danger[i]), '三锚点解析 + dangerDeep 自动压暗')
 eq(water.resolveWaterAnchors(() => ''), null, '全缺 → null（整套回退，不给半套）')
 eq(water.resolveWaterAnchors((n) => (n === '--warn' ? 'oops' : skin[n])), null, '一锚坏 → null')
@@ -146,6 +146,28 @@ ok(noAccent != null && JSON.stringify(noAccent.accent) === JSON.stringify([10, 1
 const withAccent = water.resolveWaterAnchors((n) => (n === '--accent' ? '#8b5cf6' : skin[n]))
 eq(withAccent && withAccent.accent, [139, 92, 246], 'accent 正常解析（candy 紫）')
 eq(withAccent && water.rgbStr(withAccent.accent), 'rgb(139, 92, 246)', '余额水色 = accent 实色（不插值）')
+// B5：球级锚点 --ball-* 优先，页面级 --* 兜底（ink 的深墨盘上，页面级纸色发泥，
+// 球级是「同一语义在深盘上要亮的版本」）。
+{
+  const ballInk = {
+    '--ok': '#4f7a3a', '--warn': '#b07d20', '--danger': '#a63b2f', '--accent': '#8a6d3b',
+    '--ball-ok': '#5cc86a', '--ball-warn': '#ffab3d', '--ball-danger': '#ff5f45', '--ball-accent': '#ffb84d'
+  }
+  const inkResolved = water.resolveWaterAnchors((n) => ballInk[n] ?? '')
+  ok(inkResolved != null, 'ink 球级锚点齐全（球级优先 → 整套解析成功）')
+  eq(inkResolved && inkResolved.ok, [0x5c, 0xc8, 0x6a], 'ink --ball-ok 优先于 --ok（不是纸色发泥）')
+  eq(inkResolved && inkResolved.warn, [0xff, 0xab, 0x3d], 'ink --ball-warn 优先于 --warn')
+  eq(inkResolved && inkResolved.danger, [0xff, 0x5f, 0x45], 'ink --ball-danger 优先于 --danger')
+  eq(inkResolved && inkResolved.accent, [0xff, 0xb8, 0x4d], 'ink --ball-accent 优先于 --accent（余额弧不发暗）')
+  // 页面级 --ok 未被覆盖（同值 = 卡片/柱内液仍在读页面级）：
+  eq(inkResolved && water.waterColor(37.5, inkResolved), 'rgb(194, 182, 78)', 'ink 37.5% 水色 = --ball-ok 与 --ball-warn 的插值（t=37.5/60，落在绿-琥珀中段）')
+}
+// --ball-* 未声明（getComputedStyle 返回空串）→ 完全回落页面级（其余四皮与任务前逐值相同）
+eq(
+  JSON.stringify(water.resolveWaterAnchors((n) => skin[n] ?? '')?.ok),
+  JSON.stringify([0x30, 0xd1, 0x58]),
+  '球级缺失 → 页面级兜底（aero 值 = 任务前值，其余四皮零回归）'
+)
 
 console.log('用例 7：倒水入场时序（10-04-pour-in-slosh：三段串行 ≈ AC 2.5s 内结束）')
 eq(fluid.POUR_FILL_MS, 600, '灌入 600ms ease-in')

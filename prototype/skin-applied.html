@@ -44,6 +44,10 @@
   .v6 .rim { position:absolute; inset:0; border-radius:50%; pointer-events:none;
     box-shadow:inset 0 0 0 2px rgba(140,190,255,.35), inset 0 8px 16px rgba(255,255,255,.16), inset 0 -14px 24px rgba(0,20,60,.55); }
   .v6 .reading b { color:#fff; }
+  /* V7 · 墨底琥珀弧（ink 改造方向）：深墨蓝底 + 琥珀身份弧 + 弧开口两端白色端点圆点。
+     底色立体层仍走全皮肤通用的 .ball::after（不另叠压暗，否则深底被二次压黑）。 */
+  .v7 { background:radial-gradient(circle at 50% 40%, #18243f 0%, #080c17 70%); }
+  .v7 .reading b, .v7 .reading span { color:#fff; }
 /* —— 全皮肤球通用立体层（::after 盖在最上，玻璃罩即视感；读数不受影响，渐变中心透明） —— */
   .ball { box-shadow:0 8px 22px rgba(0,0,0,.55); }
   .ball::after { content:''; position:absolute; inset:0; border-radius:50%; pointer-events:none;
@@ -165,6 +169,17 @@ function ball(skin, st){
       + waveSvg(col) + '</div></div>'
       + '<div class="gloss"></div><div class="rim"></div>'
       + reading(main, sub, isBal);
+  } else if (skin.id==='v7'){
+    /* 弧色走等级色（col），轨道是琥珀身份色；端点圆点固定白色，位置 = 12 点起算
+       与 pct 同角度，故末端点用 rotate(pct*3.6) 绕圆心转（112 坐标：圆心 56,56，r=44
+       → 12 点在 cy=12）。r=44 与 V1 的刻度圈同心，端点圆点半径 4 ≈ 线宽 6 的 2/3。 */
+    var C7 = 2*Math.PI*44, deg7 = (pct*3.6).toFixed(1);
+    inner = '<svg class="ring" viewBox="0 0 112 112">'
+      + '<circle cx="56" cy="56" r="44" fill="none" stroke="rgba(255,184,77,.22)" stroke-width="6"/>'
+      + '<circle cx="56" cy="56" r="44" fill="none" stroke="'+col+'" stroke-width="6" stroke-linecap="round" stroke-dasharray="'+Math.max(0.1,(C7*pct/100)).toFixed(1)+' '+C7.toFixed(1)+'" transform="rotate(-90 56 56)"/>'
+      + '<circle cx="56" cy="12" r="4" fill="#fff"/>'
+      + '<circle cx="56" cy="12" r="4" fill="#fff" transform="rotate('+deg7+' 56 56)"/></svg>'
+      + reading(main, sub, isBal);
   }
   return '<div class="stage"><div class="ball '+skin.id+'">'+inner+'</div></div>';
 }
@@ -177,12 +192,14 @@ var SKINS = [
     verdict:['okv','分段缺口在小尺寸下反而是刻度感。余额=满格柠檬黄+金额。'] },
   { id:'v6', accent:'#3f9dff', title:'V6 · 潮汐水位蓝（候选 aero，水体保留款）', src:'底部水体高度=进度（现有语义零改动）',
     verdict:['okv','唯一不用改任何语义映射的款：水高=用量、满水=余额、水色=等级色。余额读数压在水上，保证白字对比。'] },
+  { id:'v7', accent:'#ffb84d', title:'V7 · 墨底琥珀弧（候选 ink，替代米色宣纸）', src:'深墨底 + 琥珀身份弧 + 弧开口两端白色端点',
+    verdict:['okv','深盘让弧色（等级色）完全主导，两端白点把弧的开口钉死 —— 小尺寸下比分段环更精确。余额=琥珀满环+金额。端点是弧端点的"钉",不是装饰:它让用户在 41%/59% 这种接近值上也能看出方向。'] },
 ];
 var STATES = [ {pct:41,tag:'用量'}, {pct:78,tag:'用量'}, {pct:92,tag:'用量'}, {bal:'¥1288'} ];
 var LABS = [ ['41%','ok · 绿色'], ['78%','warn · 橙色'], ['92%','danger · 红色'], ['余额','满格+accent+金额'] ];
 // 隐藏柱：液高=用量（70% warn 橙）/满柱=余额 accent；槽色按皮肤，刻度+侧光统一做法
-var COLTRACK = { v1:'#1d1008', v3:'#0a1f14', v5:'#121a0c', v6:'#0a1424' };
-var COLTICK = { v1:'rgba(255,200,120,.55)', v3:'rgba(160,255,200,.5)', v5:'rgba(230,255,170,.55)', v6:'rgba(200,225,255,.6)' };
+var COLTRACK = { v1:'#1d1008', v3:'#0a1f14', v5:'#121a0c', v6:'#0a1424', v7:'#0a1020' };
+var COLTICK = { v1:'rgba(255,200,120,.55)', v3:'rgba(160,255,200,.5)', v5:'rgba(230,255,170,.55)', v6:'rgba(200,225,255,.6)', v7:'rgba(200,215,255,.6)' };
 function column(skin, st){
   var isBal = !!st.bal, pct = isBal ? 100 : st.pct;
   var col = isBal ? skin.accent : LVL[lvlOf(pct)];
@@ -200,13 +217,13 @@ SKINS.forEach(function(sk){
 });
 document.getElementById('app').innerHTML = html;
 // 隐藏柱区：每款皮肤一根 70% 用量柱 + 一根余额满柱（与球同源同色）
-var colHtml = '<div class="sec"><h2>隐藏柱 · 四款皮肤（2x：24×112，左=70% 用量 warn 橙，右=余额满柱 accent）</h2>'
+var colHtml = '<div class="sec"><h2>隐藏柱 · 五款皮肤（2x：24×112，左=70% 用量 warn 橙，右=余额满柱 accent）</h2>'
   + '<div class="src">液高=用量/满柱=余额、液色=等级色/ accent、槽色=皮肤；弯月+三刻度+管壁侧光统一做法</div><div class="balls">';
 SKINS.forEach(function(sk){
   colHtml += '<div class="bcell">'+column(sk,{pct:70})+'<div class="lab">'+sk.id.toUpperCase()+' 70%<small>用量柱</small></div></div>';
   colHtml += '<div class="bcell">'+column(sk,{bal:'1'})+'<div class="lab">'+sk.id.toUpperCase()+' 满柱<small>余额 accent</small></div></div>';
 });
-document.getElementById('app').innerHTML += colHtml + '</div><div class="v okv">柱与球同源同色：70% 用量柱四款都是 warn 橙（语义优先），区别只在槽色；余额满柱各用自家 accent。立体感靠管壁左侧光 + 右侧内阴影 + 外投影。</div></div>';
+document.getElementById('app').innerHTML += colHtml + '</div><div class="v okv">柱与球同源同色：70% 用量柱五款都是 warn 橙（语义优先），区别只在槽色；余额满柱各用自家 accent。立体感靠管壁左侧光 + 右侧内阴影 + 外投影。</div></div>';
 // —— morph demo：V6 水球 + V3 环球（动效在浏览器打开 HTML 点按钮看；定帧见 morph-mid.png）——
 function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 function demoBall(skin, pct){
@@ -373,13 +390,16 @@ async function demoRevealWater(e, pct){
 var WAVES = {
   calm:{ d:'M0,11 Q12,7 24,11 T48,11 T72,11 T96,11 V18 H0 Z', dur:'2.6s' },
   mid:{ d:'M0,10 Q12,3 24,10 T48,10 T72,10 T96,10 V18 H0 Z', dur:'1.7s' },
-  wild:{ d:'M0,9 Q12,0 24,9 T48,9 T72,9 T96,9 V18 H0 Z', dur:'1.1s' }
+  wild:{ d:'M0,9 Q12,0 24,9 T48,9 T72,9 T96,9 V18 H0 Z', dur:'1.1s' },
+  /* V7 墨流：波幅最小、速度最慢 —— 墨在纸上的流动感，比 V3 的微澜还要平 */
+  drift:{ d:'M0,11.5 Q12,9.5 24,11.5 T48,11.5 T72,11.5 T96,11.5 V18 H0 Z', dur:'4.2s' }
 };
 var ACOL = [
   { id:'v1', w:'mid', shim:'2.8s', lab:'V1 · 中浪' },
   { id:'v3', w:'calm', shim:'3.4s', lab:'V3 · 微澜慢速' },
   { id:'v5', w:'wild', shim:'1.8s', lab:'V5 · 急浪' },
-  { id:'v6', w:'mid', shim:'2.4s', lab:'V6 · 中浪' }
+  { id:'v6', w:'mid', shim:'2.4s', lab:'V6 · 中浪' },
+  { id:'v7', w:'drift', shim:'3.8s', lab:'V7 · 墨流缓行' }
 ];
 function acol(sk){
   var col = LVL.warn;
@@ -392,7 +412,7 @@ function acol(sk){
     + '<div class="lab">'+sk.lab+'<small>柱顶浪常驻 + 液光流</small></div></div>';
 }
 document.getElementById('app').innerHTML += '<div class="sec"><h2>A · 柱顶浪常驻（hidden 只停球内三层，柱顶留一层）</h2>'
-  + '<div class="src">四根 70% 用量柱 warn 橙，区别在柱顶波浪振幅/速度 + 柱内液光流速度。动效在浏览器看，截图只定得住一帧。</div>'
+  + '<div class="src">五根 70% 用量柱 warn 橙，区别在柱顶波浪振幅/速度 + 柱内液光流速度。动效在浏览器看，截图只定得住一帧。</div>'
   + '<div class="balls">' + ACOL.map(acol).join('') + '</div>'
   + '<div class="v okv">零架构改动：hidden 下球内三层照停，只给柱顶留一层小波 + 液内高光漂移，耗电可忽略。振幅/速度按天气走。</div></div>';
 // —— D · 悬停 peek：柱上停留冒完整波浪球，不唤出 ——

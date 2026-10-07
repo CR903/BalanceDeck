@@ -88,7 +88,8 @@ ok(mainLeaking.length === 0, `C2 主进程其余模块不 import qa/（越界文
 //     （按压态，不是底盘）。按「字符串首次出现」取块，取到的既不是注释也不是底盘。
 //
 // 所以顺序固定为：剥注释 → 按**完整选择器**定位 → 配平花括号取整块 → 再判声明。
-const css = read('src/renderer/src/skins.css').replace(/\/\*[\s\S]*?\*\//g, '')
+const _raw = read("src/renderer/src/skins.css")
+const css = _raw.replace(/\/\*[\s\S]*?\*\//g, "")
 
 /**
  * 按**完整选择器**取一条规则的声明体；定位不到就返回 null（绝不返回半个块 ——
@@ -206,6 +207,8 @@ console.log('\nD. 球表面令牌化 + 短标签下移（09-28）')
 const FALLBACK = '.petball.no3d .petball-fallback'
 const WINLABEL = '.petball.no3d .dot-winlabel'
 const fallbackBody = ruleBody(css, FALLBACK)
+const fbBefore = ruleBody(css, `${FALLBACK}::before`) || ''
+
 const winlabelBody = ruleBody(css, WINLABEL)
 ok(fallbackBody != null, `D0 按选择器取到 ${FALLBACK} 的整块（剥注释 + 配平花括号）`)
 ok(winlabelBody != null, `D0 按选择器取到 ${WINLABEL} 的整块`)
@@ -216,11 +219,11 @@ const wl = decls(winlabelBody)
 // D1 底盘改用球自己的令牌。判据用「有没有引用 --bg 这个令牌」而不是
 // 「有没有 var(--bg) 这串字面量」——后者漏掉 calc()/var 嵌套等写法。
 ok(
-  /(^|[\s;{])var\(\s*--ball-bg\s*\)/.test(fallbackBody || ''),
-  `D1 ball-surface-token 底盘是 var(--ball-bg)（实际 ${JSON.stringify(fb.background || '未找到')}）`
+  /(^|[\s;{])var\(\s*--ball-bg\s*\)/.test(fbBefore),
+  `D1 ball-surface-token 底盘 ::before 是 var(--ball-bg)（实际 ${JSON.stringify(decls(fbBefore).background || '未找到')}）`
 )
 ok(
-  fallbackBody != null && !/(^|[^\w-])--bg(?![\w-])/.test(fallbackBody),
+  fbBefore != '' && !/(^|[^\w-])--bg(?![\w-])/.test(fbBefore),
   'D1 ball-surface-token 生效声明里不再引用页面级的 --bg'
 )
 
@@ -228,7 +231,7 @@ ok(
 // ⚠ 负向判据一律带 `block != null` 前置：块没取到时 `includes` 会**空洞地通过**，
 //   那和「规则里真的没有」是两件事，必须一起红。
 ok(
-  fallbackBody != null && !fallbackBody.includes('backdrop-filter'),
+  fbBefore != '' && !fbBefore.includes('backdrop-filter'),
   'D2 ball-no-backdrop-filter 生效声明里没有 backdrop-filter / -webkit-backdrop-filter'
 )
 
@@ -303,20 +306,12 @@ function lumOf(v) {
   const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
-for (const skin of ['dark', 'minimal', 'candy']) {
+for (const skin of ['dark', 'minimal', 'candy', 'ink']) {
   const v = tokenInScope('--ball-fg', skin) || ''
   const lum = lumOf(v)
   ok(
     Number.isFinite(lum) && lum >= 0.7,
     `D3e ${skin} --ball-fg 是浅色（暗盘配浅字，lum ${Number.isFinite(lum) ? lum.toFixed(3) : '不可解析'}；实际 ${v.slice(0, 48) || '未找到'}）`
-  )
-}
-for (const skin of ['ink']) {
-  const v = tokenInScope('--ball-fg', skin) || ''
-  const lum = lumOf(v)
-  ok(
-    Number.isFinite(lum) && lum <= 0.1,
-    `D3e ${skin} --ball-fg 是深色（浅盘配深字，lum ${Number.isFinite(lum) ? lum.toFixed(3) : '不可解析'}；实际 ${v.slice(0, 48) || '未找到'}）`
   )
 }
 {
@@ -395,19 +390,165 @@ for (const skin of ['ink']) {
     wl2.color === 'var(--ball-fg)',
     `D3f dot-winlabel 的 color 走 --ball-fg（实际 ${JSON.stringify(wl2.color || '未找到')}；借 --fg-dim 即红）`
   )
+  // B1 第二轮补：mark 的回落链路。PetBall.tsx 是 markColor(s.mark) || 'currentColor' ——
+  // 15 个 mark 里 7 个品牌色为空，走 currentColor，所以 .dot-provider 的 color 才是它们
+  // 真正的颜色来源。这里仍是 var(--fg) 时，minimal 的 #111114 / candy 的 #2b1b46 深 logo
+  // 会压暗盘（实拍 5c-ball-candy = 暗紫方块压深绿盘）。首版门只验 --ball-fg 令牌存在、
+  // 没验这条回落链路，正是 5c 五帧拍出来才发现的洞。
+  const dp = decls(ruleBody(css, '.petball.no3d .dot-provider'))
+  ok(
+    dp.color === 'var(--ball-fg)',
+    `D3f dot-provider 的 color 走 --ball-fg（mark 空品牌色的 currentColor 回落点；实际 ${JSON.stringify(dp.color || '未找到')}；借 --fg 即深 logo 压暗盘）`
+  )
+  ok(
+    !/(^|[^\w-])--fg(?![\w-])/.test(ruleBody(css, '.petball.no3d .dot-provider') || ''),
+    'D3f dot-provider 生效声明不引用页面级 --fg（--fg-dim 同样不许）'
+  )
 }
-// D3g · 暗盘三皮的 lvl-warn/danger/muted 让位给白字（语义由环色/水色承载，
+// D3g · 暗盘四皮的 lvl-warn/danger/muted 让位给白字（语义由环色/水色承载，
 // 等级一变读数字色不变 —— 与 K11p"身份≠等级"同一纪律在读数侧的投影）。
 // muted 也在内：error/nodata 的 !/— 在暗盘上同样不可读（ballLevel 非 ok 即 muted）。
 // CSS 侧用 :is() 收成每皮一条单选择器（逗号列表会被 ruleBody 拒收，也让"删掉某一级
 // 即红"可断）；:is() 取参数里最高 specificity = (0,5,0)，压过下面的 (0,4,0) lvl 覆写。
-for (const skin of ['dark', 'minimal', 'candy']) {
+// 报障③：B5 把 ink 由米色宣纸盘翻成深墨盘后漏加进这条循环，warn 档读数走页面级
+// --warn #b07d20（纸调琥珀）压在 #080c17 上不可读；四皮齐全才绿。
+for (const skin of ['dark', 'minimal', 'candy', 'ink']) {
   ok(
     new RegExp(
       `\\[data-skin='${skin}'\\][^{]*:is\\([^)]*\\.lvl-warn[^)]*\\.lvl-danger[^)]*\\.lvl-muted[^)]*\\)[^{]*\\.dot-value\\s*\\{[^}]*color\\s*:\\s*var\\(\\s*--ball-fg\\s*\\)`
     ).test(css),
     `D3g ${skin} lvl-warn/danger/muted 的读数让位给 --ball-fg（:is 三级缺一即红）`
   )
+}
+
+// D3h · 环球皮肤只留一层立体（B2 第二轮 + B5 追加 ink）。真因是**三层**叠加，不是数值偏：
+//   demo 的环球球只有「--ball-bg 渐变 + 一层 ::after 玻璃罩」（skin-applied.html:47-52）；
+//   App 的 fallback 4 层 inset + ::after 玻璃已与 .ball / .ball::after 同口径，
+//   但 .fluid-disc 又叠了自己的 --dot-top / --dot-bottom 径向渐变（candy 还多一层
+//   accent 光晕 + 底部压暗）—— 这第二层是 demo 没有的额外压暗，就是用户报的
+//   「渐变彩的绿底有点发黑」。
+// 水体皮（aero）的 disc 是水体的 3D，压暗正是水的深度感，不在此列 ——
+// 所以基底那条渐变必须保留，只许环球皮按皮关掉。
+// B5：ink 由水体皮反转为环球皮（深墨暗盘），一并进列表；
+// 它原本的「纸面压暗」径向渐变已删，立体感改由 --ball-bg 渐变承担。
+{
+  ok(
+    /radial-gradient/.test(decls(ruleBody(css, '.petball.no3d .fluid-disc') || '').background || ''),
+    'D3h .fluid-disc 基底仍带渐变立体（水体皮靠它承担水的 3D；删掉即水体皮变平）'
+  )
+  // 三条按皮的 disc 渐变规则已删（被 background:none 覆盖就是死代码，留着是陷阱），
+  // 所以判据两头都钉：正向必须有 background:none，负向不得再有渐变规则。
+  // 配平花括号取整块（非贪婪正则会在第一个 } 截断），且扫**全部**命中 —— 新加的渐变
+  // 规则写在哪一条都逃不掉。
+  const rulesOf = (sel) => {
+    const out = []
+    let from = 0
+    while ((from = css.indexOf(sel, from)) >= 0) {
+      const open = css.indexOf('{', from)
+      if (open < 0) break
+      let depth = 0
+      let end = -1
+      for (let j = open; j < css.length; j++) {
+        if (css[j] === '{') depth++
+        else if (css[j] === '}') {
+          depth--
+          if (depth === 0) { end = j; break }
+        }
+      }
+      if (end < 0) break
+      out.push(css.slice(open, end + 1))
+      from = end + 1
+    }
+    return out
+  }
+  for (const skin of ['dark', 'candy', 'minimal', 'ink']) {
+    const bodies = rulesOf(`[data-skin='${skin}'] .petball.no3d .fluid-disc`)
+    ok(
+      /background\s*:\s*none/.test(bodies[bodies.length - 1] || ''),
+      `D3h ${skin} 的 .fluid-disc 末条是 background:none（共 ${bodies.length} 条规则；缺了=多叠一层 demo 没有的压暗，「绿底发黑」回归）`
+    )
+    ok(
+      !bodies.some((b) => /radial-gradient/.test(b)),
+      `D3h ${skin} 无残留的 disc 渐变规则（按皮渐变层应删净；有渐变=死代码或压暗回归）`
+    )
+  }
+}
+
+// D3i · 球级锚点 --ball-* 兜底语义（10-06-ball-column-fixes B5）。
+// ink 深墨盘上，页面级 --ok/--warn/--danger 是纸色调（#4f7a3a/#b07d20/#a63b2f），
+// 压在深盘上发泥；球级 --ball-* 是**同一语义**（绿→琥珀→红）在深盘上要亮的版本。
+// 兜底机制在 resolveWaterAnchors 内（prefer()）：--ball-* 未声明 → trim 后空串
+// → 回落页面级 --*（aero/dark/candy/minimal 与本任务前逐值相同，外部皮肤 ext:* 只吃页面级）。
+// 断两头：正向 ink 声明四个球级锚点，负向 :root 不声明（否则 aero 也拿深色，卡片/柱内液一起变）。
+{
+  for (const t of ['--ball-ok', '--ball-warn', '--ball-danger', '--ball-accent']) {
+    ok(
+      declScopes(t).has('ink'),
+      `D3i ink 声明球级锚点 ${t}（缺 = 弧线吃页面级纸色调，深盘上发泥）`
+    )
+  }
+  for (const t of ['--ball-ok', '--ball-warn', '--ball-danger', '--ball-accent']) {
+    ok(
+      !declScopes(t).has('root'),
+      `D3i 顶层 :root 不声明 ${t}（:root 是外部皮肤的兜底源；这里写死了 = 其余四皮一起变深，卡片/柱内液跟着崩）`
+    )
+  }
+  // 兜底机制在 shared/water-color.ts 的 prefer()：不验代码就验调用点 ——
+  // 四个球级名字必须真的进 prefer 的第一参数，写错一个（比如 --ok-ball）就静默退回页面级。
+  // 注意：这里直接读文件（不用后面 G1c 的 waterColorBody 变量 —— const 声明在下面，
+  // const 的 TDZ 会先抛错）；剥注释同口径。
+  const wcBody = read('src/shared/water-color.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  for (const t of ['--ball-ok', '--ball-warn', '--ball-danger', '--ball-accent']) {
+    ok(
+      new RegExp(`prefer\\(get,\\s*'${t}'`).test(wcBody),
+      `D3i water-color.ts 的 prefer() 认 '${t}'（拼写错了静默退回页面级，界面无感）`
+    )
+  }
+}
+
+// D3i2 · 暗盘皮的 --ball-accent 不得回落成不可读（10-06-ball-column-fixes 报障①b）。
+// 余额弧走 waterAnchors.accent（PetBall.tsx isPlan 分支取 rgbStr(accent)），未声明
+// --ball-accent 就回落页面级 --accent。minimal 的 --accent 是 #111114（近黑），压在
+// #0b0f07 暗盘上对比度只有 1.03（实算）—— 完全看不见，用户报「直充的余额没有显示进度」。
+// 断两头：minimal 必须显式声明（不得回落）；dark/candy 不许顺手加（回落值本来就可读，
+// 加了就是无必要的跨皮视觉漂移）。aero 是水体皮（--ring-display none），环不渲染，不在此列。
+{
+  ok(
+    declScopes('--ball-accent').has('minimal'),
+    'D3i2 minimal 显式声明 --ball-accent（缺 = 余额弧回落 --accent #111114，对暗盘 1.03:1 完全看不见）'
+  )
+  ok(
+    !declScopes('--ball-accent').has('dark') && !declScopes('--ball-accent').has('candy'),
+    'D3i2 dark/candy 未声明 --ball-accent（回落值对各自暗盘是 5.1 / 4.0，读得出；别顺手加）'
+  )
+}
+
+// D3j · 端点圆点默认关闭（B5）：--ring-caps-display 缺省 none，其余四皮零端点、零回归。
+// 只有 ink 显式 block。断三头：
+//   (1) :root 给默认 none（否则新增皮肤继承 block，端点漏出来）
+//   (2) ink 显式 block
+//   (3) 其余四皮**没有**在自己的块里声明 --ring-caps-display（走 :root 默认即 none，
+//       而不是「显式写了 none」—— 后者是死声明，删掉无感，属于 K9b 同类的僵尸令牌）
+{
+  const rootCaps = tokenInScope('--ring-caps-display', 'root')
+  ok(
+    rootCaps === 'none',
+    `D3j 顶层 :root --ring-caps-display = none（默认关；外部皮肤 ext:* 继承此值，端点不冒出来）；实际 ${JSON.stringify(rootCaps || '未找到')}`
+  )
+  ok(
+    tokenInScope('--ring-caps-display', 'ink') === 'block',
+    `D3j ink --ring-caps-display = block（唯一开启端点圆点的皮肤）；实际 ${JSON.stringify(tokenInScope('--ring-caps-display', 'ink') || '未找到')}`
+  )
+  // aero 是 :root 与 aero 的联合块（见文件顶 :root, [data-skin='aero']），
+  // 顶层默认值同时算 aero 的，因此 aero 允许存在。其余三皮（dark/minimal/candy）
+  // 必须**没有**在自己的块里声明 —— 走 :root 默认即 none，自己写 none 是死声明
+  // （K9b 同类的僵尸令牌：删掉无感，留着是陷阱）。
+  for (const s of ['dark', 'minimal', 'candy']) {
+    ok(
+      !declScopes('--ring-caps-display').has(s),
+      `D3j ${s} 不声明 --ring-caps-display（继承 :root 的 none 即够；自己写 none = 死声明，删掉无感）`
+    )
+  }
 }
 
 // D4 短标签换字体观感 + 更小（AC3.3）。判据是「解析后不是 body 那一套栈」。
@@ -515,9 +656,9 @@ for (const [sel, why] of PET_WINDOW_FULLBLEED) {
 // 球盘的**正向**要求（AC5.3）：立体感由 CSS inset 阴影提供，所以层数必须 > 0。
 // ⚠ 这条不能推广到整张表：改名输入框的**正确终态就是 0 层**（一个投影都不许有），
 //   对它要求「层数 > 0」等于逼着人把阴影写回去。只对「本该有 inset 立体感」的元素提。
-const fbLayers = shadowLayers(fb['box-shadow'] || '')
+const fbLayers = shadowLayers(decls(fbBefore)['box-shadow'] || '')
 ok(
-  fallbackBody != null && fbLayers.length > 0,
+  fbBefore != '' && fbLayers.length > 0,
   `D6 inset-3d 球盘的立体感由 inset 阴影提供，box-shadow 至少 1 层（实际 ${fbLayers.length} 层）`
 )
 
@@ -1115,8 +1256,8 @@ ok(
   'K7b 摘属性计时经 shared POUR_TOTAL_MS + 荡漾有独立 .slosh 位移层（不复用波浪 svg 本体）'
 )
 ok(
-  /pour-top/.test(css) && /pour-slosh/.test(css) && /pour-flash/.test(css),
-  'K7c 冲顶/荡漾/闪峰三段 keyframes 都在（少一段，入场就缺一拍）'
+  /pour-slosh/.test(css) && /pour-flash/.test(css) && !/@keyframes pour-top\s*\{/.test(css),
+  'K7c 荡漾/闪峰两段 keyframes 都在；冲顶的整球外扩 keyframe 已删（56×56 的球外扩必被窗口裁边，报障②）'
 )
 ok(
   !/@keyframes pour-fill\s*\{/.test(css) && !/@keyframes pour-stream\s*\{/.test(css) &&
@@ -1126,8 +1267,8 @@ ok(
 ok(
   /\[data-pour='in'\][^{]*\.slosh[^}]*pour-slosh/.test(css) &&
     /\[data-pour='in'\][^{]*\.fluid-foam[^}]*pour-flash/.test(css) &&
-    /\[data-pour='in'\][^{]*\{[^}]*pour-top/.test(css),
-  'K7d 荡漾/闪峰/冲顶挂在 data-pour 上（属性摘掉即无入场；雨删了，落距/落点内联不复存在）'
+    !/\[data-pour='in'\][^{]*\{[^}]*pour-top/.test(css),
+  'K7d 荡漾/闪峰挂在 data-pour 上；冲顶的整球 animation 已删（外扩必裁边，报障②）'
 )
 ok(
   /\.slosh\s*\{[^}]*position:\s*absolute/.test(css),
@@ -1148,8 +1289,9 @@ ok(
 )
 ok(
   !/pour-mid/.test(petBallCode) && /pour-top/.test(petBallCode) &&
-    /\[data-freeze='pour-top'\]/.test(css) && !/\[data-freeze='pour-mid'\]/.test(css),
-  'K7f 取帧只留 pour-top（冲顶峰 --shots 5m；雨的 pour-mid 定帧随雨退役）'
+    /\[data-freeze='pour-top'\]/.test(css) && !/\[data-freeze='pour-mid'\]/.test(css) &&
+    !/\[data-freeze='pour-top'\][^{]*\{[^}]*scale/.test(css),
+  'K7f 取帧只留 pour-top（冲顶时刻 --shots 5m）；定帧位移不得带 scale（外扩必裁边，报障②）'
 )
 ok(
   /prefers-reduced-motion/.test(petBallCode),
@@ -1320,10 +1462,10 @@ ok(
     pillR === 6 && parseFloat(pillT.width) === 56 && parseFloat(pillT.height) === 12 && pillBok,
     `K8n1 横槽胶囊：同上（实际顶槽 ${pillT.width || '?'}×${pillT.height || '?'}；删任一圆角即红）`
   )
-  const fillR = parseFloat((decls(ruleBody(css, '.petball.no3d .fluid-column-fill'))['border-radius'] || ''))
+  const fillRadiusDecls = (ruleBody(css, '.petball.no3d .fluid-column-fill') || '').match(/border-radius\s*:/gi) || []
   ok(
-    fillR === 6 && pillR === 6,
-    `K8n2 柱内液圆角与槽同值（实际 fill ${Number.isFinite(fillR) ? `${fillR}px` : '未找到'}；方形 fill 顶圆角槽底 = 底部尖耳朵）`
+    fillRadiusDecls.length === 0,
+    `K8n2 柱内液 fill 无 border-radius（B3：fill 是纯矩形，圆角效果来自容器 .fluid-pill overflow:hidden 裁切；实测 ${fillRadiusDecls.length} 处 border-radius，应 0）`
   )
   const dome = decls(ruleBody(css, '.petball.no3d .fluid-column-fill:not(:empty)::before'))
   ok(
@@ -1358,7 +1500,7 @@ ok(
   'K8h 隐藏稳态关 goo 滤镜（无可融合形状；离屏 SVG 滤镜子树画不出，5n 取证）'
 )
 ok(
-  /\[data-fluid='hidden'\][^{]*\{[^}]*background:\s*transparent/.test(css) &&
+  /\[data-fluid='hidden'\]::before[^}]*opacity:\s*0/.test(css) &&
     /\[data-fluid='hidden'\][^{]*\.dot-value[^}]*opacity:\s*0/.test(css) &&
     /\.dot-provider[^}]*opacity:\s*0\s*!important/.test(css) &&
     /\.petball-fallback\[data-fluid='hidden'\]::after[^}]*opacity:\s*0/.test(css),
@@ -1392,10 +1534,18 @@ for (const prop of [
     `K9a ${prop} 在顶层 :root + 5 个皮肤都有（缺 ${missing.join(',') || '无'}）`
   )
 }
-ok(
-  /\[data-skin='ink'\][^{]*\.fluid-wave-c[^}]*display:\s*none/.test(css),
-  'K9b ink 只开两层水（留白；C 层 display:none，不是 opacity 0 —— 占位层仍耗合成）'
-)
+// K9b · B5 反转：ink 由水体皮改成环球皮，C 层不再需要 display:none（环形态整体不画水体）。
+// 保留门的语义：ink 与 aero 的波性格不同（--wave-* 令牌值不同），一眼可辨靠水效承担
+// 的是「柱顶浪」与「隐藏栏」，不是球内水。断言：ink 的 --wave-speed-a 与 :root 不同
+// （若回落到 :root 值，ink 的柱体性格就掉回 aero）。
+{
+  const inkWaveA = tokenInScope('--wave-speed-a', 'ink')
+  const rootWaveA = tokenInScope('--wave-speed-a', 'root')
+  ok(
+    inkWaveA != null && rootWaveA != null && inkWaveA !== rootWaveA,
+    `K9b ink 保留自己的波性格（--wave-speed-a：ink=${inkWaveA} / root=${rootWaveA}；相同 = ink 的柱体/柱顶浪掉回 aero，「一眼可辨」破）`
+  )
+}
 for (const skin of SKINS) {
   ok(
     new RegExp(`\\[data-skin='${skin}'\\][^{]*\\.fluid-disc[^}]*background:`).test(css),
@@ -1457,7 +1607,7 @@ ok(
 //   dark    = V1 余烬橙环   → 24 粒刻度圈 + 粗进度弧
 //   candy   = V3 极速双环   → 外环进度 + 内装饰细环
 //   minimal = V5 柠檬分段环 → 3 段粗弧带缺口，缺口兼刻度
-//   ink     = 保留现状（水体；与 aero 同形态但不同波性格，一眼可辨靠水效）
+//   ink     = V7 墨色深盘   → 深墨暗盘 + 色相进度弧 + 两端白色端点圆点（B5：由水体反转）
 //
 // 为什么这几条必须存在（不是"为覆盖率写门"）：
 //   · 形态靠 --water-display / --ring-display 两个**令牌**表达，不靠 JS 分支。
@@ -1472,7 +1622,7 @@ for (const [skin, form] of [
   ['dark', 'ring'],
   ['candy', 'ring'],
   ['minimal', 'ring'],
-  ['ink', 'water']
+  ['ink', 'ring']
 ]) {
   const scopes = declScopes('--water-display')
   ok(
@@ -1580,7 +1730,11 @@ ok(
 )
 // 归一化空间：没有 pathLength，dasharray 的单位是像素，那么 --ring-r 一改半径
 // 弧长比例就错（22px 与 24px 半径下同一个 "41" 画出不同的百分比）。ringSvg 里
-// 四个 circle 走 RING_DASH_SPACE(=100)，刻度圈走 96（24 粒 × 4）。
+// 五个 circle 走 RING_DASH_SPACE(=100)，刻度圈走 96（24 粒 × 4）。
+//
+// ⚠ 两个**裸** circle 是端点圆点（V7 ink 用，B5 追加）：filled circle，走 r/fill 属性
+// 而不是 stroke-dasharray —— pathLength 归一化空间只对**描边弧长**有效，实心圆套它是
+// 无意义数字。所以「裸 circle 数 = 2」是刻意的（起/终两点），不是漏归一化。
 {
   const start = petBallWater.indexOf('function ringSvg')
   const seg = start >= 0 ? petBallWater.slice(start, petBallWater.indexOf('\n}', start) + 2) : ''
@@ -1588,8 +1742,8 @@ ok(
   const ticksN = (seg.match(/pathLength=\{96\}/g) || []).length
   const bare = (seg.match(/<circle(?![^>]*pathLength)/g) || []).length
   ok(
-    seg !== '' && spaceN === 4 && ticksN === 1 && bare === 0,
-    `K11f ringSvg 的 5 个 circle 全带 pathLength 归一化（RING_DASH_SPACE×${spaceN}/4 + 刻度圈 96×${ticksN}，裸 circle ${bare} 个）`
+    seg !== '' && spaceN === 4 && ticksN === 1 && bare === 2,
+    `K11f ringSvg 的 5 个描边 circle 全带 pathLength 归一化（RING_DASH_SPACE×${spaceN}/4 + 刻度圈 96×${ticksN}），裸 circle ${bare}/2（= 端点圆点起/终，filled 圆不套 pathLength）`
   )
 }
 // K11f2 · 跨 TS/CSS 自洽：pathLength 与 dash 周期必须凑出整数粒数（2026-10-06 check P6 M3）
@@ -1658,6 +1812,23 @@ ok(
   ok(
     folded.length === 6 && folded.filter((_, i) => i % 2 === 0).length === 3,
     `K11f3 原型 pattern 是 3 段弧 + 3 段缺口（${folded.join(' ')}）`
+  )
+}
+// K11f4 · .ring-seg 必须与 .ring-arc 同起点（12 点）—— 分段是量具的格线、弧是读数，
+// 两者错开 90° 时读感就是「进度条和百分比对不上」（2026-10-06 报障①）。
+// 真相源是原型 skin-applied.html:163 的分段 circle 自带 transform="rotate(-90 56 56)"；
+// App 只给 .ring-arc 加了 rotate(-90 28 28)，.ring-seg 漏了 —— 分段从 3 点起画、弧从
+// 12 点起画，弧从分段中间穿过。两段 r / stroke-width 都是 --ring-r / --ring-sw（完全同
+// 几何），所以对不齐就是纯粹的起点错开，不是线宽或半径的锅。
+{
+  const segTag = (petBallCode.match(/<circle\s[^>]*className="ring-seg"[^>]*\/>/) || [''])[0]
+  ok(
+    segTag.includes('transform="rotate(-90 28 28)"'),
+    'K11f4 .ring-seg 带 transform="rotate(-90 28 28)"（与 .ring-arc 同起点 12 点；缺了它分段从 3 点起画，报障①）'
+  )
+  ok(
+    /<circle\s[^>]*className="ring-arc"[^>]*transform="rotate\(-90 28 28\)"/.test(petBallCode),
+    'K11f4b .ring-arc 的 rotate(-90 28 28) 仍在（K11f4 的对齐基准；删了它两段又错开 90°）'
   )
 }
 //
@@ -2041,34 +2212,39 @@ for (const target of ['fluid-disc', 'fluid-ring']) {
 // 同步；时序常量仍归 shared/fluid.ts（ABSORB_TOTAL_MS=530 / REVEAL_MS=400），
 // CSS 只写与 disc 形态规则相同的字面量，不另起；hidden 稳态规则不动（K10c 照守）。
 {
-  const absorbFallback = /\.petball-fallback\[data-fluid='absorbing'\]\s*\{[^}]*fallback-absorb/.test(css)
+  const absorbFallback = /\.petball-fallback\[data-edge=[^\]]*\]\[data-fluid='absorbing'\]::before[\s\S]*?disk-absorb-(h|v)/.test(css)
   const absorbGlass = /\.petball-fallback\[data-fluid='absorbing'\]::after\s*\{[^}]*glass-absorb/.test(css)
-  ok(absorbFallback, 'K10d1 吸入名单含底盘本体（.petball-fallback[data-fluid=absorbing] 走 fallback-absorb；删掉即红）')
+  ok(absorbFallback, 'K10d1 吸入名单含底盘 ::before（.petball-fallback[data-edge=…][data-fluid=absorbing]::before 走 disk-absorb-h/v；删掉即红）')
   ok(absorbGlass, 'K10d1 吸入名单含玻璃罩（::after 走 glass-absorb；删掉即红）')
-  const revealFallback = /\.petball-fallback\[data-fluid='revealing'\]\s*\{[^}]*fallback-reveal/.test(css)
+  const revealFallback = /\.petball-fallback\[data-fluid='revealing'\]::before\s*\{[^}]*disk-reveal/.test(css)
   const revealGlass = /\.petball-fallback\[data-fluid='revealing'\]::after\s*\{[^}]*glass-reveal/.test(css)
-  ok(revealFallback, 'K10d2 汇聚名单含底盘本体（走 fallback-reveal；删掉即红）')
+  ok(revealFallback, 'K10d2 汇聚名单含底盘 ::before（走 disk-reveal；删掉即红）')
   ok(revealGlass, 'K10d2 汇聚名单含玻璃罩（走 glass-reveal；删掉即红）')
   // 时序同源：底盘/玻璃罩四条时长必须等于 disc 形态规则的字面量（530 / 400，
   // 唯一口径 shared/fluid.ts；另起数字即红）。
   const dur = (name) => [...css.matchAll(new RegExp(`${name}\\s+(\\d+)ms`, 'g'))].map((m) => m[1])
-  const fa = dur('fallback-absorb')
+  const daH = dur('disk-absorb-h')
+  const daV = dur('disk-absorb-v')
   const ga = dur('glass-absorb')
-  const fr = dur('fallback-reveal')
+  const dr = dur('disk-reveal')
   const gr = dur('glass-reveal')
   const discA = dur('disc-absorb-h')
   const discR = dur('disc-reveal')
   ok(
-    fa.length > 0 && fa.every((d) => d === '530') && discA.includes('530'),
-    `K10d3 吸入底盘与 disc 同 530ms（fallback-absorb 实得 ${fa.join(',') || '未找到'}；disc-absorb-h 实得 ${discA.join(',') || '未找到'}）`
+    daH.length > 0 && daH.every((d) => d === '530') && discA.includes('530'),
+    `K10d3 吸入底盘与 disc 同 530ms（disk-absorb-h 实得 ${daH.join(',') || '未找到'}；disc-absorb-h 实得 ${discA.join(',') || '未找到'}）`
+  )
+  ok(
+    daV.length > 0 && daV.every((d) => d === '530'),
+    `K10d3 吸入底盘纵向同 530ms（disk-absorb-v 实得 ${daV.join(',') || '未找到'}）`
   )
   ok(
     ga.length > 0 && ga.every((d) => d === '530'),
     `K10d3 吸入玻璃罩同 530ms（实得 ${ga.join(',') || '未找到'}）`
   )
   ok(
-    fr.length > 0 && fr.every((d) => d === '400') && discR.includes('400'),
-    `K10d3 汇聚底盘与 disc 同 400ms（fallback-reveal 实得 ${fr.join(',') || '未找到'}；disc-reveal 实得 ${discR.join(',') || '未找到'}）`
+    dr.length > 0 && dr.every((d) => d === '400') && discR.includes('400'),
+    `K10d3 汇聚底盘与 disc 同 400ms（disk-reveal 实得 ${dr.join(',') || '未找到'}；disc-reveal 实得 ${discR.join(',') || '未找到'}）`
   )
   ok(
     gr.length > 0 && gr.every((d) => d === '400'),
@@ -2086,21 +2262,78 @@ for (const target of ['fluid-disc', 'fluid-ring']) {
     }
     return null
   }
-  const faKf = kfBlock('fallback-absorb') || ''
+  const daHKf = kfBlock('disk-absorb-h') || ''
   ok(
-    /background\s*:\s*transparent/.test(faKf) && /box-shadow\s*:\s*none/.test(faKf),
-    'K10d4 吸入终态 = hidden 稳态值（transparent + 无阴影；交接跳变即红）'
+    /scale\(\s*0(?:\s*,\s*0)?\s*\)/.test(daHKf),
+    'K10d4 吸入终态 = scale(0)（::before 归零，K10c 的 opacity:0 兜底隐藏；交接跳变即红）'
   )
-  const frKf = kfBlock('fallback-reveal') || ''
+  const drKf = kfBlock('disk-reveal') || ''
   ok(
-    /background\s*:\s*transparent/.test(frKf) && /var\(\s*--ball-bg\s*\)/.test(frKf),
-    'K10d4 汇聚起于透明、终于底盘色（reveal 与 absorb 反向对称；不对称即红）'
+    /scale\(\s*0(?:\s*,\s*0)?\s*\)/.test(drKf) && /scale\(\s*1(?:\s*,\s*1)?\s*\)/.test(drKf),
+    'K10d4 汇聚起于 scale(0)、终于 scale(1)（reveal 与 absorb 反向对称；不对称即红）'
   )
   // hidden 稳态不跑底盘动画：hidden 下只有 180ms 淡出（K10c），morph 动画
   // 进 hidden 名单 = 稳态柱上底盘闪动。
   ok(
-    !/\[data-fluid='hidden'\][^{]*fallback-(absorb|reveal)/.test(css),
+    !/\[data-fluid='hidden'\][^{]*disk-(absorb|reveal)/.test(css),
     'K10d4 hidden 稳态不挂底盘 morph（只留 K10c 的淡出；混入即红）'
+  )
+}
+
+// K10d7 · B4 第二轮：底盘视觉从 fallback 本体搬到 ::before 之后，三张名单 + 三组冻结帧
+// 都要跟着搬，否则降级/取帧/隐身路径上会有一层"盘圆满而球已拉成液线"的错帧。
+// ⚠ 不能只 grep !important —— 那会漏掉"名单里根本没写这一项"（K11m 踩过）。
+{
+  ok(
+    /\.petball-fallback\.doc-hidden::before/.test(css),
+    'K10d7 doc-hidden 名单含底盘 ::before（漏了 document.hidden 时底盘照跑 morph）'
+  )
+  ok(
+    /\.petball-fallback\[data-freeze\]::before/.test(css),
+    'K10d7 data-freeze 停表名单含底盘 ::before（running 的 animation 盖静态 transform，漏了 5i/5j/5k 拍错帧）'
+  )
+  // 配平花括号取「含 petball-fallback 的那一个」reduced-motion 块：
+  // 文件里有 4 个 prefers-reduced-motion 块，先取第一个会取到别的小块。
+  let rmBlock = ''
+  let from = 0
+  while ((from = css.indexOf('prefers-reduced-motion', from)) >= 0) {
+    const start = css.indexOf('{', from)
+    if (start < 0) break
+    let depth = 0
+    let end = -1
+    for (let j = start; j < css.length; j++) {
+      if (css[j] === '{') depth++
+      else if (css[j] === '}') {
+        depth--
+        if (depth === 0) { end = j; break }
+      }
+    }
+    if (end < 0) break
+    const block = css.slice(start, end + 1)
+    from = end + 1
+    if (block.includes('petball-fallback')) { rmBlock = block; break }
+  }
+  ok(
+    /petball-fallback::before/.test(rmBlock),
+    `K10d7 reduced-motion 名单含底盘 ::before（降级漏项 = 动效回归；定位到 ${rmBlock.length} 字符块）`
+  )
+  for (const frame of ['stretch', 'bridge', 'stain']) {
+    ok(
+      new RegExp(`\\.petball-fallback\\[data-edge[^\\]]*\\]?\\[data-freeze='${frame}'\\]::before|\\.petball-fallback\\[data-freeze='${frame}'\\]::before`).test(css),
+      `K10d7 冻结帧 ${frame} 含底盘 ::before（漏了会拍到"盘圆满 + 球已拉成液线"的错帧）`
+    )
+  }
+  ok(
+    !/fallback-absorb|fallback-reveal/.test(css),
+    'K10d7 旧 fallback-absorb / fallback-reveal 关键帧已删（background 离散跳变的翻转点方案已退役）'
+  )
+  // fallback 本体必须是空壳：把 background/box-shadow 搬回去，就退回"只能靠 gradient↔
+  // transparent 离散跳变"的老路，B4 直接回归。
+  ok(
+    fallbackBody != null &&
+      !/(^|[\s;{])var\(\s*--ball-bg\s*\)/.test(fallbackBody) &&
+      !/box-shadow\s*:/.test(fallbackBody),
+    'K10d7 .petball-fallback 本体无 background / box-shadow（视觉只在 ::before；搬回即 B4 回归）'
   )
 }
 // K10d5 · 降级同步其一 reduced-motion：底盘/玻璃罩的新动画必须真停
@@ -2225,6 +2458,75 @@ for (const skin of RING_IDENTITY_SKINS) {
   )
 }
 
+// K11q · 端点圆点子令牌成组存在（10-06-ball-column-fixes B5）。
+// 端点圆点是第三个特色形态层（前两个：V1 刻度圈、V5 分段、V3 内环），
+// 走与 K11c2 完全同一条纪律：某皮开 --ring-caps-display 就要给全套子令牌，
+// :root 必须给全套兜底（外部皮肤 ext:* 只吃得到顶层那份）。
+// 子令牌是 display/r/c 三个（fill/c/r/display），比 K11c2 的其他形态少是因为
+// 端点圆点没有 dash pattern（filled circle 不套 pathLength）。
+for (const feature of ['caps']) {
+  const displayProp = `--ring-${feature}-display`
+  const props = [`--ring-${feature}-display`, `--ring-${feature}-r`, `--ring-${feature}-c`]
+  const owners = SKINS.filter((s) => (tokenInScope(displayProp, s) || '') === 'block')
+  ok(
+    owners.length > 0,
+    `K11q ${feature} 层至少有一皮开启（实得 ${owners.join(',') || '无'}；全关 = 端点圆点没实现）`
+  )
+  for (const s of SKINS) {
+    if ((tokenInScope(displayProp, s) || '') !== 'block') continue
+    const missing = props.filter((p) => !declScopes(p).has(s))
+    ok(
+      missing.length === 0,
+      `K11q ${s} 开了 --ring-${feature}-display，其 ${props.length} 个子令牌在本皮齐全（缺 ${missing.join(', ') || '无'}）`
+    )
+  }
+  const rootMissing = props.filter((p) => !declScopes(p).has('root'))
+  ok(
+    rootMissing.length === 0,
+    `K11q ${feature} 层全套子令牌在顶层 :root 有兜底（缺 ${rootMissing.join(', ') || '无'}）`
+  )
+}
+
+// K11q2 · 端点圆点的角度口径：--arc-pct 由 TS 内联，角度换算在 CSS。
+// 断两头：(1) PetBall 的 .petball-fallback 上真的写了 --arc-pct（值来自 fluidLvl * 100）
+//          (2) CSS 的 .ring-cap-end 用 calc(var(--arc-pct) * 3.6deg) 换算（TS 里不出现几何数字）
+{
+  ok(
+    /['"]--arc-pct['"]\s*:\s*fluidLvl\s*\*\s*100/.test(petBallWater),
+    'K11q2 PetBall 在 .petball-fallback 上内联 --arc-pct = fluidLvl * 100（与 ringDash 同源，百分比口径）'
+  )
+  ok(
+    /\.ring-cap-end\s*\{[\s\S]*?transform:\s*rotate\(calc\(var\(\s*--arc-pct[^)]*\)\s*\*\s*3\.6deg/.test(css),
+    'K11q2 CSS 的 .ring-cap-end 用 calc(var(--arc-pct) * 3.6deg) 换算角度（TS 里不出现几何数字）'
+  )
+  ok(
+    !/\*\s*3\.6/.test(petBallWater),
+    'K11q2 TS 里没有 3.6 度换算（角度单位在 CSS；TS 出现即违反「几何不进 TS」纪律）'
+  )
+}
+
+// K11q3 · 端点圆点的**径向**定位（2026-10-07 实拍 5c-ball-ink 抓到的坑）。
+// rotate 只负责「转到哪个角度」，径向距离必须写在 cx 上。cx 若写成圆心 28px，
+// 绕圆心（transform-origin 28px 28px）旋转不会移动圆心上的点 —— 两个端点圆点
+// 叠在球心、被白色读数盖住，视觉上等于没有端点，而 K11q2 的三条断言全绿。
+// shots 探针只读 transform/r/fill 也抓不到（纯旋转变换矩阵的 e/f 恒为 0），
+// 所以必须直接断 CSS 的 cx 写法。
+{
+  const capRule = /(\.ring-cap-start,\s*\.ring-cap-end\s*\{[^}]*\})/.exec(css)?.[1] || ''
+  ok(
+    /cx:\s*calc\(\s*28px\s*\+\s*var\(\s*--ring-r/.test(capRule),
+    `K11q3 端点圆点 cx = 28px + --ring-r（先落 3 点位，再由 rotate(-90deg) 转到 12 点；实际 ${JSON.stringify((capRule.match(/cx:\s*[^;]+/) || ['未找到'])[0])})`
+  )
+  ok(
+    !/cx:\s*28px\s*;/.test(capRule),
+    'K11q3 端点圆点 cx 不是裸圆心 28px（写成圆心 + 绕圆心旋转 = 圆点钉在球心被读数盖住）'
+  )
+  ok(
+    /transform-origin:\s*28px\s+28px/.test(capRule),
+    'K11q3 端点圆点 transform-origin 是球心 28px 28px（角度换算的旋转轴；改了半径定位就失真）'
+  )
+}
+
 // K4 · 水柱几何（R4-5 原地变柱）：CSS 的四条边规则与 shared/fluid.waterColumn 同形
 //     （竖柱 12×56 / 横槽 56×12；12 = shared/dock-hide.COLUMN_W，56 = shared/pet-view.BALL_VIEW），
 //     且贴边侧（左沿柱在左，不在右 —— 与旧滑出 peek 侧反号）。
@@ -2253,15 +2555,13 @@ ok(
     ruleBody(css, '.petball.no3d .fluid-column-wave svg') != null,
   'K4c 柱内液 + 柱顶波浪的 CSS 规则都在'
 )
-// K4e · 柱内液圆角与槽同值（方形 fill 底顶着圆角槽 = 底部尖耳朵；方形 fill 顶 +
-// 圆形弯月相交 = 顶部两侧掐出尖。上下全圆与 pill 同半径，弯月圆与圆顶融为连续胶囊；
-// 横槽的短边同为 12px，同一半径两向通用，不另起值）。
+// K4e · 2026-10-06 B3：fill 不带 border-radius，圆角效果来自容器 overflow:hidden 裁切。
 {
   const pillR = decls(ruleBody(css, '.petball.no3d .fluid-pill'))['border-radius']
   const fillR = decls(ruleBody(css, '.petball.no3d .fluid-column-fill'))['border-radius']
   ok(
-    pillR != null && fillR != null && fillR === pillR,
-    `K4e 柱内液圆角与槽同值（pill ${pillR || '缺'}/fill ${fillR || '缺'}，不等=尖耳朵回归）`
+    pillR === '6px' && fillR == null,
+    `K4e 柱内液纯矩形 + 容器圆角裁切（pill ${pillR || '缺'}/fill ${fillR || '无（正确）'}；fill 一旦带 radius 即双重圆角=尖耳朵回归）`
   )
 }
 

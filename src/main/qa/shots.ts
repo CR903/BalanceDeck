@@ -169,12 +169,77 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
           ticksDisplay:dot.querySelector('.ring-ticks')?getComputedStyle(dot.querySelector('.ring-ticks')).display:'(absent)',
           segDisplay:dot.querySelector('.ring-seg')?getComputedStyle(dot.querySelector('.ring-seg')).display:'(absent)',
           innerDisplay:dot.querySelector('.ring-inner')?getComputedStyle(dot.querySelector('.ring-inner')).display:'(absent)',
+          // B5 端点圆点探针：display（默认 none，ink 为 block）/ --arc-pct（0..100，与弧长同源）/
+          // end-cap 的 computed transform（matrix；用于验证角度换算真的随水位走）
+          // cx/cy 必须一起打：**transform 读不到径向定位**（纯旋转变换矩阵的 e/f 恒为 0），
+          // 圆点 cx 写成圆心 28px 时 transform 探针仍全绿，端点却被读数盖住（2026-10-07 5c-ball-ink）
+          capsDisplay:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).display:'(absent)',
+          capStartCx:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).cx:'(absent)',
+          capStartCy:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).cy:'(absent)',
+          capStartR:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).r:'(absent)',
+          capStartFill:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).fill:'(absent)',
+          arcPct:dot.style.getPropertyValue('--arc-pct'),
+          capEndTransform:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).transform:'(absent)',
+          capEndCx:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).cx:'(absent)',
+          capEndCy:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).cy:'(absent)',
+          capEndR:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).r:'(absent)',
           pathLength:arc?arc.getAttribute('pathLength'):'?',
+          // 报障③ 取证：读数颜色必须随暗盘走 --ball-fg（lvl-warn/danger/muted 让位白字）。
+          // 报障① 取证：分段圆的 computed transform 必须是 rotate(-90)（与弧同起点 12 点）。
+          valueColor:dot.querySelector('.dot-value')?getComputedStyle(dot.querySelector('.dot-value')).color:'(absent)',
+          lvlClass:(dot.closest('.petball')||dot).className.match(/lvl-\w+/)?.[0]||'(none)',
+          segTransform:dot.querySelector('.ring-seg')?getComputedStyle(dot.querySelector('.ring-seg')).transform:'(absent)',
           rNum
         });
       })()`)
     )
     process.stdout.write(`5c-form: ${id} ${formProbe}\n`)
+  }
+  // 高用量取证帧（10-06-ball-column-fixes 报障③）：上面的 5c 是 40% = lvl-ok，验不到
+  // 「lvl-warn/danger/muted 让位白字」那条覆写（ink 曾漏加，warn 档走页面级 --warn #b07d20
+  // 压在深墨盘上）。推 70% 强制 warn 档，对拍读数颜色。
+  await exec(`window.api.debugPush(${JSON.stringify(column70Snapshot())}, false)`)
+  for (const id of ['minimal', 'ink']) {
+    await exec(`window.api.setSkin('${id}')`)
+    await sleep(1100)
+    await shoot(`5c-ball-${id}-70`)
+    const warnProbe = String(
+      await exec(`(()=>{
+        const dot=document.querySelector('.petball-fallback');
+        if(!dot) return 'no-dot';
+        return JSON.stringify({
+          lvlClass:(dot.closest('.petball')||dot).className.match(/lvl-\\w+/)?.[0]||'(none)',
+          valueColor:dot.querySelector('.dot-value')?getComputedStyle(dot.querySelector('.dot-value')).color:'(absent)'
+        });
+      })()`)
+    )
+    process.stdout.write(`5c-warn: ${id} ${warnProbe}\n`)
+  }
+  // 余额弧取证（10-06-ball-column-fixes 报障①b）：余额走 waterAnchors.accent，minimal 原本
+  // 未声明 --ball-accent → 回落页面级 --accent #111114（近黑），压在暗盘上对比度只有 1.03
+  // —— 用户报「直充的余额没有显示进度」。
+  {
+    const balJson = JSON.stringify([
+      { builtin: true, dataQuality: 'official', id: 'shot-bal', name: '余额', kind: 'balance', mark: 'deepseek', status: 'ok', source: '走查固件', dataAt: new Date().toISOString(), updatedAt: new Date().toISOString(), windows: [{ name: '账户余额', used: 1288.5, unit: 'cny' }] }
+    ])
+    await exec(`window.api.debugPush(${balJson}, false)`)
+    for (const id of ['minimal', 'ink']) {
+      await exec(`window.api.setSkin('${id}')`)
+      await sleep(1100)
+      await shoot(`5c-ball-${id}-bal`)
+      const balProbe = String(
+        await exec(`(()=>{
+          const arc=document.querySelector('.ring-arc');
+          if(!arc) return 'no-arc';
+          return JSON.stringify({
+            dataRing:document.querySelector('.petball-fallback')?.getAttribute('data-ring'),
+            arcStroke:getComputedStyle(arc).stroke,
+            arcDash:arc.getAttribute('stroke-dasharray')
+          });
+        })()`)
+      )
+      process.stdout.write(`5c-bal: ${id} ${balProbe}\n`)
+    }
   }
   await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
   await sleep(900)
@@ -204,15 +269,22 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(`window.__bd_fluid_freeze?.('stretch')`)
   await sleep(600)
   await shoot('5i-fluid-stretch')
-  // 自描述探针（R3 整球吸入变形）：disc/bridge 定帧 transform 打到日志，
+  // 自描述探针（R3 整球吸入变形）：disc/bridge/disk 定帧 transform 打到日志，
   // 拉丝与否看 matrix(sx)≠matrix(sy)，不靠像素猜（goo 开时颜色带漂移）。
+  // B4 第二轮加 disk（底盘已从 .petball-fallback 搬到 ::before）：它是"黑盘还在"的
+  // 直接证据位 —— stretch 帧必须是横向拉长的椭圆，不是完整圆。
   process.stdout.write(
     `5i-probe: ${String(
       await exec(`(()=>{
+        const fb=document.querySelector('.petball-fallback');
         const disc=document.querySelector('.fluid-disc');
         const br=document.querySelector('.fluid-bridge');
-        return JSON.stringify({disc:disc?getComputedStyle(disc).transform:'?',
-          bridge:br?getComputedStyle(br).transform:'?'});
+        return JSON.stringify({
+          disc:disc?getComputedStyle(disc).transform:'?',
+          bridge:br?getComputedStyle(br).transform:'?',
+          disk:fb?getComputedStyle(fb,'::before').transform:'?',
+          diskOp:fb?getComputedStyle(fb,'::before').opacity:'?'
+        });
       })()`)
     )}\n`
   )
@@ -222,6 +294,23 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(`window.__bd_fluid_freeze?.('stain')`)
   await sleep(600)
   await shoot('5k-fluid-stain')
+  // B4 第二轮探针：底盘已从 .petball-fallback 搬到 ::before，必须确认它在 stain 帧
+  // 真的 scale(0) —— 冻结帧规则写对了但被更高特异度盖掉时，PNG 上球仍是完整的。
+  process.stdout.write(
+    `5k-probe: ${String(
+      await exec(`(()=>{
+        const fb=document.querySelector('.petball-fallback');
+        if(!fb) return 'no-fallback';
+        const cs=getComputedStyle(fb,'::before');
+        return JSON.stringify({
+          fluid:fb.getAttribute('data-fluid'), freeze:fb.getAttribute('data-freeze'),
+          diskTf:cs.transform, diskOp:cs.opacity, diskBg:cs.background.slice(0,40),
+          anim:cs.animationName,
+          disc:getComputedStyle(document.querySelector('.fluid-disc')).transform
+        });
+      })()`)
+    )}\n`
+  )
   await exec(`window.__bd_fluid_freeze?.('off')`)
   // 温度计定量帧（10-04-edge-sip-column）：单供应商单窗口 70%（单家无轮播），
   // 贴边隐藏后柱高应为满管 70% —— AC 逐值对拍的实机点位。拍完恢复演示数据，

@@ -101,10 +101,30 @@ export function defaultWaterAnchors(): WaterAnchors {
  * ok/warn/danger 任一缺失/解析失败即回 null：半套插值会在阈值处断裂，不如整套回退。
  * accent 独立回退（它不参与插值，缺了只影响余额水，不值得连累用量水）。
  */
+/**
+ * 球级锚点优先，缺省回落页面级令牌（10-06-ball-column-fixes B5）。
+ *
+ * 深盘皮（ink）的页面级 --ok/--warn/--danger 是纸色调（#4f7a3a / #b07d20 / #a63b2f），
+ * 压在深墨盘上会发泥（实拍 rgb(144,124,41)）；球级 --ball-* 是**同一语义**
+ * （绿→琥珀→红，等级含义不变）在深盘上要亮的版本。
+ *
+ * :root 只声明页面级令牌，故 aero/dark/candy/minimal 与本任务前逐值相同
+ * （--ball-* 未定义 → 空串 → 回落）—— 新增皮肤零代码的纪律不变
+ * （外部皮肤 ext:* 只吃页面级令牌）。
+ * 判据是 trim 后非空而不是 undefined：getComputedStyle 对未声明的自定义属性
+ * 返回空串，不返回 undefined；但测试用普通对象查找可能返回 undefined，
+ * 所以两边都兜住（get() 的返回值 ?? '' 后 trim）。
+ * 页面级 --ok/--warn/--danger 一律不动 —— 卡片、柱内液、托盘都靠它们。
+ */
+function prefer(get: (name: string) => string, ballName: string, pageName: string): string {
+  const ball = (get(ballName) ?? '').trim()
+  return ball ? ball : get(pageName)
+}
+
 export function resolveWaterAnchors(get: (name: string) => string): WaterAnchors | null {
-  const ok = parseCssColor(get('--ok'))
-  const warn = parseCssColor(get('--warn'))
-  const danger = parseCssColor(get('--danger'))
+  const ok = parseCssColor(prefer(get, '--ball-ok', '--ok'))
+  const warn = parseCssColor(prefer(get, '--ball-warn', '--warn'))
+  const danger = parseCssColor(prefer(get, '--ball-danger', '--danger'))
   if (!ok || !warn || !danger) return null
-  return { ok, warn, danger, dangerDeep: shade(danger, DEEP_FACTOR), accent: parseCssColor(get('--accent')) ?? FALLBACK_ACCENT }
+  return { ok, warn, danger, dangerDeep: shade(danger, DEEP_FACTOR), accent: parseCssColor(prefer(get, '--ball-accent', '--accent')) ?? FALLBACK_ACCENT }
 }

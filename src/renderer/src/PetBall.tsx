@@ -150,8 +150,18 @@ function ringSvg(lvl: number, water: string | null): React.JSX.Element {
     <>
       {/* 轨道：满圈底色，走 --ring-track（逐皮肤令牌，默认借 --track） */}
       <circle className="ring-track" cx="28" cy="28" pathLength={RING_DASH_SPACE} />
-      {/* 分段轨道（V5）：缺口兼刻度；pattern 在 CSS 令牌里，仍是 0..100 归一化空间 */}
-      <circle className="ring-seg" cx="28" cy="28" pathLength={RING_DASH_SPACE} />
+      {/* 分段轨道（V5）：缺口兼刻度；pattern 在 CSS 令牌里，仍是 0..100 归一化空间。
+          ⚠ 必须 rotate(-90 28 28) 与 .ring-arc 同起点（12 点）：原型 V5 就有这条
+          （skin-applied.html:163 rotate(-90 56 56)）。缺了它分段从 3 点起画、弧从 12 点
+          起画，两者错开 90°——弧从分段中间穿过，读感是「进度条和百分比对不上」
+          （2026-10-06 报障①，10-06-ball-column-fixes 第四轮）。 */}
+      <circle
+        className="ring-seg"
+        cx="28"
+        cy="28"
+        pathLength={RING_DASH_SPACE}
+        transform="rotate(-90 28 28)"
+      />
       {/* 刻度圈（V1）：24 粒；24×4 = 96 是它的归一化空间，缺口 pattern 见 CSS */}
       <circle className="ring-ticks" cx="28" cy="28" pathLength={96} />
       {/* 内装饰细环（V3）：恒满圈，不承载进度 */}
@@ -166,6 +176,12 @@ function ringSvg(lvl: number, water: string | null): React.JSX.Element {
         transform="rotate(-90 28 28)"
         style={{ stroke: water ?? undefined }}
       />
+      {/* 端点圆点（V7 ink）：实心 filled circle，走 r/fill 而不是 stroke-dasharray，
+          不套 pathLength（归一化空间只对描边弧长有效）。
+          旋转用 CSS transform，与上面 arc 的 SVG transform 分属两个元素，互不干扰；
+          角度换算在 CSS 里，TS 只给百分比。默认 display:none（--ring-caps-display）。 */}
+      <circle className="ring-cap-start" cx="28" cy="28" />
+      <circle className="ring-cap-end" cx="28" cy="28" />
     </>
   )
 }
@@ -515,9 +531,11 @@ export function PetBall({
    */
   const water = !showWaves || !s ? null : isPlan(s) ? waterColor(pct, waterAnchors) : rgbStr(waterAnchors.accent)
   /**
-   * 倒水入场（10-04-pour-in-slosh，去雨后只剩三段）：mount + 每次切供应商/窗口都播完整三段（G1 结论）。
-   * `data-pour="in"` 挂载 → CSS 三段动画（灌入 600 / 冲顶 250 / 荡漾 1600，
-   * 时序归 shared/fluid POUR_*）→ POUR_TOTAL_MS 后摘属性，不留尾巴。
+   * 倒水入场（10-04-pour-in-slosh；去雨、去冲顶整球外扩后剩两段）：mount + 每次切供应商/
+   * 窗口都播完整两段（G1 结论）。
+   * `data-pour="in"` 挂载 → CSS 动画（灌入 600 / 泡沫闪峰 250 / 荡漾 1600，时序归 shared/fluid
+   * POUR_*）→ POUR_TOTAL_MS 后摘属性，不留尾巴。冲顶的整球外扩已删（球 = 窗口 = 56×56，
+   * 外扩必被窗口裁边，2026-10-06 报障②），观感改由 pour-flash 泡沫闪峰承载。
    * reduced-motion 下不挂（直接终态，计时器不启动）；unmount/重切时清计时器。
    * reducedMotion 是 mount 时的一次性取值（换系统设置需重载窗口，不另起监听器）。
    */
@@ -548,7 +566,7 @@ export function PetBall({
   }, [])
 
   // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
-  // 把 goo 定在某一 morph 帧并暂停动画，`'pour-top'` 定在倒水冲顶峰
+  // 把 goo 定在某一 morph 帧并暂停动画，`'pour-top'` 定在倒水冲顶时刻（整球外扩已删）
   // （10-04-pour-in-slosh，不依赖 data-pour 是否还在播 —— freeze 规则自带终态位移；
   // 雨的 'pour-mid' 已随雨退役），
   // `'peek'` 定在悬停预览（P4：强制显现 peek 气泡，像素对拍 hover 不可达的态）。
@@ -863,6 +881,9 @@ export function PetBall({
           data-fluid={fluid}
           data-edge={fluidEdgeAttr}
           data-pour={pour ?? undefined}
+          /* --arc-pct：端点圆点的角度口径（ink V7）。只写百分比，角度换算在 CSS
+             （calc(var(--arc-pct) * 3.6deg)），TS 里不出现几何数字。 */
+          style={{ '--arc-pct': fluidLvl * 100 } as React.CSSProperties}
         >
           {/* 流体三元素（R2/R3 + design Fluid 节）：渐变球盘 + 液桥 blob + 贴边水渍 pill。
               挂 filter: url(#petball-goo) 的只有这一层 —— 环/数字/标记在它之外，
