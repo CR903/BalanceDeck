@@ -2,12 +2,6 @@ import { primaryWindow, snapshotLevel, windowLevel } from './read-model'
 import { useEffect, useMemo, useState } from 'react'
 import type { ProviderSnapshot, ProviderWindow, ProviderModelRow } from '../../shared/types'
 import type { UsagePoint } from '../../shared/usage-predict'
-import {
-  buildPredictionText,
-  predictAll,
-  type Prediction,
-  type PredictConfig
-} from './usagePredict'
 import { isPlan } from '../../shared/quality'
 import { TREND_MAX_DAYS } from './usageHistory'
 import { TrendPanel } from './TrendChart'
@@ -31,97 +25,36 @@ import {
 const EMPTY_POINTS: Record<string, UsagePoint[]> = {}
 
 /**
- * 取这家供应商的用量预测（分窗口）。
+ * 取这家供应商的**原始**用量历史（`Record<窗口名, UsagePoint[]>`，未做任何加工）。
  *
- * 分工：**本 hook 只取数据**，算的全在 `usagePredict.ts` 的纯函数里（design.md D1）——
- * 所以「什么时候该显示一条预测」是可单测的判据，而不是埋在组件生命周期里的 if。
+ * 算的全在 `usageHistory.ts` 的纯函数里（按天聚合 / 日均 / 热力档位），本 hook 只取数据
+ * —— 这样「哪天该显示什么」是可单测的判据，而不是埋在组件生命周期里的 if。
  *
  * 三个刻意的空态（都是「不显示」而不是「显示一个错的数」）：
  *   · 非套餐类 → 不请求（调用方已经挡掉，这里再挡一层防误用）
- *   · now <= 0 → 不请求（同上；防 `Date.now()` 之外的时钟被误传）
- *   · 请求失败 / 组件已卸载 → 保持空数组
- *
- * ⚠ `now` 变化**不重新请求**历史：快照文件每 15 分钟才动一次，而依赖数组里挂 `now`
- *   会让 30s 的倒计时钟每转一圈就重发一次 IPC。历史按窗口名缓存，只有换供应商
- *   （或用户改了回看天数）才重新取 —— 这是「数据源变了才重取」而不是「时间变了就重取」。
- *
- * ⚠⚠ 已取回的历史**必须连着它属于哪家一起存**。只存 `{ 窗口名: 点[] }` 的话，
- *   换供应商后新请求在飞的那一瞬间（以及请求**失败**时的那一整段时间），
- *   详情页会拿**上一家的斜率**配**这一家的窗口**算出一行预测 —— 数字看着完全合理，
- *   没有任何报错，只是把 A 家的预计耗尽时间挂在 B 家名下。窗口名（'本周'/'本月'）
- *   在各家之间是重名的，所以这个错配不会被任何判据挡下。
- */
-function usePredictions(
-  s: ProviderSnapshot | undefined,
-  now: number,
-  on: boolean,
-  cfg: PredictConfig
-): Prediction[] {
-  /** 取回时打上 providerId；id 对不上就当没有（而不是沿用上一家的） */
-  const [loaded, setLoaded] = useState<{ id: string; points: Record<string, UsagePoint[]> }>({
-    id: '',
-    points: {}
-  })
-  const providerId = s?.id
-  const days = cfg.windowDays
-
-  useEffect(() => {
-    if (!providerId || !on || now <= 0 || !s) return
-    let live = true
-    void window.api
-      .usagePredict(providerId, days, Date.now())
-      .then((r) => {
-        if (live && r && typeof r === 'object') setLoaded({ id: providerId, points: r })
-      })
-      .catch(() => {
-        /* 没有历史 / 读失败 → 归空态，详情页什么都不显示（不是「预测失败」）。
-           ⚠ 这里必须**清空**而不是「保持原状」：保持原状 = 换供应商后继续显示上一家
-           的预测（见上面那条错配说明）。 */
-        if (live) setLoaded({ id: providerId, points: {} })
-      })
-    return () => {
-      live = false
-    }
-    // ⚠ 刻意不挂 `now`（见上面注释：30s 钟会让它每圈重发一次 IPC）
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerId, on, days])
-
-  // 纯函数重算：快照文件变了但组件没重挂时（用户开着详情页过了 15 分钟），
-  // 依赖 points 变化即可重新算。文案里的「距现在多久」用 now 重算 —— 那是倒计时，
-  // 由 30s 钟驱动，不重新请求任何数据。
-  const points = loaded.id === providerId ? loaded.points : EMPTY_POINTS
-  return useMemo(
-    () => (s && now > 0 ? predictAll(s, points, now, cfg) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s, points, now, cfg.windowDays, cfg.retentionDays]
-  )
-}
-
-/**
- * 取这家供应商的**原始**用量历史（`Record<窗口名, UsagePoint[]>`，未做任何加工）。
- *
- * ⚠⚠ **与 `usePredictions` 并列，不是它的子集**（design.md D3）：
- *   `usePredictions` 在 `!on` 时**根本不请求**（上面第 67 行的 `if (!providerId || !on …) return`），
- *   而 `predictOn` 的语义是「预计耗尽」这一行文案 —— 用户关掉的是一句话，不是趋势本身。
- *   复用同一个 hook 会让「关掉预计耗尽」连带让趋势图一起消失。所以两个 hook 各自请求、
- *   各自消费；代价是各自发一次 IPC，**接受**（一次多传几 KB 本地数组，换开关语义互不牵连）。
+ *   · 请求失败 / 组件已卸载 → 归空态
  *
  * ⚠ **一次取 `TREND_MAX_DAYS`(30) 天**：7 / 30 天两个视图共用同一份数组，切换纯前端。
- *   快照文件每 15 分钟才动一次，而切换会频繁发生（design.md D4）。
+ *   快照文件每 15 分钟才动一次，而切换会频繁发生。
  *
  * ⚠ 非套餐类（余额）**不请求**：`windowPercent` 对余额窗口实测**恒 null**（'账户余额'）
  *   或**恒 0**（'账户额度'）—— 前者画不出来，后者画出来是贴底平线，比 null 更危险
- *   （看起来像有数据）。且 `UsagePoint` 只有 `pct`，采样时金额已被丢弃，磁盘上没有余额历史。
+ *   （看起来像有数据）。
  *
- * ⚠ `on` 是 `planish`（有没有这家且是套餐类），**不是 `predictOn`** —— 见上。
- * ⚠ 依赖数组里**不含 `now`**：30s 倒计时钟每圈重发一次 IPC 是纯浪费（快照每 15 分钟才动一次），
- *   与 `usePredictions` 同一条纪律。`s` 只在 effect body 里读、不进依赖，
- *   换供应商由 `providerId` 触发重取。
+ * ⚠ 依赖数组里**不含 `now`**：30s 倒计时钟每圈重发一次 IPC 是纯浪费（快照每 15 分钟才动一次）。
+ *   `s` 只在 effect body 里读、不进依赖，换供应商由 `providerId` 触发重取。
+ *
+ * ⚠⚠ 已取回的历史**必须连着它属于哪家一起存**。只存 `{ 窗口名: 点[] }` 的话，
+ *   换供应商后新请求在飞的那一瞬间（以及请求**失败**时的那一整段时间），
+ *   详情页会拿**上一家的采样**配**这一家的窗口**画出一张热力图 —— 数字看着完全合理，
+ *   没有任何报错，只是把 A 家的历史挂在 B 家名下。窗口名（'本周'/'本月'）在各家之间
+ *   是重名的，所以这个错配不会被任何判据挡下。
  */
 function useUsageHistory(
   s: ProviderSnapshot | undefined,
   on: boolean
 ): Record<string, UsagePoint[]> {
+  /** 取回时打上 providerId；id 对不上就当没有（而不是沿用上一家的） */
   const [loaded, setLoaded] = useState<{ id: string; points: Record<string, UsagePoint[]> }>({
     id: '',
     points: {}
@@ -137,9 +70,9 @@ function useUsageHistory(
         if (live && r && typeof r === 'object') setLoaded({ id: providerId, points: r })
       })
       .catch(() => {
-        /* 读失败 → 归空态：不显示趋势图，而不是「趋势图加载失败」（与 usePredictions 同一纪律）。
-           ⚠ 必须**清空**而不是「保持原状」：换供应商后继续显示上一家的历史，
-           见 usePredictions 上面对错配的说明。 */
+        /* 读失败 → 归空态：不显示用量趋势，而不是「加载失败」（同一条纪律）。
+           ⚠ 必须**清空**而不是「保持原状」：保持原状 = 换供应商后继续显示上一家的历史，
+           见上面那条错配说明。 */
         if (live) setLoaded({ id: providerId, points: {} })
       })
     return () => {
@@ -279,17 +212,11 @@ function WindowRow({ w, lvl, now, models }: { w: ProviderWindow; lvl: Level; now
 export function DetailView({
   s,
   onBack,
-  onRefresh,
-  predictOn,
-  predictConfig
+  onRefresh
 }: {
   s: ProviderSnapshot | undefined
   onBack: () => void
   onRefresh: () => void
-  /** 用量预测总开关（ui:predictOn，默认开）。关掉时详情页连历史都不取 */
-  predictOn: boolean
-  /** 预测配置（ui:predictConfig）：回看天数 / 保留天数 */
-  predictConfig: PredictConfig
 }): React.JSX.Element {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
@@ -297,12 +224,9 @@ export function DetailView({
     return () => clearInterval(t)
   }, [])
 
-  // 余额类**不请求**：它没有窗口也没有限额，速率估算的整个前提不成立（design.md D5），
+  // 余额类**不请求**：它没有窗口也没有限额，按天聚合的整个前提不成立，
   // 而发一次 IPC 换回一个必然为空的结果只是白费一次往返。
   const planish = !!s && isPlan(s)
-  const predictions = usePredictions(s, planish ? now : 0, predictOn, predictConfig)
-  // ⚠ 趋势图与 predictOn **无关**（design.md D3）：`on` 传的是「有没有这家且是套餐类」，
-  //   不是 `predictOn`。余额类在这里**不发** IPC（实测画不出来，见 hook 上的注释）。
   const history = useUsageHistory(s, planish)
 
   if (!s) {
@@ -373,28 +297,6 @@ export function DetailView({
               </div>
             </section>
 
-            {/* ── 用量预测（P0-2）─────────────────────────────────────────
-                放在 hero 环形仪表之后、窗口列表之前：环形仪表答「现在用了多少」，
-                这一行答「按现在的速度还够用多久」，两个问题挨着答最省用户的心智切换。
-                逐窗口各一条（5H / W / M 的速率不同，混成一条是错的 —— design.md D5），
-                文案由 buildPredictionText 独家生成（含「估算」字样，AC3）。 */}
-            {predictions.length > 0 && (
-              <section className="section">
-                <div className="section-title">
-                  预计耗尽
-                  <em className="tag env">本机历史估算</em>
-                </div>
-                <div className="predict-list">
-                  {predictions.map((p) => (
-                    <div key={p.windowName} className="predict-row" data-window={p.windowName}>
-                      <span className="predict-win">{p.windowName}</span>
-                      <span className="predict-text">{buildPredictionText(p, predictConfig.windowDays)}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
             {s.windows.length > 0 && (
               <section className="section">
                 <div className="section-title">用量窗口</div>
@@ -412,11 +314,16 @@ export function DetailView({
               </section>
             )}
 
-            {/* ── 历史趋势图（P1-1）──────────────────────────────────────────
-                位置：「每模型用量表」**上方**（PRD 指定）。它答的是「这 30 天是怎么涨到
-                卡片上那个数的」，与上方 hero / 预计耗尽 / 用量窗口同一批问题，所以挨着放。
-                ⚠ 刻意**并列**而不是塞进 `{hasModels && …}` 里：趋势图不需要 `s.models`
-                存在，而塞进模型明细会让「这家没有模型数据」连带让趋势图消失。
+            {/* ── 用量热力图（P1-1）─────────────────────────────────────────
+                位置：「每模型用量表」**上方**。它答的是「这 30 天每天都在用」，
+                与上方 hero / 用量窗口同一批问题，所以挨着放。
+
+                2026-10-07 由「每天一根柱」换成 GitHub 式日历网格 + streak 头：柱状图只给
+                形状不给数值，用户读不出趋势；日历网格的颜色深浅是当天**日增量**（末值强度
+                在高位用量下整张图全深，看不出哪天用得多），悬停再给末值%，双数齐下。
+
+                ⚠ 刻意**并列**而不是塞进 `{hasModels && …}` 里：热力图不需要 `s.models`
+                存在，而塞进模型明细会让「这家没有模型数据」连带让热力图消失。
                 没有历史时 TrendPanel 返回 null —— 界面什么都不显示（不是「加载失败」）。 */}
             {plan && (
               <TrendPanel pointsByWindow={history} primaryWindowName={hero?.name} now={now} />

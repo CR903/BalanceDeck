@@ -1,19 +1,21 @@
-// 历史趋势图的聚合与坐标换算（renderer/src/usageHistory.ts）
+// 历史趋势图 / 用量热力图的**分桶**聚合（renderer/src/usageHistory.ts）
 // 用法：node scripts/test-usage-history.mjs
 //
 // 覆盖：本地日历日切分、**末值取最后一个已知值**（本设计最容易写错的一处）、
-//       缺样本的日子不补 0、纵轴固定 0..100、横轴等距、窗口过滤、纯度与纯函数纪律。
+//       缺样本的日子不补 0、窗口过滤、纯度与纯函数纪律。
 //
-// 全部经 loadTs 加载**真实源码**（scripts/lib/load-ts.mjs）：bucketByDay / scaleY / xOf /
+// 2026-10-07 起「每天一根柱」改日历网格，纵轴/横轴坐标换算（scaleY / xOf）随图体下线；
+// 网格的差分与强度分档在 usageHeatmap.ts，由 scripts/test-usage-heatmap.mjs 覆盖。
+//
+// 全部经 loadTs 加载**真实源码**（scripts/lib/load-ts.mjs）：bucketByDay /
 // windowsWithHistory 一个都不内联 —— 内联过的测试已经漂移过一次（test-percent.mjs），
 // 源文件改了测试还绿着，等于没有测试。
-
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { loadTs } from './lib/load-ts.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const { bucketByDay, scaleY, xOf, windowsWithHistory, dayKey, cutoffDayKey, TREND_MAX_DAYS } =
+const { bucketByDay, windowsWithHistory, dayKey, cutoffDayKey, TREND_MAX_DAYS } =
   await loadTs('src/renderer/src/usageHistory.ts')
 
 let pass = 0
@@ -170,60 +172,8 @@ console.log('\nB. 末值 = 最后一个**已知**值（本设计最容易写错�
   eq(b[0].lastPct, 55, 'B10 入参乱序也取时刻最晚的那个（不是数组最后那个）')
 }
 
-console.log('\nC. 纵轴固定 0..100（不随数据缩放）')
-
+// 模块源码（F 段的纯度负向断言要用）
 const src = readFileSync(resolve(ROOT, 'src/renderer/src/usageHistory.ts'), 'utf-8')
-{
-  const H = 100
-  near(scaleY(0, H), 100, 0.001, 'C1 0% → 底边')
-  near(scaleY(100, H), 0, 0.001, 'C2 100% → 顶边')
-  near(scaleY(50, H), 50, 0.001, 'C3 50% → 一半高')
-  // ⚠ 相对差断言，不用绝对像素：5% 与 95% 的 y 差必须是高度的 90%。
-  //   若 scaleY 改成「按数据里的最大/最小缩放」，这一条立刻变红 ——
-  //   那正是「上周 90% / 本周 20% 两张图形状一样」的成因。
-  const gap = (scaleY(5, H) - scaleY(95, H)) / H
-  near(gap, 0.9, 0.001, 'C4 5% 与 95% 的 y 差 = 高度的 90%（纵轴没有跟着数据缩放）')
-  // 反向对照：同一个数据集（5..95）缩放后仍要占满同一段高度
-  const dataMax = 95
-  const dataMin = 5
-  const scaledGap = ((100 - (95 / dataMax) * 100) - (100 - (5 / dataMax) * 100)) / H
-  ok(Math.abs(scaledGap - gap) > 0.01,
-    `C5 对照：按数据缩放会给出不同的相对差（缩放版 ${scaledGap.toFixed(3)} vs 固定版 ${gap.toFixed(3)}）—— 证明 C4 测的是「有没有缩放」`)
-  // 越界值钳到边界（与 Ring / Bar 同一口径），不产生图外坐标
-  near(scaleY(120, H), 0, 0.001, 'C6 120% → 钳到顶边')
-  near(scaleY(-5, H), 100, 0.001, 'C7 -5% → 钳到底边')
-  near(scaleY(Number.NaN, H), 100, 0.001, 'C8 NaN → 钳到底边（不是 NaN 坐标，图会整块消失）')
-  // ⚠ 「不随数据缩放」这条**结构上**钉住：C4 只判函数本身，一旦有人给它加上第三个
-  //   `maxPct` 参数（默认值 100）并在组件里传「数据里的最大值」，C4 照样绿（默认值仍走 100），
-  //   而图已经缩放了 —— 那正是「上周 90% / 本周 20% 形状一样」的成因。
-  //   签名正则走 `[^)]*,[^)]*,` 而不是逐字符匹配：`[^)]` 含换行，重排版也不会误红。
-  //   ⚠ 判据必须是**源码签名**而不是 `scaleY.length`：带默认值的形参不计入 Function.length，
-  //   加上 `maxPct = 100` 之后 length 仍是 2，实测过 —— 那条门会空洞通过。
-  //   ⚠ 两条负向断言都带**前置**：不带前置的负向断言在「那行代码根本不存在」时空洞通过
-  //     （实测把 TrendChart 里所有 scaleY 调用去掉，C10 照样绿 —— 而图已经不走了 scaleY）。
-  ok(/export function scaleY/.test(src), 'C9a 前置：scaleY 在本模块里定义（下面的负向断言不能空洞通过）')
-  ok(!/export function scaleY\([^)]*,[^)]*,/.test(src),
-    'C9 scaleY 的签名只有 (pct, height)，没有可缩放的上界参数')
-  const tcSrc = readFileSync(resolve(ROOT, 'src/renderer/src/TrendChart.tsx'), 'utf-8')
-  ok(/scaleY\(/.test(tcSrc), 'C10a 前置：TrendChart 确实在调 scaleY（C10 不能空洞通过）')
-  ok(!/scaleY\([^)]*,[^)]*,/.test(tcSrc),
-    'C10 TrendChart 不给 scaleY 传第三个参数（那会让「本周 20%」也铺满整幅图）')
-}
-
-console.log('\nD. 横轴等距')
-
-{
-  const W = 300
-  near(xOf(0, 10, W), 15, 0.001, 'D1 第一根柱在第一个槽的中心')
-  near(xOf(9, 10, W), 285, 0.001, 'D2 最后一根柱在最后一个槽的中心')
-  near(xOf(1, 10, W) - xOf(0, 10, W), 30, 0.001, 'D3 相邻等距（槽宽 = width/count）')
-  near(xOf(0, 10, W), 30 - 15, 0.001, 'D4 起点留半槽，首尾对称')
-  // ⚠ count===1 不除零：除以零会得到 NaN，而 SVG 属性里 NaN **静默不渲染**
-  //   —— 症状是「一根柱凭空消失」，不报错。
-  near(xOf(0, 1, W), 150, 0.001, 'D5 count=1 → 落在正中（不产生 NaN）')
-  ok(Number.isFinite(xOf(0, 1, W)), 'D6 count=1 的 x 是有限数（NaN 会让那根柱静默消失）')
-  ok(Number.isFinite(xOf(0, 0, W)), 'D7 count=0 也是有限数')
-}
 
 console.log('\nE. 窗口筛选（供切换控件）')
 
@@ -265,8 +215,6 @@ console.log('\nF. 纯函数纪律与纯度')
   const now = dayAt(2, 20)
   const pts = [...onDay(0, [10, 40, null]), ...onDay(2, [70])]
   eq(bucketByDay(pts, 3, now), bucketByDay(pts, 3, now), 'F7 bucketByDay 纯度（无隐藏的轮次状态）')
-  eq(scaleY(42, 76), scaleY(42, 76), 'F8 scaleY 纯度')
-  eq(xOf(3, 7, 320), xOf(3, 7, 320), 'F9 xOf 纯度')
 }
 
 // 单一出处：日分桶口径与主进程 usageStore 一致
@@ -279,6 +227,8 @@ console.log('\nF. 纯函数纪律与纯度')
 // ═══ G. 取数 hook 的三条纪律（结构切片，不是整文 grep）══════════════════════════
 //
 // 为什么单开一段：PRD 的第 4 / 5 / 6 条（切换不重发 IPC、余额类不发、不受 predictOn 管）
+// —— predictOn 已于 2026-10-07 随「预计耗尽」一起删除，G5 / G5b 保留为**回归防线**：
+// 万一有人把取数又挂到一个开关上（那样开关一关热力图就跟着消失），这两条会红。
 // 全都落在 `DetailView.tsx` 的 `useUsageHistory` 里，而 `npm test` 的 17 个套件**没有一个**
 // 碰过 DetailView —— 这正是本仓记录过的那类事故（「开关看起来是活的，测试与 tsc 全绿」）。
 //
@@ -336,15 +286,15 @@ const deps = depsOf(histFn) ?? ''
   ok(/useUsageHistory\(\s*s,\s*planish\s*\)/.test(dvSrc),
     'G5 TrendPanel 的取数开关是 planish（有没有这家且是套餐类），不是 predictOn')
   ok(!/useUsageHistory\([^)]*predictOn/.test(dvSrc),
-    'G5b useUsageHistory 的调用点不接 predictOn（接了则「关掉预计耗尽」会连带让趋势图消失）')
+    'G5b useUsageHistory 的调用点不接 predictOn（接了则关掉开关会连带让热力图消失）')
 }
 
 // 空历史 → 不渲染（不是渲染一个空壳）；缺样本的天 → 不画柱
 {
   ok(/if \(buckets\.length === 0\) return null/.test(tcSrcAll),
     'G6 TrendChart 收到空 buckets 返回 null（界面上什么都不显示，不是空壳）')
-  ok(/if \(b\.lastPct == null\) return null/.test(tcSrcAll),
-    'G7 lastPct 为 null 的天不画柱（缺口可见；画一根 0 高的柱与补 0 等价）')
+  ok(/if \(c\.day\.lastPct == null\) return null/.test(tcSrcAll),
+    'G7 lastPct 为 null 的天不画格（缺口可见；画一格最浅色 = 把「没采到」混成「那天没用」）')
   // ⚠ 「有历史」不等于「这个回看窗口里有历史」：最后一次采样在 10 天前、之后应用没跑时，
   //   windowsWithHistory 照样列出该窗口。若 TrendPanel 只判 windows.length，
   //   界面上就是一个「用量趋势」标题 + 两组切换钮、底下空着 —— 比不显示更像坏了。
@@ -352,6 +302,42 @@ const deps = depsOf(histFn) ?? ''
     'G8a 前置：TrendPanel 至少要判「没有任何有历史的窗口」就返回 null')
   ok(/if \(!windows\.some\(/.test(tcSrcAll),
     'G8 TrendPanel 在当前回看窗口里一个桶都没有时也返回 null（有历史≠窗口内有历史）')
+}
+
+// ═══ H. bucketByDay 的绝对量字段 ═══════════════════════════════════════════════
+// lastUsed 与 lastPct 是**两份独立**的判据：官方 API 的百分比与绝对用量是两份字段，
+// 坏一个不必然坏另一个。谁已知谁被保留，另一个保持 null。
+console.log('\nH. 分桶的绝对量字段')
+
+{
+  const pu = (used, unit, t) => ({ t, pct: 30, used, unit })
+  const pts = [
+    ...onDay(0, [10]),
+    pu(2, 'usd', dayAt(1, 12)),
+    pu(5, 'usd', dayAt(1, 13)),
+    pu(null, 'usd', dayAt(1, 14)),
+    { t: dayAt(2, 12), pct: 20 },
+    { t: dayAt(3, 12), pct: 30, used: 9, unit: 'token' }
+  ]
+  const b = bucketByDay(pts, 7, dayAt(6, 20))
+
+  eq(b.map((x) => x.lastUsed), [null, 5, null, 9, null, null, null],
+    'H1 lastUsed 只取当天最后一个**已知**值（1 号 5 覆盖了早先的 2）')
+  eq(b.map((x) => x.unit), [undefined, 'usd', undefined, 'token', undefined, undefined, undefined],
+    'H2 unit 与 lastUsed 成对，缺失时是 undefined（不臆造）')
+  eq(b[0].lastPct, 10, 'H3 没有 used 的天 lastPct 不受影响')
+  eq(b[4].lastPct, null, 'H4 空天 pct 是 null')
+  eq(b[4].lastUsed, null, 'H4b 空天两个字段都是 null（不是 0）')
+
+  // used 未知不影响 pct 的差分链路（下游 heatmapOf 的 deltaPp 依赖 lastPct）
+  eq(lastPcts(b), [10, 30, 20, 30, null, null, null],
+    'H5 pct 序列完整（绝对量字段不参与 pct 判据）')
+
+  // 反例：used 全缺时不得把 lastUsed 填成 0
+  const noUsed = bucketByDay(onDay(0, [10, 20]), 7, dayAt(6, 20))
+  eq(noUsed[0].lastPct, 20, 'H6 前置：只有 pct 的输入，pct 仍然正常分桶')
+  eq(noUsed.map((x) => x.lastUsed), [null, null, null, null, null, null, null],
+    'H6 只有 pct 没有 used → lastUsed 全 null（**不是 0**）')
 }
 
 console.log(`\n通过 ${pass} · 失败 ${fail}`)

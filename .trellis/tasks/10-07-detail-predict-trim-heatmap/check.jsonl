@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "热力图悬停数值必须如实标注口径，不拿pct冒充绝对用量"}
+{"file": "scripts/test-usage-history.mjs", "reason": "G段纪律（切换不发IPC、余额不发、空态null）回归基线"}

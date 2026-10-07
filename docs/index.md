@@ -15,3 +15,4 @@
 | 2026-10-05 | [球体外观四皮互不相同（P6 环替代水体）](daily/2026-10-05_skin-ball-forms-p6.md) | `10-04-rain-weather-column` |
 | 2026-10-06 | [球盘底色还原 + 去雨效（P6-demo 一比一）](daily/2026-10-06_ball-bg-derain.md) | `10-04-rain-weather-column` |
 | 2026-10-06 | [球柱三修（读数可读 + 柱体全圆 + morph 带底盘）](daily/2026-10-06_ball-column-fixes.md) | `10-06-ball-column-fixes` |
+| 2026-10-07 | [去预计耗尽 + 用量热力图（日历网格 + streak）](daily/2026-10-07_detail-predict-trim-heatmap.md) | `10-07-detail-predict-trim-heatmap` |

@@ -5,6 +5,7 @@ import {
   type StoreUsagePoint,
   type UsagePoint
 } from '../shared/usage-predict'
+import type { Unit } from '../shared/types'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 用量历史快照的落盘存储（**不依赖 electron**）
@@ -14,7 +15,12 @@ import {
 // 而模块导入早于模块体求值（与 store.ts 同一理由与同一写法）。
 //
 // 磁盘格式（version 1）：
-//   { version: 1, days: { 'YYYY-MM-DD': { <providerId>: { window, t, pct }[] } } }
+//   { version: 1, days: { 'YYYY-MM-DD': { <providerId>: { window, t, pct, used?, unit? }[] } } }
+//
+// ⚠ `used` / `unit` 是 2026-10-07 加的（用量热力图下方要逐日绝对量），**可选**：
+//   version 1 的旧采样读回就是 undefined。保持 version = 1 —— 加两个可选字段是
+//   前向兼容的，没必要升到 version 2 让所有老文件都判定为「格式不符」。
+//   代价是磁盘体积略增（每条采样多 ~20 字节），在 B2 的量级里可以忽略。
 //
 // ⚠ 为什么**不走 extras**（design.md B2）：`store.ts` 的 setExtra 每次都 persist() →
 //   writeFileSync 整个文件。30 天 × 60s × N 供应商的分窗口快照约 8–12MB，
@@ -45,6 +51,10 @@ interface DayPoint {
   window: string
   t: number
   pct: number | null
+  /** 绝对已用量。可选 —— version 1 的旧采样没有它，读回 undefined（**不是 0**） */
+  used?: number
+  /** `used` 的单位，必须成对落盘 */
+  unit?: Unit
 }
 
 interface UsageFile {
@@ -142,12 +152,19 @@ export function createUsageStore(opts: { filePath: () => string }): UsageStore {
         // 但按点分桶在跨零点时也不会把那一刻的点错记到前一天。
         const day = (f.days[dayKey(p.t)] ??= {})
         const arr = (day[p.providerId] ??= [])
-        // pct 不可知时写 null，**不写 0**（缺失值保持缺失）
-        arr.push({
+        const d: DayPoint = {
           window: typeof p.window === 'string' ? p.window : '',
           t: p.t,
+          // pct 不可知时写 null，**不写 0**（缺失值保持缺失）
           pct: typeof p.pct === 'number' && Number.isFinite(p.pct) ? p.pct : null
-        })
+        }
+        // 绝对量与单位**成对**写：只写 used 不写 unit，读回来那个数字就没法解释了。
+        // 缺失即不写（不写 0）—— 旧采样的读法见 shared/usage-predict.ts 的 UsagePoint.used。
+        if (typeof p.used === 'number' && Number.isFinite(p.used)) {
+          d.used = p.used
+          if (p.unit) d.unit = p.unit
+        }
+        arr.push(d)
         added++
       }
       if (added === 0) return
@@ -167,10 +184,16 @@ export function createUsageStore(opts: { filePath: () => string }): UsageStore {
         for (const d of arr) {
           if (!d || typeof d.t !== 'number' || !Number.isFinite(d.t)) continue
           const w = typeof d.window === 'string' ? d.window : ''
-          ;(out[w] ??= []).push({
+          const p: UsagePoint = {
             t: d.t,
             pct: typeof d.pct === 'number' && Number.isFinite(d.pct) ? d.pct : null
-          })
+          }
+          // 旧采样没有 used → 保持 undefined（**不填 0**），渲染层显示「—」
+          if (typeof d.used === 'number' && Number.isFinite(d.used)) {
+            p.used = d.used
+            if (typeof d.unit === 'string' && d.unit) p.unit = d.unit as Unit
+          }
+          ;(out[w] ??= []).push(p)
         }
       }
       // 合并多天分桶后按 t 升序：回归对点的顺序敏感（切段就靠顺序），

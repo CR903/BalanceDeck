@@ -19,6 +19,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import type { UsagePoint } from '../../shared/usage-predict'
+import type { Unit } from '../../shared/types'
 
 /** 一次取回的历史里，两个视图共用的上限（`sample:usageHistoryDays` 默认 30） */
 export const TREND_MAX_DAYS = 30
@@ -30,6 +31,13 @@ export interface DayBucket {
   lastPct: number | null
   /** 该天峰值（画柱内高亮 / 参考线用）；无已知值 = null */
   maxPct: number | null
+  /**
+   * 该天最后一个**已知**绝对用量（窗口周期内累计）。
+   * `null` = 那天没记到（升级前的旧采样，或采样本身没有这个字段）—— **不是 0**。
+   */
+  lastUsed: number | null
+  /** `lastUsed` 的单位；必须成对，缺了单位那个数没法解释 */
+  unit?: Unit
 }
 
 // ─── 日历日 ───────────────────────────────────────────────────────────────────
@@ -61,8 +69,8 @@ export function cutoffDayKey(now: number, days: number): string {
 
 // ─── 按天分桶 ─────────────────────────────────────────────────────────────────
 
-/** `pct` 可知才算数：null / 非有限数一律视为「没采到」 */
-function known(p: number | null): p is number {
+/** `pct` / `used` 可知才算数：null / undefined / 非有限数一律视为「没采到」 */
+function known(p: number | null | undefined): p is number {
   return typeof p === 'number' && Number.isFinite(p)
 }
 
@@ -94,7 +102,7 @@ export function bucketByDay(points: UsagePoint[], days: number, now: number): Da
   for (const p of points ?? []) {
     if (!p || typeof p.t !== 'number' || !Number.isFinite(p.t)) continue
     if (dayKey(p.t) < cut) continue
-    inRange.push({ t: p.t, pct: p.pct })
+    inRange.push({ t: p.t, pct: p.pct, used: p.used, unit: p.unit })
   }
   if (inRange.length === 0) return []
   inRange.sort((a, b) => a.t - b.t)
@@ -106,7 +114,7 @@ export function bucketByDay(points: UsagePoint[], days: number, now: number): Da
 
   const out: DayBucket[] = []
   for (; cur <= end && out.length < span; cur.setDate(cur.getDate() + 1)) {
-    out.push({ day: dayKey(cur.getTime()), lastPct: null, maxPct: null })
+    out.push({ day: dayKey(cur.getTime()), lastPct: null, maxPct: null, lastUsed: null })
   }
   if (out.length === 0) return []
 
@@ -114,40 +122,19 @@ export function bucketByDay(points: UsagePoint[], days: number, now: number): Da
   for (const p of inRange) {
     const b = byDay.get(dayKey(p.t))
     if (!b) continue
-    // 末值 = 最后一个**已知**值：null **不清空**它（末尾可能是采样失败记下的 null）
-    if (!known(p.pct)) continue
-    b.lastPct = p.pct
-    b.maxPct = b.maxPct == null || p.pct > b.maxPct ? p.pct : b.maxPct
+    // 末值 = 最后一个**已知** pct：null **不清空**它（末尾可能是采样失败记下的 null）
+    if (known(p.pct)) {
+      b.lastPct = p.pct
+      b.maxPct = b.maxPct == null || p.pct > b.maxPct ? p.pct : b.maxPct
+    }
+    // 绝对量**独立**判据：pct 读不到时 used 可能仍是好的（官方 API 的百分比与绝对
+    // 用量是两份字段，坏一个不必然坏另一个）。同样只取最后一个已知值，缺失不清空。
+    if (known(p.used)) {
+      b.lastUsed = p.used
+      if (p.unit) b.unit = p.unit
+    }
   }
   return out
-}
-
-// ─── 坐标换算（全部是纯函数，可单测）─────────────────────────────────────────
-
-/**
- * 纵轴：百分比 → 像素 y（0 在底、100 在顶）。
- *
- * ⚠⚠ **固定 0..100，不随数据缩放**。这是本文件最重要的一条：不缩放的话「上周 90%」与
- *   「本周 20%」两张图的形状完全一样，用户读不出差异 —— 而「按天对比」正是趋势图
- *   存在的理由。宁可图矮，不可比错。
- *
- * 脏 pct（NaN / 超范围）落向 0..100 的边界，与 `Ring` / `Bar` 的钳位同一口径。
- */
-export function scaleY(pct: number, height: number): number {
-  const v = Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : 0
-  return height - (v / 100) * height
-}
-
-/**
- * 横轴：第 i 根柱（0..count-1）的**中心** x。
- *
- * 等距铺满 width。`count <= 1` 返回 width / 2 —— 落在「除以零」上会得到 NaN，而 SVG 属性里
- * NaN 静默不渲染，症状是「一根柱凭空消失」，不报错。
- */
-export function xOf(index: number, count: number, width: number): number {
-  if (!(count > 1)) return width / 2
-  const slot = width / count
-  return slot * index + slot / 2
 }
 
 /** 有历史点位的窗口名（供切换控件）。没点位的窗口不列 —— 切过去只能看到空图 */

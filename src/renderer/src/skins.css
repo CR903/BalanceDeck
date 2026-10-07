@@ -1004,32 +1004,9 @@ textarea {
   gap: 8px;
 }
 
-/* 用量预测行（P0-2）。视觉刻意贴着 .dwin 的形状：它回答的是与「用量窗口」
-   同一批问题（这个窗口还能用多久），形状不同会让用户以为它属于别的模块。 */
-.predict-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.predict-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-.predict-win {
-  font-size: 12.5px;
-  font-weight: 600;
-  flex: none;
-}
-.predict-text {
-  font-size: 11.5px;
-  color: var(--fg-dim);
-  line-height: 1.45;
-}
+/* 用量记录（P1-1）的样式在下方 .rec-* 段。
+   2026-10-07 删掉了 .predict-* 段（「预计耗尽」行）：预测整体下线，留着没人用的
+   选择器只会让人以为它还活着。 */
 .dwin {
   padding: 11px 12px;
   border-radius: var(--radius-md);
@@ -1107,8 +1084,10 @@ textarea {
   transform: rotate(0deg);
 }
 
-/* 历史趋势图（P1-1）。卡片外壳沿用 .dwin 的形状：它回答的是与「用量窗口」同一批问题
-   （这个窗口用了多少），形状不同会让用户以为它属于别的模块。
+/* 用量热力图（P1-1）。卡片外壳沿用 .dwin 的形状：它回答的是与「用量窗口」同一批问题
+   （这个窗口每天都在用），形状不同会让用户以为它属于别的模块。
+   2026-10-07 图体由「每天一根柱」（.trend-chart/.trend-bar）改为日历网格（.trend-cell），
+   外壳（.trend / .trend-switch / .trend-chip）不动 —— 切换控件的交互语义没变。
    ⚠ 只用既有 token（--surface / --border / --track / --fg-faint / --ok/warn/danger），
      不写新的颜色字面量 —— 外部皮肤（ext:*）只吃得到这里的 var()，写字面量等于把它排除在外。 */
 .trend-switch {
@@ -1146,45 +1125,160 @@ textarea {
   background: var(--surface);
   border: 1px solid var(--border);
 }
+
+/* ── streak 头 ── */
+.trend-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.trend-head-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 660;
+  color: var(--warn);
+}
+.trend-head-sub {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+}
+.trend-head-badge {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ── 日历网格 ──
+   ⚠ 空格（没采到）用 --track，1 档（有记录但没涨）用 color-mix(--ok, --track)。
+     两者必须能一眼区分：混成同一种颜色，用户会把「应用没跑」读成「那天没用」。 */
+/* 网格宽高比是竖的（周只有 4–6 列 × 7 行），所以**不**拉伸到 100% 宽 —— 那样每格会被
+   放大到 40px 以上，失去「一屏看 30 天」的密度。SVG 已带 width/height 按 1:1 出图，
+   max-width 只在极窄的卡上兜底收缩。 */
 .trend-chart {
   display: block;
-  width: 100%;
-  height: 76px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
   overflow: visible;
 }
-/* preserveAspectRatio=none 会把 stroke 拉扁，所以参考线用矢量特效关掉描边 */
-.trend-grid {
-  stroke: var(--track);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
+.trend-cell {
+  fill: var(--track);
 }
-.trend-bar {
+.heat-1 {
+  fill: color-mix(in srgb, var(--ok) 30%, var(--track));
+}
+.heat-2 {
+  fill: color-mix(in srgb, var(--ok) 58%, var(--track));
+}
+.heat-3 {
+  fill: color-mix(in srgb, var(--ok) 84%, var(--track));
+}
+.heat-4 {
   fill: var(--ok);
 }
-.trend-bar.lvl-warn {
-  fill: var(--warn);
-}
-.trend-bar.lvl-danger {
-  fill: var(--danger);
-}
-.trend-bar.lvl-muted {
+.trend-month {
+  font-size: 8px;
   fill: var(--fg-faint);
 }
-.trend-axis {
+.trend-weekday {
+  font-size: 8px;
+  fill: var(--fg-faint);
+}
+.trend-legend {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-top: 7px;
   font-size: 10px;
   color: var(--fg-faint);
+}
+.trend-legend-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+/* 图例格是 SVG rect 的 HTML 替身，只作颜色样本用 */
+.trend-legend-cell {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--track);
+}
+.trend-legend-cell.heat-1 {
+  background: color-mix(in srgb, var(--ok) 30%, var(--track));
+}
+.trend-legend-cell.heat-2 {
+  background: color-mix(in srgb, var(--ok) 58%, var(--track));
+}
+.trend-legend-cell.heat-3 {
+  background: color-mix(in srgb, var(--ok) 84%, var(--track));
+}
+.trend-legend-cell.heat-4 {
+  background: var(--ok);
+}
+
+/* ── 逐日明细 ──
+   热力图给形状（哪天用得多），这里给数值（那天具体用了多少）。
+   ⚠ 只显示有采样的天：用户明确不要空行。而热力图的「缺口可见」是**位置**信息
+     （那天在日历上的哪），明细是**数值**信息 —— 列一行全是「—」的日期
+     没有任何信息量，只是把列表拉长。 */
+.trend-records {
+  margin-top: 10px;
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-sunken);
+}
+.trend-records-head,
+.trend-records-row {
+  display: grid;
+  grid-template-columns: 78px 52px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 9px;
+}
+.trend-records-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-sunken);
+  color: var(--fg-faint);
+  font-size: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.trend-records-row {
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.trend-records-row:last-child {
+  border-bottom: none;
+}
+.trend-records-date {
+  color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
-.trend-scale {
-  flex: 1 1 auto;
-  text-align: center;
-  color: var(--fg-faint);
+.trend-records-pct,
+.trend-records-used {
+  text-align: right;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
 }
+.trend-records-used {
+  font-weight: 600;
+}
+
 
 .wmodels {
   margin-top: 7px;

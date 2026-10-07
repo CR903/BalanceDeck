@@ -319,23 +319,31 @@ export async function runUiTest(
     r.detailOpen = (await exec("!!document.querySelector('.card.detail')")) ? 'ok' : 'fail'
     r.detailWindows = (await exec("!!document.querySelector('.dwin') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
 
-    // ── 趋势图（P1-1）─────────────────────────────────────────────────────
+    // ── 用量热力图（P1-1）───────────────────────────────────────────────────
     // 两态互斥，**不要**写成「有 chart 或没 chart 都算过」：
-    //   · 套餐类（coding/token）且有历史 → 有 `.trend-chart`，且柱数 = 该窗口的**可见天数**
-    //     （缺样本的天不画柱，所以柱数 ≤ 天数，**不能**断言相等）
+    //   · 套餐类（coding/token）且有历史 → 有 `.trend-chart`（日历网格 SVG）+
+    //     `.trend-head`（streak 头），且格数 > 0（缺样本的天不画格，所以格数 ≤ 天数，
+    //     **不能**断言相等）
     //   · 余额类（balance）→ **一定没有** `.trend-chart`，且实现层压根不发那次 IPC
     // 判「有没有 chart」用 `=== null` 而不是 `!`：`!` 会把「元素不存在」与
     // 「选择器写错了」混成同一个结果 —— 那正是本仓反复出现的空洞绿。
     const chartInfo = (await exec(`(() => {
       const chart = document.querySelector('.trend-chart')
       const host = document.querySelector('.trend') || document.querySelector('[class*="trend"]')
+      const head = document.querySelector('.trend-head')
       return JSON.stringify({
         hasChart: chart !== null,
-        bars: chart ? chart.querySelectorAll('.trend-bar').length : -1,
+        cells: chart ? chart.querySelectorAll('.trend-cell').length : -1,
+        hasHead: head !== null,
         hostClass: host ? host.className : ''
       })
     })()`)) as string
-    const ci = JSON.parse(chartInfo || '{}') as { hasChart?: boolean; bars?: number; hostClass?: string }
+    const ci = JSON.parse(chartInfo || '{}') as {
+      hasChart?: boolean
+      cells?: number
+      hasHead?: boolean
+      hostClass?: string
+    }
     const isBalance = (await exec(`(() => {
       const t = document.querySelector('.kind-tag')
       return t ? (t.textContent || '').includes('余额') : false
@@ -345,11 +353,12 @@ export async function runUiTest(
       r.trendChart = ci.hasChart ? 'fail:balance-should-have-none' : 'ok'
     } else {
       r.trendChart = ci.hasChart
-        ? 'ok'
+        ? // 有图就必须同时有 streak 头和至少一个格：缺一个就是「渲染到一半」
+          (ci.hasHead && (ci.cells ?? 0) > 0 ? 'ok' : 'fail:missing-head-or-cells')
         : // 没历史时 TrendChart 返回 null，界面什么都不显示 —— 那也是对的态
           ((await exec("!!document.querySelector('.dwin')")) ? 'ok:no-history' : 'fail')
     }
-    r.trendBars = String(ci.bars ?? -1)
+    r.trendBars = String(ci.cells ?? -1)
 
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
     await sleep(600)

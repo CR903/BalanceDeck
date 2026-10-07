@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "热力图是DetailView内新展示组件，遵循展示与取数分离、空态返回null纪律"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "useUsageHistory复用与usePredictions删除，切换不重发IPC、换供应商错配防护"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "App移除predict state与extras读写，保留期权威键语义转交热力图"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "缺样本保持null不补0，UsagePoint形状保留仅删算法"}

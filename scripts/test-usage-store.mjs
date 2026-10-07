@@ -264,5 +264,65 @@ ok(
 ok(SNAPSHOT_INTERVAL_MS === 15 * 60_000,
   `H7 快照采样间隔 = 15 分钟（实得 ${SNAPSHOT_INTERVAL_MS / 60_000} 分钟；60s 会让 30 天体积不可接受）`)
 
+// ═══ I. 绝对量（2026-10-07 加，用量热力图下方逐日明细要用）════════════════════
+console.log('\nI. 绝对量与 version 1 前向兼容')
+
+withStore((store) => {
+  // I1 / I2：used + unit 成对写、成对读回。unit 缺一个，那个数字就没法解释了。
+  store.appendBatch([
+    { providerId: 'go', window: '本月', pct: 40, used: 4.8, unit: 'usd', t: T0 }
+  ], T0)
+  const r1 = store.loadRecent('go', 7, T0)['本月']
+  eq(r1, [{ t: T0, pct: 40, used: 4.8, unit: 'usd' }], 'I1 used + unit 成对落盘、成对读回')
+
+  // I2：没给 used → 读回里**根本没有这个键**（不是 0、不是 null）。
+  // 填 0 会让升级前那几天显示「当天用了 $0.00」，而真实原因是那时还没记绝对量。
+  store.appendBatch([{ providerId: 'go', window: '本月', pct: 50, t: T0 + 1000 }], T0)
+  const both = store.loadRecent('go', 7, T0)['本月']
+  eq(both.length, 2, 'I2 前置：两条都读回来了')
+  const p2 = both[both.length - 1]
+  eq(p2.pct, 50, 'I2b 没给 used 的那条 pct 正常读回（绝对量缺失不影响百分比）')
+  ok(!('used' in p2), 'I2 没给 used → 读回里没有这个键（不是 0、不是 null）')
+})
+
+withStore((store) => {
+  // I3 / I4：两个字段**独立**判。pct 与 used 在官方 API 里是两份数据，
+  // 坏一个不必然坏另一个 —— 谁已知谁被保留，另一个保持 null / undefined。
+  store.appendBatch([
+    { providerId: 'go', window: '本月', pct: null, used: 2.5, unit: 'usd', t: T0 },
+    { providerId: 'go', window: '本月', pct: 30, t: T0 + 1 }
+  ], T0)
+  const day0 = store.loadRecent('go', 7, T0)['本月']
+  const knownPct = day0.filter((p) => p.pct == null)
+  eq(knownPct.length, 1, 'I3 前置：有且只有一条 pct=null 的记录')
+  eq(knownPct[0].used, 2.5, 'I3 pct 不可知时 used 仍完整保留')
+  eq(knownPct[0].unit, 'usd', 'I3b 单位跟着保留')
+  const knownUsed = day0.filter((p) => !('used' in p))
+  eq(knownUsed.length, 1, 'I4 前置：有且只有一条没有 used 的记录')
+  eq(knownUsed[0].pct, 30, 'I4 used 缺失时 pct 仍是真值')
+})
+
+withStore((store) => {
+  // I5：NaN / Infinity 当未知处理，不落盘 —— 落下去读回的是字符串 "NaN"，会污染计算
+  store.appendBatch([
+    { providerId: 'go', window: '本月', pct: 10, used: NaN, t: T0 },
+    { providerId: 'go', window: '本月', pct: 11, used: Infinity, t: T0 + 1 }
+  ], T0)
+  const bad = store.loadRecent('go', 7, T0)['本月']
+  ok(bad.every((p) => !('used' in p)), 'I5 used 是 NaN / Infinity 时不落盘（读回没有该键）')
+  eq(bad.map((p) => p.pct), [10, 11], 'I5b 两条的 pct 都正常保留')
+})
+
+withStore((store, file) => {
+  // I6：旧文件（没有 used 字段）读回来不报错、不把缺失当成 0
+  const d = dayKeyOf(T0)
+  writeFileSync(file, JSON.stringify({
+    version: 1,
+    days: { [d]: { old: [{ window: '本月', t: T0, pct: 25 }] } }
+  }), 'utf-8')
+  const old = store.loadRecent('old', 7, T0)['本月']
+  eq(old, [{ t: T0, pct: 25 }], 'I6 升级前的旧文件读回正常，且没有多出 used: 0')
+})
+
 console.log(`\n通过 ${pass} · 失败 ${fail}`)
 if (fail > 0) process.exit(1)

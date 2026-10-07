@@ -131,8 +131,17 @@ async function sampleUsageHistory(): Promise<void> {
   for (const s of lastSnapshots) {
     if (s.status !== 'ok') continue
     for (const w of s.windows) {
-      // 百分比不可知时写 null（**不写 0**）—— usageStore 也再兜一次，两处都守同一条纪律
-      points.push({ providerId: s.id, window: w.name, pct: windowPercent(w), t: now })
+      // pct 不可知时写 null（**不写 0**）—— usageStore 也再兜一次，两处都守同一条纪律
+      // used / unit 成对记：热力图下方的逐日明细要「当天具体用了多少钱」，
+      // 只存 pct 的话用户在 $12 额度和 $120 额度上看的是同一个数
+      points.push({
+        providerId: s.id,
+        window: w.name,
+        pct: windowPercent(w),
+        used: w.used,
+        unit: w.unit,
+        t: now
+      })
     }
   }
   if (points.length === 0) return

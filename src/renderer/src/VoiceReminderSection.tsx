@@ -9,7 +9,7 @@ import {
 } from './smartBroadcast'
 import { DEFAULT_TTS_STYLE, DEFAULT_TTS_VOICE, TTS_STYLES, TTS_VOICES } from '../../shared/tts-preset'
 import { type NotifyConfig } from './systemNotify'
-import { MAX_RETENTION_DAYS, type PredictConfig } from '../../shared/usage-predict'
+import { MAX_RETENTION_DAYS } from '../../shared/usage-predict'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 设置页「语音提醒」分区
@@ -131,7 +131,7 @@ interface TriggerMeta {
 const TRIGGER_META: Record<TriggerKind, TriggerMeta> = {
   balance: { label: '余额预警', unit: '元', min: 0.1, max: 100000, step: 1 },
   fluctuation: { label: '用量波动', unit: '元', min: 0.1, max: 100000, step: 1 },
-  exhaustion: { label: '用量即将耗尽', unit: '%', min: 1, max: 100, step: 1 },
+  exhaustion: { label: '用量告警', unit: '%', min: 1, max: 100, step: 1 },
   idle: { label: '长时间未使用', unit: '小时', min: 1, max: 720, step: 1 },
   abnormal: { label: '异常使用模式', unit: '倍', min: 1, max: 100, step: 0.5 }
 }
@@ -363,14 +363,11 @@ export interface VoiceReminderSectionProps {
   notifyConfig: NotifyConfig
   onChangeNotifyConfig: (patch: Partial<NotifyConfig>) => void
 
-  // ─── 用量预测（P0-2）──────────────────────────────────────────────────
-  /** 预测总开关（ui:predictOn，默认开） */
-  predictOn: boolean
-  onTogglePredict: (on: boolean) => void
-  /** 预测配置（ui:predictConfig） */
-  predictConfig: PredictConfig
-  /** 改配置；保留天数由 App 侧转交主进程专用通道（改完立即裁剪） */
-  onChangePredictConfig: (patch: Partial<PredictConfig>) => void
+  // ─── 用量历史（本机快照保留期）──────────────────────────────────────────
+  /** 本机快照保留天数（sample:usageHistoryDays，默认 30） */
+  historyDays: number
+  /** 改保留天数；由 App 侧转交主进程专用通道（改完立即裁剪） */
+  onChangeHistoryDays: (days: number) => void
 }
 
 export function VoiceReminderSection({
@@ -413,10 +410,8 @@ export function VoiceReminderSection({
   onToggleNotify,
   notifyConfig,
   onChangeNotifyConfig,
-  predictOn,
-  onTogglePredict,
-  predictConfig,
-  onChangePredictConfig
+  historyDays,
+  onChangeHistoryDays
 }: VoiceReminderSectionProps): React.JSX.Element {
   /** 按供应商覆盖折叠态：默认收起（5 场景 × N 供应商，不该默认铺满设置页） */
   const [overrideOpen, setOverrideOpen] = useState(false)
@@ -902,65 +897,33 @@ export function VoiceReminderSection({
           </>
         )}
 
-        {/* ── F. 用量预测（P0-2）────────────────────────────────────────── */}
-        <div className="field-label vrs-sub">用量预测</div>
+        {/* ── F. 本机历史（P1-1）────────────────────────────────────────── */}
+        <div className="field-label vrs-sub">本机历史</div>
 
-        <div className="enable-row">
-          <span>
-            预计耗尽时间
-            <em className="tag env">本机估算</em>
+        <label className="field">
+          <span className="field-label">
+            用量快照保留天数
+            <em className="tag env">1 – {MAX_RETENTION_DAYS} 天</em>
           </span>
-          <button
-            type="button"
-            className={'switch vrs-predict-on' + (predictOn ? ' on' : '')}
-            title={predictOn ? '关闭后详情页不再显示预计耗尽时间' : '开启后详情页按本机历史估算预计耗尽时间'}
-            onClick={() => onTogglePredict(!predictOn)}
-          >
-            <span className="knob" />
-          </button>
+          <NumInput
+            className="vrs-history-days"
+            value={historyDays}
+            min={1}
+            max={MAX_RETENTION_DAYS}
+            step={1}
+            onCommit={onChangeHistoryDays}
+          />
+        </label>
+        <div className="advanced-note">
+          {/* ⚠ JSX 文本节点里写 `**粗体**` 会把星号原样渲染出来（Markdown 在 .tsx 里不生效），
+              强调用 <b>，与本文件其它 advanced-note 一致 */}
+          详情页的<b>用量记录</b>（热力图 + 逐日明细）基于本机每 15 分钟一条的用量快照，
+          <b>不出网、不消耗配额</b>；只保留最近这么多天，改完立即裁剪。
+          余额类供应商没有「窗口」，不记历史。
         </div>
 
-        {predictOn && (
-          <>
-            <label className="field">
-              <span className="field-label">
-                速率回看天数
-                <em className="tag env">1 – 30 天</em>
-              </span>
-              <NumInput
-                className="vrs-predict-days"
-                value={predictConfig.windowDays}
-                min={1}
-                max={30}
-                step={1}
-                onCommit={(n) => onChangePredictConfig({ windowDays: n })}
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">
-                本地快照保留天数
-                <em className="tag env">1 – {MAX_RETENTION_DAYS} 天</em>
-              </span>
-              <NumInput
-                className="vrs-predict-retention"
-                value={predictConfig.retentionDays}
-                min={1}
-                max={MAX_RETENTION_DAYS}
-                step={1}
-                onCommit={(n) => onChangePredictConfig({ retentionDays: n })}
-              />
-            </label>
-            <div className="advanced-note">
-              {/* ⚠ JSX 文本节点里写 `**粗体**` 会把星号原样渲染出来（Markdown 在 .tsx 里不生效），
-                  强调用 <b>，与本文件其它 advanced-note 一致 */}
-              预测基于本机每 15 分钟一条的用量快照，<b>是估算值不是官方数据</b>；
-              样本不足时不显示，余额类供应商没有「窗口」故不预测。
-            </div>
-          </>
-        )}
-
         <div className="settings-note vrs-foot">
-          播报分级：余额预警 / 用量波动 / 用量耗尽在面板展开时也会播；
+          播报分级：余额预警 / 用量波动 / 用量告警在面板展开时也会播；
           定时兜底 / 长时间未使用 / 异常模式只在收起态播。密钥加密存入系统密钥链，不写进普通设置。
         </div>
       </div>
