@@ -122,3 +122,46 @@ holo 全息球太大下掉，收起态回 56 小球：删 holo/ + three + HOLO_V
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 柱内液高为零（诚实水位收口）+ 归档球柱三修
+<!-- trellis-session: v=2 fp=029fd747258748dc -->
+
+**Date**: 2026-10-08
+**Task**: 柱内液高为零（诚实水位收口）+ 归档球柱三修
+**Branch**: `main`
+
+### Summary
+
+收口 petWaterColumn 长期挂着的 fail:empty-fill=0（球里有液面、贴边柱却是空槽）。真因在共享门控而非几何：percent.ts:14 的 windowPercent 在 used=0 && limit>0 时返回 0 而非 null，旧门控 pct!=null 只看算不算得出比例，于是 0% 档也挂了 .fluid-surface，而 fluidLevel(0)=0 → 柱内 fill 高度 0%。修法把数据有无与水位有无拆成两个布尔：hasData（环轨道在）/ showWaves = hasData && fluidLvl>0（挂水 ⟺ 液位>0），.fluid-ring 与 water 口径改挂 hasData，.slosh 仍只随 showWaves；诚实水位断言 fillH>0 一行没动。第一版判错：给 showWaves 加 && pct>0 能转绿但拆掉整圈环（危害不对称——4 款环形态皮水体本就 display:none，原缺陷不可见；环却是它们唯一进度载体）。附带收窄 petWaterColumn 前置条件（balance 在 status!=='ok' 时无 surface，该走空槽支）、补 FIX_ZERO 夹具让真实数据够不到的 0% 分支可被断言覆盖。收尾时一并归档 10-06-column-zero-fill 与 10-06-ball-column-fixes。
+
+### Main Changes
+
+- src/renderer/src/PetBall.tsx：拆 hasData / showWaves，.fluid-ring 与 water 口径改挂 hasData，.slosh 保持只随 showWaves
+- src/main/qa/uitest.ts：petWaterColumn 前置收窄为 surface；FIX_ZERO 夹具 + 场景六并进 petRingAlwaysOn；ballProbe 增 ringTrack
+- scripts/test-structure.mjs：新增 K8o1（锁 showWaves 由 fluidLvl>0 派生）/ K8p（锁 .fluid-ring 挂 hasData）两个片段级门
+- 文档：PRD 六条 AC 勾选 + 真因回填；docs/daily/2026-10-08_column-zero-fill.md；docs/index.md 加行；知识沉淀 docs/knowledge/frontend/petball-mount-conditions.md + 端索引
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `348be9e` | fix(pet): 柱内液高为零 —— 拆 hasData/showWaves，0% 是空环不是无环 |
+
+### Testing
+
+- [OK] structure 395/0（+1）、fluid 126/0、dock-hide 155/0、typecheck 0 error、npm test exit 0、build ✓
+- [OK] Electron --uitest 160 键 4 fail，全为既有基线（petBallSkinSurface / dragReorder / dragSettles / grpDupCleanup），非回归
+- [OK] 验齿：改回 showWaves → structure 394/1 + fail:zero-pct-no-ring；删 fluidLvl>0 → K8o1 红；还原即绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 348be9e 及两个 archive commit 尚未 push，待用户确认后推
+- 像素级验收遗留：--shots 5n 柱区液色对拍未做，改用 fillH / fillColor / wave 三件套 + K8o1 / K8p 覆盖（日志与 PRD 均已标注）
+- 10-04-rain-weather-column / 10-04-skin-fluid-redesign 各剩一条用户人眼动态终验，等实机看后归档
+- 补记历史欠账：Session 6 之后的 5fd2b81 / 6a19a04 / 0f70cab / ad28f1d / 4de3412 / e45f374 / 7d9097d 七笔（皮肤 P6 + 球柱三修 + 详情页）没有 journal 条目
+- 可选：.trellis/spec/frontend/quality-guidelines.md 补共享门控条目的 spec 层条目
