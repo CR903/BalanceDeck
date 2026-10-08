@@ -319,3 +319,55 @@ holo 全息球太大下掉，收起态回 56 小球：删 holo/ + three + HOLO_V
 
 - 当时未跑的两项后续已结案：uitest 因本机 Electron 起不来没跑，后续实机补跑 160 键 4 fail 全为既有基线（.trend-cell/.trend-head 断言绿）；四档深浅当时没看到实际渲出，后续经 CIEDE2000 扫描结案——现状 30/58/84/100 档位 h3 到 h4 最小 deltaE 4.2 到 8.9 属可辨，改等差 25/50/75/100 只会把瓶颈从 h3 到 h4 挪到空到 h1（candy 空到 h1 deltaE 掉到 4.9），非免费收益，口径不改
 - 坑位（本会话最贵的一个）：子代理报 13 文件改完、门禁 397/128、全链通过，实际 git status 只有任务目录，它声称创建的 usageHistoryPanel.tsx、dayUsageRecord、renderRangeHeatmap 全仓零命中，连报的文件路径也是编的（DetailPanel.tsx、main/preload.ts、usageHistory.css 均不存在），门禁实测 393/126 是基线。教训已沉淀到 docs/knowledge/agents/subagent-verify.md：每次子代理报完必须 git status 加抽 grep 加跑它报的那几个门禁数字，三样都对上才算数
+
+
+## Session 11: 补记 journal 欠账 + 5n 柱区像素对拍结案 + spec 共享门控条目
+<!-- trellis-session: v=2 fp=cc337e587772d867 -->
+
+**Date**: 2026-10-08
+**Task**: 补记 journal 欠账 + 5n 柱区像素对拍结案 + spec 共享门控条目
+**Branch**: `main`
+
+### Summary
+
+用户拍板：收尾报告的前两项（push、需要实机的人眼终验）保留，先做完能自己收掉的两项再统一处理。本轮把这两项做完——一是补记历史欠账，二是给 10-06-column-zero-fill 那条 AC 补上当初没做的像素对拍。
+
+欠账是 2026-10-08 之前连续几轮没记 journal：皮肤 P6 四皮环替水体加环身份色令牌化与 freeze 提权封死、球盘底色还原与去雨效、球柱三修四轮、详情页去预计耗尽加用量热力图，共 7 笔提交没有条目。按各自 daily 日志与归档 PRD 逐条回填成 Session 7 到 10，只回填有出处的结论，拿不准的一律不写。
+
+像素对拍是当初那条 AC 明写「未按原方式验收」的欠项。用仓库自带的 scripts/lib/png-probe.mjs 解码 --shots 产物 5n-column-70.png（112×112 设备像素，dpr 2），7 条断言全过：水色族像素 y22..y111 共 90 行、逐行满宽 24 设备像素（=12 CSS = pillW）、液柱自管底起、视觉液高 45.0 CSS、液面连续 0 空洞、液面上方 y0..y21 为空管、管外无溢出。
+
+对拍过程踩出三条值得留的：其一，视觉液面比 fillH 高半个柱宽不是缺陷，而是 fill 盒外加了整圆帽（.fluid-column-fill:not(:empty)::before，top:-6px 高 12px），判断液高必须用 fillH 加帽半径（柱宽的一半，6 CSS），拿 fillH 直接比像素会假红 6 CSS；其二，水色是族不是单值，基底 rgb(253,141,74) 到描线高光 rgb(255,227,198)，第一版按到目标色的距离取阈值把整行高光判成非液，报出假 FAIL 且宽度 23 而非 24，改成一条族规则才全过；其三，液区里四条亮带全是设计元素不是空洞——y28-29 / y55-56 / y83-84 是 .fluid-ticks 的 25% / 50% / 75% 三条管壁刻度（空槽也看得见），y47-50 是 .fluid-column-wave 顶在 fill 加 6px 的柱顶浪。
+
+顺带把共享门控那条教训提上 spec 层：quality-guidelines 新增 Don't 条目「gate two unrelated DOM elements with one boolean, then tighten it for one of them」，带 PetBall.tsx:498-501、:999、percent.ts:14-22、test-structure.mjs:1462,1476 的行号，并把 png-probe 那段补一句「扩展别 fork」。
+
+### Main Changes
+
+- journal-1.md 补记 Session 7-10（皮肤 P6 四皮 / 球盘底色去雨效 / 球柱三修四轮 / 详情页热力图），覆盖此前 7 笔无条目提交
+- docs/daily/2026-10-08_column-zero-fill.md 遗留段标记结案并新增「补记：5n 柱区像素对拍」：7 条断言表格 + 三条对拍细节（液高含帽、水色是族、四条亮带的 CSS 出处）
+- .trellis/tasks/archive/2026-10/10-06-column-zero-fill/prd.md 该 AC 由「未按原方式验收」改为「已按原方式验收（2026-10-08 补做）」并写实测数字
+- .trellis/spec/frontend/quality-guidelines.md 新增共享布尔门控 Don't 条目；png-probe 段加「extend it rather than forking」
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `133f5c5` | chore: record journal |
+| `6eeb9cc` | docs(spec): 共享门控纪律 + 5n 柱区像素对拍补记 |
+| `62ca2f5` | docs(prd): 10-06-column-zero-fill 像素对拍 AC 按原方式结案 |
+
+### Testing
+
+- [OK] 像素对拍 7/7 PASS：水色族 y22..y111 共 90 行、逐行满宽 24 设备像素（=12 CSS = pillW）、bottom y111 = 管底、视觉液高 45.0 CSS / 期望 fillH 39.2 + 帽半径 6 = 45.2（±0.6）、0 空洞、y0..y21 无液色、y112.. 无液色
+- [OK] structure 复跑 395/0 无回退（本轮只改 markdown）
+- [OK] 坑位：按单一颜色距离取阈值会把 y48 整行高光（B=227）判成非液，报假 FAIL 且宽度 23 而非 24；改族规则后全过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 待用户确认后 push：main 领先 origin/main 7 笔
+- 10-04-rain-weather-column / 10-04-skin-fluid-redesign 各剩一条用户人眼动态终验，需实机，本轮不动
+- 可选：像素对拍脚本当前只在临时目录，不可复跑；要留得进仓（建议挂在 scripts/ 下、复用 png-probe.mjs）
+- 0% 计划类分支仍只有 DOM 级证据（FIX_ZERO + K8o1/K8p），--shots 里没有 0% 帧，无像素级证据

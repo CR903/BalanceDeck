@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
+- **Total Sessions**: 11
 - **Last Active**: 2026-10-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~321 | Active |
+| `journal-1.md` | ~373 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-10-08 | 补记 journal 欠账 + 5n 柱区像素对拍结案 + spec 共享门控条目 | `133f5c5`, `6eeb9cc`, `62ca2f5` | `main` |
 | 10 | 2026-10-08 | 详情页去预计耗尽 + 用量热力图（日历网格 + streak + 逐日明细） | `7d9097d` | `main` |
 | 9 | 2026-10-08 | 球柱三修四轮（读数可读 + 柱体全圆 + morph 带底盘） | `4de3412`, `e45f374` | `main` |
 | 8 | 2026-10-08 | 球盘底色还原 + 去雨效（P6-demo 一比一） | `ad28f1d` | `main` |
