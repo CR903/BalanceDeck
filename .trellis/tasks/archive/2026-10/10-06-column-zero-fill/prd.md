@@ -45,8 +45,12 @@ P6「四种皮肤外观」的质量检查发现一个**活的流体缺陷**（�
   → 两者兼得：实现拆成 `hasData` / `showWaves` 两条件后 `petWaterColumn = ok`；前置条件
   另做一处合法收窄（`ring==='balance'` 不再无条件进「有液面」分支，理由见日志）。
 - [x] 屏边柱在有液位时实际可见水（--shots 5n 取帧像素对拍：柱区有液色像素）
-  → **未按原方式验收**：本轮没做像素采样，改由 `petWaterColumn` 的 `fillH` /
-  `fillColor`（computed）/ `wave` 三件套 + K8o1/K8p 结构门覆盖。像素级确认遗留待实机。
+  → **已按原方式验收（2026-10-08 补做）**：用 `scripts/lib/png-probe.mjs` 解码 `--shots`
+  产物 `5n-column-70.png`（112×112 设备像素，dpr 2），7 条断言全过——水色族像素
+  y22..y111 共 90 行、逐行满宽 24 设备像素（= 12 CSS = `pillW`）、自管底起、视觉液高
+  45.0 CSS（= `fillH` 39.2 + 上帽半径 6，不是 `fillH` 本身）、液面连续 0 空洞、液面上方
+  y0..y21 为空管、管外无溢出。详见 daily 日志「补记：5n 柱区像素对拍」。仍保留
+  `petWaterColumn` 的 `fillH` / `fillColor`（computed）/ `wave` + K8o1/K8p 作回归门。
 - [x] 若修了实现：新增结构门/单测锁住"柱内液高随 fluidLvl 非零"（含 `fluidLvl=0` 时才空槽的反向断言）
   → K8o1 锁 `showWaves` 由 `hasData && fluidLvl > 0` 派生；K8p 锁 `.fluid-ring` 门控是
   `hasData`；uitest 场景六（`FIX_ZERO` 夹具）锁 `fluidLvl=0` 时的正反向：空环**在**、
