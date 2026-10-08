@@ -114,6 +114,13 @@ export async function runUiTest(
   /** 套餐但**算不出比例**的窗口（既无 percent 也无 limit → windowPercent 返回 null）：
    *  AC3.3 要的正是它 —— 轨道仍在、没有填充弧、中心是金额而不是 0% */
   const FIX_NOLIMIT = [planFix('fix-nolimit', 'Fix 无比例', [{ name: '5 小时', used: 1288.5, unit: 'cny' }])]
+  /** 零用量窗口（`used=0` 且 `limit>0` → `windowPercent` 返回 **0** 而不是 null）：
+   *  AC3.3 的对偶面 —— 中心是 `0%` 而不是金额，轨道**仍在**（空环）、弧长 0、不挂水。
+   *  `fw()` 的 `used:1` 与 percent=0 不自洽，所以显式给三个字段（`windowPercent` 优先取 percent，
+   *  但夹具该长得像真实数据：三个字段互相一致）。
+   *  不推夹具就只能指望真实数据恰好落在 0% —— 10-06-column-zero-fill 的 `petWaterColumn`
+   *  长期红正是这个状态漏了断言（真实数据常落在 5H=0% 的窗口上）。 */
+  const FIX_ZERO = [planFix('fix-zero', 'Fix 零用量', [{ name: '5 小时', used: 0, limit: 10, unit: 'usd', percent: 0 }])]
 
   // ── P1-3 托盘等级：四档夹具（10-01-p1-tray-color）──────────────────────────
   //
@@ -153,6 +160,9 @@ export async function runUiTest(
     lvl: string
     /** 退役环的残留节点数（必须恒为 0：轨道/填充弧的 CSS 与 JSX 已一并删除） */
     ringNodes: number
+    /** 新环轨道在（`.ring-track`）—— 与 waves/surface 分开的另一个开关：
+     *  数据已知就有轨道（0% 是空环），水位 > 0 才挂水体（10-06-column-zero-fill） */
+    ringTrack: boolean
     value: string | null
     winLabel: string | null
     title: string
@@ -170,6 +180,7 @@ export async function runUiTest(
     waterFill: null,
     lvl: '',
     ringNodes: -1,
+    ringTrack: false,
     value: null,
     winLabel: null,
     title: '',
@@ -206,6 +217,7 @@ export async function runUiTest(
         waterFill: waves[0]?getComputedStyle(waves[0]).fill:null,
         lvl,
         ringNodes: dot?dot.querySelectorAll('[class*="dot-ring"]').length:-1,
+        ringTrack: dot?!!dot.querySelector('.ring-track'):false,
         value: dv?dv.textContent:null,
         winLabel: wl?wl.textContent:null,
         title: hit?hit.title:'',
@@ -1072,6 +1084,7 @@ export async function runUiTest(
         fill: waves[0]?getComputedStyle(waves[0]).fill:'',
         lvl: (document.querySelector('.petball')?.className.match(/lvl-([a-z]+)/)||[])[1]||'',
         ringNodes: dot.querySelectorAll('[class*="dot-ring"]').length,
+        ringTrack: !!dot.querySelector('.ring-track'),
         value: value ? value.textContent : ''
       })
     })()`)
@@ -1084,8 +1097,9 @@ export async function runUiTest(
   let ringNodes = -1
   let ringValue = ''
   let ringSurfaceY: number | null = null
+  let ringTrack = false
   try {
-    const d = JSON.parse(ringDom) as { ring: string; waves: number; surface: boolean; surfaceY: number | null; fill: string; lvl: string; ringNodes: number; value: string }
+    const d = JSON.parse(ringDom) as { ring: string; waves: number; surface: boolean; surfaceY: number | null; fill: string; lvl: string; ringNodes: number; ringTrack: boolean; value: string }
     ringKind = d.ring
     waveCount = d.waves
     hasSurface = d.surface
@@ -1094,6 +1108,7 @@ export async function runUiTest(
     ringNodes = d.ringNodes
     ringValue = d.value
     ringSurfaceY = typeof d.surfaceY === 'number' ? d.surfaceY : null
+    ringTrack = !!d.ringTrack
   } catch {
     // ringDom 是 fail:... —— 下面统一报出去
   }
@@ -1109,16 +1124,28 @@ export async function runUiTest(
         ? `fail:value='${ringValue}'`
         : ringKind === 'plan'
           ? pctLike
-            // 有比例：三层波 + 高光 + 真实水色三件套，缺一件都算红
-            ? waveCount !== 3
-              ? `fail:plan-waves=${waveCount}`
-              : !hasSurface
-                ? 'fail:plan-no-surface'
-                : !realWater(waterFill)
-                  ? `fail:plan-fill=${waterFill}`
-                  : !waterLvl
-                    ? 'fail:plan-no-lvl'
+            ? ringValue === '0%'
+              // 零用量（pct=0）：不画假水位（fluidLvl=0 → 无波、无高光），
+              // 但空环（.ring-track）仍在 —— 环是环形态皮唯一的进度载体，
+              // 0% 与"算不出比例"必须读得开（10-06-column-zero-fill 回归）。
+              // 10-06-column-zero-fill：诚实水位要求 surface ⟺ fill>0
+              ? !ringTrack
+                ? 'fail:zero-pct-no-ring'
+                : waveCount !== 0
+                  ? `fail:zero-pct-waves=${waveCount}`
+                  : hasSurface
+                    ? 'fail:zero-pct-surface'
                     : ''
+              // 有比例且非零：三层波 + 高光 + 真实水色三件套，缺一件都算红
+              : waveCount !== 3
+                ? `fail:plan-waves=${waveCount}`
+                : !hasSurface
+                  ? 'fail:plan-no-surface'
+                  : !realWater(waterFill)
+                    ? `fail:plan-fill=${waterFill}`
+                    : !waterLvl
+                      ? 'fail:plan-no-lvl'
+                      : ''
             // 算不出比例：绝不画假水位 —— 无波浪、无高光（AC3.3 的水满版）
             : waveCount !== 0
               ? `fail:no-pct-waves=${waveCount}`
@@ -1637,6 +1664,26 @@ export async function runUiTest(
   else if (np0.winLabel !== null) noPctWhy = `fail:lbl=${np0.winLabel}` // 单窗口不该出现短标签
   if (!ringOnWhy && noPctWhy) ringOnWhy = noPctWhy
   r.petRingAlwaysOn = ringOnWhy || 'ok' // 复写：场景一写过一次，这里补上 AC3.3 那一半
+
+  // ── 场景六：零用量窗口 —— 「pct=0 是空环，不是无环」的唯一证明 ──────────────
+  // 场景五验的是「算不出比例 → 素盘 + 金额，连轨道都不画」。这里验它的镜像：比例
+  // **算得出且等于 0** → 轨道仍在（0% 是诚实空环）、弧长 0、不挂水。
+  // 两个开关必须分开：轨道挂「数据已知」、水体挂「液位 > 0」。合成一个 showWaves 时
+  // 0% 会把整圈环一起从 DOM 拆掉 —— 4 款环形态皮（dark/minimal/candy/ink）上环是唯一
+  // 的进度载体，球退化成素盘 + 0% 文字，跟场景五的 nodata 态读起来一模一样。
+  // 结果同样并进 petRingAlwaysOn（同一句「套餐水位诚实」的第三半），断言条目数不变。
+  await pushSettle(FIX_ZERO)
+  const z0 = await ballProbe()
+  let zeroWhy = ''
+  if (z0.err) zeroWhy = `fail:probe=${z0.err}`
+  else if (z0.ring !== 'plan') zeroWhy = `fail:ring=${z0.ring}`
+  else if (z0.value !== '0%') zeroWhy = `fail:value=${z0.value}` // 是 0%，不是金额、不是 —
+  else if (!z0.ringTrack)
+    zeroWhy = 'fail:zero-pct-no-ring（pct=0 是空环不是无环：环形态皮唯一的进度载体不能跟水位一起拆）'
+  else if (z0.waves !== 0) zeroWhy = `fail:waves=${z0.waves}（fluidLvl=0 不挂假水位）`
+  else if (z0.surface) zeroWhy = 'fail:zero-pct-surface'
+  if (!ringOnWhy && zeroWhy) ringOnWhy = zeroWhy
+  r.petRingAlwaysOn = ringOnWhy || 'ok' // 再复写一次：补上「0% 空环」这一半
   // 收尾：隐藏余额已在场景三还原；采集频率拉回默认（setExtras 会 reconfigure → 立刻补一轮真实数据）
   await exec("window.api.setExtras({refreshInterval:'60'})")
 
@@ -2452,8 +2499,11 @@ export async function runUiTest(
       // 前置：左沿 12px 屏边柱（与 waterColumn/peekHitbox 同形；K4 在静态侧钉死四边）
       if (c.edge !== 'left') columnWhy = `fail:edge=${c.edge}`
       else if (c.pillW !== COLUMN_W || c.pillH !== 56) columnWhy = `fail:pillar=${c.pillW}x${c.pillH}（应为 ${COLUMN_W}x56 屏边柱）`
-      else if ((c.ring === 'plan' && c.surface) || c.ring === 'balance') {
-        // 套餐有液面与余额满水：柱内液 + 柱顶波 + 真实水色三件套；余额水色另判 accent
+      else if (c.surface) {
+        // 有液面（surface=true）：柱内液 + 柱顶波 + 真实水色三件套；余额水色另判 accent。
+        // 10-06-column-zero-fill：前置条件从 (plan&&surface)||balance 收窄为 surface，
+        // 因为 balance 在 status!=ok 时 showWaves=false → 无 surface → 不该走 fill>0 分支
+        // （否则会在无液面时假报 fillH>0），而该走下方"无液面必须空槽"分支。
         if (!(c.fillH > 0)) columnWhy = `fail:empty-fill=${c.fillH}（有液面却空柱）`
         else if (!c.wave) columnWhy = 'fail:no-wave（有液面却无柱顶波浪）'
         else if (!c.fillColor || c.fillColor === 'rgba(0, 0, 0, 0)') columnWhy = `fail:fillColor=${c.fillColor}`

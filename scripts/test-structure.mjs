@@ -1443,6 +1443,39 @@ ok(
   /\(fluidLvl \* 100\)\.toFixed\(1\)/.test(petBallCode),
   'K8f 柱内液高 = fluidLvl 逐值绑定（隐藏态水柱液高与球内液位同一出处，逐值对拍的结构侧）'
 )
+// K8o · 诚实水位不变量：surface ⟺ fill>0（10-06-column-zero-fill）
+//
+// 拆成两条锁：
+//   · K8o1 锁 showWaves 由 fluidLvl > 0 派生（删掉 fluidLvl > 0 即红）
+//     —— 诚实水位的原始门：pct=0 时 fluidLvl=0 不画假水位（surface ⟺ fill>0）
+//   · K8p  锁 .fluid-ring 的门控是 hasData 而不是 showWaves（改回 showWaves 即红）
+//     —— 上一版把 showWaves 加进 hasData 的门控链路，四款环形态皮 pct=0 时整圈环从
+//        DOM 被拆掉（水体块走 showWaves、环块走 hasData，两者分工明确）
+//
+// 注意（K11g/K11h 教训）：整块文本扫描容易假绿，断言要定位到具体片段。
+// 定位方式：先找到 `const showWaves = ` 那一行的完整表达式，再在 JSX 里
+// 找 className="fluid-ring" 前面最近的 `{showWaves` 或 `{hasData` 块。
+{
+  const showWavesLine = (petBallCode.match(/const showWaves = [^\n]+/) || [''])[0]
+  ok(
+    /const showWaves = hasData && fluidLvl > 0$/.test(showWavesLine),
+    `K8o1 showWaves 由 hasData && fluidLvl > 0 派生（诚实水位：fluidLvl=0 不画假水位；实测: ${showWavesLine || '未找到'}）`
+  )
+}
+{
+  // 定位 .fluid-ring 前面的条件块起点：JSX 是 `{hasData && (\n  <div className="fluid-ring"`，
+  // 从 marker 往前找最近的 `{xxx &&`，判断用的是 hasData 还是 showWaves。
+  const ringMarker = 'className="fluid-ring"'
+  const mi = petBallCode.indexOf(ringMarker)
+  const gateMatch =
+    mi >= 0
+      ? petBallCode.slice(Math.max(0, mi - 60), mi).match(/\{(hasData|showWaves)\s*&&/)
+      : null
+  ok(
+    gateMatch != null && gateMatch[1] === 'hasData',
+    `K8p .fluid-ring 门控是 hasData（0% 是空环不是无环；实测: ${gateMatch ? gateMatch[0].replace(/\s+$/,'') : '未找到'}，应为 {hasData &&）`
+  )
+}
 // K8n · 柱两端胶囊（10-06-ball-column-fixes B2）：竖柱 12×56 / 横槽 56×12 的短边
 // 都是 12，radius 6 = 短边一半即两端全圆；液头弯月是 12px 整圆（与柱同宽的温度计
 // 液头，原型 .col radius:12px 口径的折半）；柱顶泡沫波不得横穿弯月（对比色描线压

@@ -482,12 +482,23 @@ export function PetBall({
   const fluidEdgeAttr =
     fluidEdge === 'right' || fluidEdge === 'top' || fluidEdge === 'bottom' ? fluidEdge : 'left'
   /**
-   * 挂水条件（R4-6）：套餐类有比例挂水（液位 = 用量）；余额类（直充）状态 ok 即挂满水
-   * （fluidLvl=1，语义是"钱足=满杯"，与用量比例无关 —— 不是 pct，不叫百分比）。
-   * error/nodata 仍无水（坏数据不配满杯）；hideBalance 打码只管读数，水不泄露数字。
+   * 数据已知（R4-6）：套餐算得出比例（pct != null）/ 余额状态 ok —— 环轨道与刻度
+   * 照常渲染。0% 是"空环"，不是"无环"：0% 与"算不出比例"必须读得开（nodata/error
+   * 的素盘只有金额，没有环；pct=0 是空环 + 0% 读数，两者读感不同）。
+   * 挂水（R4-6）：套餐有比例挂水（液位 = 用量）；余额状态 ok 即挂满水（fluidLvl=1，
+   * 语义是"钱足=满杯"，与用量比例无关 —— 不是 pct，不叫百分比）。
+   * error/nodata 仍无环无水（坏数据不配满杯）；hideBalance 打码只管读数，水不泄露数字。
+   * 挂水 ⟺ 液位 > 0：pct=0 时 fluidLvl=0 不画假水位（surface ⟺ fill>0 的诚实水位
+   * 不变量，10-06-column-zero-fill）。两个条件分工：hasData 决定"有没有环"（进度载体
+   * 在），showWaves 决定"有没有水体"（水只在液位>0 时挂）。四款环形态皮
+   * （dark/minimal/candy/ink）--water-display:none 时水体本就不显，环是唯一的进度载体
+   * —— 若用 showWaves 门控环，pct=0 时整圈环从 DOM 被拆，球退化成素盘 + 0% 文字，
+   * 与 nodata 态无法区分（本机数据里球常落在 5H=0% 的窗口上，是日常可见态）。
    */
-  const showWaves = !!s && s.status === 'ok' && (isPlan(s) ? pct != null : true)
-  const fluidLvl = !showWaves || !s ? 0 : isPlan(s) ? fluidLevel(pct) : 1
+  const hasData = !!s && s.status === 'ok' && (isPlan(s) ? pct != null : true)
+  const fluidLvl = !hasData || !s ? 0 : isPlan(s) ? fluidLevel(pct) : 1
+  // 挂水 ⟺ 液位 > 0：surface ⟺ fill>0 的诚实水位不变量
+  const showWaves = hasData && fluidLvl > 0
   // 液面在 56 viewBox 里的高度：全屏水体的 clip 圆 r=27（圆心 28,28）→ 顶 1 / 底 55
   const surfaceY = 55 - fluidLvl * 54
   /**
@@ -529,7 +540,7 @@ export function PetBall({
    * 余额类取 accent 实色（R4-6 实例，色值待用户看效果再定）；无水时 null，
    * CSS 的 lvl-* 兜底继续生效。
    */
-  const water = !showWaves || !s ? null : isPlan(s) ? waterColor(pct, waterAnchors) : rgbStr(waterAnchors.accent)
+  const water = !hasData || !s ? null : isPlan(s) ? waterColor(pct, waterAnchors) : rgbStr(waterAnchors.accent)
   /**
    * 倒水入场（10-04-pour-in-slosh；去雨、去冲顶整球外扩后剩两段）：mount + 每次切供应商/
    * 窗口都播完整两段（G1 结论）。
@@ -979,8 +990,13 @@ export function PetBall({
               （left/top 50% + translate(-50%,-50%)），因此 hidden/absorbing/revealing
               三条既有 [data-fluid] 规则只要把本选择器加进去，就随 disc 一起收尽/回弹，
               不另写一套 morph。显隐走 --ring-display 令牌（水体皮 none，:root 缺省 none，
-              外部皮肤零代码退回水体形态）。 */}
-          {showWaves && (
+              外部皮肤零代码退回水体形态）。
+              ⚠ 门控用 hasData 而不是 showWaves：环是 4 款环形态皮（dark/minimal/
+              candy/ink，--water-display:none + --ring-display:block）唯一的进度载体，
+              0% 是"空环"（ringDash(0) 长度 0 的诚实弧）而不是"无环"—— 若用 showWaves
+              门控，pct=0 时整圈环从 DOM 被拆掉，球退化成素盘 + 0% 文字，与 nodata
+              态无法区分（K8p）。showWaves 只管水体块，0% 不挂假水位。 */}
+          {hasData && (
             <div className="fluid-ring" aria-hidden="true">
               <svg viewBox="0 0 56 56" aria-hidden="true">
                 {ringSvg(fluidLvl, water)}
