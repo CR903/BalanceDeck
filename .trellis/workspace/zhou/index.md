@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 10
 - **Last Active**: 2026-10-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~167 | Active |
+| `journal-1.md` | ~321 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-10-08 | 详情页去预计耗尽 + 用量热力图（日历网格 + streak + 逐日明细） | `7d9097d` | `main` |
+| 9 | 2026-10-08 | 球柱三修四轮（读数可读 + 柱体全圆 + morph 带底盘） | `4de3412`, `e45f374` | `main` |
+| 8 | 2026-10-08 | 球盘底色还原 + 去雨效（P6-demo 一比一） | `ad28f1d` | `main` |
+| 7 | 2026-10-08 | 球体外观四皮（P6 环替水体）+ 环身份色令牌化 + freeze 提权封死 | `5fd2b81`, `6a19a04`, `0f70cab` | `main` |
 | 6 | 2026-10-08 | 柱内液高为零（诚实水位收口）+ 归档球柱三修 | `348be9e` | `main` |
 | 5 | 2026-10-04 | 水球 pivot：全屏水满 + 贴边水柱 | `f7fb0d1`, `11b3313` | `feat/holo-sphere` |
 | 4 | 2026-10-03 | 贴边隐藏 + 流体水满 + 移除数字真人 + 全息球原型 | `4b2dadc`, `b6339d1`, `f58f10f`, `a47e4a9`, `da44fae` | `main` |
