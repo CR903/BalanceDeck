@@ -96,7 +96,8 @@ fine" on the strength of it; it returned 403. The comment is now
 the ball" bug looked absent; decoding it, **100% of the pixels outside the ball's circle carried
 alpha** (2688/2688, out to the window's diagonal), because `capturePage()` photographs the
 window *contents* and the artifact was the page's own alpha. `scripts/lib/png-probe.mjs`
-(≈90 lines, `zlib` only, no new dependency) exists for exactly this.
+(≈90 lines, `zlib` only, no new dependency) exists for exactly this — extend it rather than forking it into a
+scratch dir: a second decoder is a second place for thresholds to drift.
 
 ⚠ **Derive DPR from the CSS size, not from the file's pixel count.** `capturePage()` returns
 **2× device pixels** on this machine: the 56 CSS px ball comes out 112×112, the 384×600 expanded
@@ -111,6 +112,30 @@ The corollary matters as much: `capturePage()` **does not** composite the deskto
 shows the wallpaper through it" is *not* observable that way. Two different claims got merged
 into one "we can't see it" and cost three misdiagnoses. Before declaring a symptom unobservable,
 write down **which layer** you need, then check whether that layer is in the file you have.
+
+### Don't: gate two unrelated DOM elements with one boolean, then tighten it for one of them
+
+`PetBall.tsx` gated the water body **and** the progress ring with a single `showWaves`. `windowPercent()`
+(`src/shared/percent.ts:14-22`) returns `0`, not `null`, when `used === 0 && limit > 0`, so a plan provider at
+0% usage passed `pct != null`, mounted the water block, and — since `fluidLevel(0) === 0` — painted a liquid
+surface over an empty column. `--uitest` reported `fail:empty-fill=0` for weeks with no owner.
+
+The first fix (`showWaves && pct > 0`) turned the assertion green and deleted the **whole ring** at 0%. The
+harm is asymmetric: the water body is `display: none` in the four ring-form skins, so the original bug was
+invisible there; the ring is the only progress carrier, so a new bug in it is not. Judge a tightening by
+whether it is **visible or invisible in each element it touches** — not by whether the assertion went green.
+
+Fixed by splitting the conditions (`src/renderer/src/PetBall.tsx:498-501`): `hasData` gates the ring,
+`showWaves = hasData && fluidLvl > 0` gates the water body, and `.fluid-ring` mounts on `hasData` (`:999`).
+0% is an **empty ring** (`ringDash(0)` is an honest zero-length arc), not no ring.
+
+Two more things, each cost a round:
+
+- Guard the **fragment**, not the file. K8o1 locks that `showWaves` derives from `fluidLvl > 0` and K8p locks
+  that the ring's gate is `hasData` (`scripts/test-structure.mjs:1462,1476`). A whole-block text scan goes
+  green while the DOM is still wrong — the K11g/K11h lesson.
+- A QA assertion on DOM *presence* counts `display: none` as present. That is exactly why the mismatch sat
+  there unread. Assert on the rendered value, or assert both.
 
 ### Don't: leave a guard in place that reads as verification but isn't
 
