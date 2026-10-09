@@ -12,7 +12,14 @@ extraResources:
 asar: true
 mac:
   category: public.app-category.utilities
-  identity: null
+  # 不写 identity = 让 electron-builder 自动发现钥匙串里的签名身份。
+  # ⚠ 这里曾经是 `identity: null`（显式禁用签名），产物 `code object is not signed
+  #   at all`，拷到别的 Mac / 从 DMG 装到 /Applications 双击会被 Gatekeeper 拦。
+  # 现在改为自动发现：有 Developer ID Application 证书就签，没有就跳过并警告 ——
+  # 缺证书**不阻断构建**（本机运行不受影响），见 scripts/dist-mac.mjs 的探测与提示。
+  # 要钉死某个身份：identity: "Developer ID Application: <名字> (<TEAMID>)"
+  # 公证同理由 scripts/dist-mac.mjs 按凭据是否齐全决定是否加 --mac.notarize=true；
+  # 两者都齐了才能产出「分发给别人也不会被拦」的包。
   target:
     - dmg
     - zip

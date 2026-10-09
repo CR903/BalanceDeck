@@ -38,7 +38,7 @@
     "keystore:debug": "electron scripts/keystore-debug.js",
     "instances:debug": "node scripts/instances-debug.mjs",
     "verify:opencode": "node scripts/verify-opencode.mjs",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac": "npm run build && node scripts/dist-mac.mjs",
     "dist:win": "npm run build && electron-builder --win"
   },
   "devDependencies": {
