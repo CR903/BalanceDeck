@@ -928,6 +928,12 @@ export default function App(): React.JSX.Element {
     void window.api.getState().then(setState)
     const off1 = window.api.onState(setState)
     const off2 = window.api.onCollapsed(setCollapsed)
+    // 启动期拉一次收起态：主进程的 ui:collapsed 推送在 loadFile().then 就发出了，
+    // 早于本 effect 的订阅（实测晚 73ms），只听推送必然丢首帧 —— 主进程已按收起态
+    // 56×56 建窗，这里却按默认 false 画 384×600 卡片，用户只看到卡片左上角一个图标
+    // （表现为「启动了但看不到界面」）。invoke 无时序依赖，拿到后覆盖即可；
+    // 若拉取返回前推送已到（不应发生，但顺序无害），后到的 invoke 值与之一致。
+    void window.api.getCollapsed().then(setCollapsed)
     const apply = (id: string): void => {
       setSkinId(id)
       if (id.startsWith('ext:')) void window.api.getSkinCss(id).then(setSkinCss)

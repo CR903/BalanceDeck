@@ -30,6 +30,12 @@ const api = {
     ipcRenderer.on('ui:collapsed', l)
     return () => ipcRenderer.removeListener('ui:collapsed', l)
   },
+  /**
+   * 主动读一次当前收起态。**启动期必须用它**：主进程的 ui:collapsed 推送早于
+   * React useEffect 订阅（实测晚 73ms 订上），只听推送会丢首帧 —— 窗口按收起态
+   * 56×56 建，渲染层却画展开卡片，界面看起来「打不开」。推送只管后续变更。
+   */
+  getCollapsed: (): Promise<boolean> => ipcRenderer.invoke('ui:get-collapsed'),
 
   // ─── 供应商实例管理 ────────────────────────────────────────────────────────
   listProviders: (): Promise<ProvidersPayload> => ipcRenderer.invoke('providers:list'),

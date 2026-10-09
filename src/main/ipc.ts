@@ -15,7 +15,9 @@ import {
   dockTestFreezeCursor,
   dockTestFreezeFluid,
   dockTapPeek,
-  petWindowState
+  petWindowState,
+  currentCollapsed,
+  resyncDockState
 } from './overlay'
 import { refreshNow, currentState, resort, reconfigure, debugPush, loadUsageHistory, pruneUsageHistory } from './scheduler'
 import { setTrayIcon, trayBadgeInfo, trayInteractionMode } from './tray'
@@ -112,6 +114,13 @@ export function registerIpc(): void {
   ipcMain.on('ui:expand', () => {
     dragStop()
     setCollapsed(false)
+  })
+  // 启动期的收起态读取：推送（syncCollapsedState）会早于渲染层订阅而丢失首帧，
+  // 所以渲染层挂载后主动拉一次；运行中的变更仍由 ui:collapsed 推送负责。
+  // 拉取同时补推 dock:hidden / dock:fluid —— 它们和 ui:collapsed 同批发出，同样会丢。
+  ipcMain.handle('ui:get-collapsed', () => {
+    resyncDockState()
+    return currentCollapsed()
   })
   // 拖拽起点：渲染层给出抓取点（球在窗口内的位置），避免拖动时球跳到光标中心
   ipcMain.on('ui:drag-start', (_e, grab?: { x: number; y: number }) => {

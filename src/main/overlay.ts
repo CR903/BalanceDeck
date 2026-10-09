@@ -72,6 +72,35 @@ export function petWindowState(): { alwaysOnTop: boolean } {
   return { alwaysOnTop }
 }
 
+/**
+ * 当前收起态（渲染层启动时**主动拉**一份，见 App.tsx 的 getCollapsed）。
+ *
+ * ⚠ 为什么必须有这个拉取入口，而不是只靠 `syncCollapsedState()` 推送：
+ *   推送发生在 `win.loadFile().then(...)`，此时渲染层的 React 还没跑到
+ *   `useEffect` 里的 `onCollapsed` 订阅 —— 实测主进程 t=…625 发、渲染层 t=…698 才订，
+ *   首帧的 `ui:collapsed` 必丢。丢了之后主进程按 56×56 建窗（收起态），
+ *   渲染层却按默认 `collapsed=false` 画 384×600 展开卡片，用户只看到卡片
+ *   左上角一个图标 —— 表现为「应用启动了但看不到界面」。
+ *   推送保留（运行中的变更仍走它），启动期改为拉取：invoke 天然没有时序依赖。
+ */
+export function currentCollapsed(): boolean {
+  return !!state.collapsed
+}
+
+/**
+ * 把「启动期会被丢掉」的两项窗口态重推一遍。
+ *
+ * 与 `syncCollapsedState()` 同源，但触发点换成渲染层的 `ui:get-collapsed` 拉取 ——
+ * 那一刻渲染层已挂载完 `onDockHidden` / `onDockFluid` 订阅（App.tsx 的这两个
+ * effect 声明在发拉取的那个 effect 之前，同一次 commit 里先跑），推送不会落空。
+ * `ui:collapsed` 不在这里重推：它由 `ui:get-collapsed` 的**返回值**带回，
+ * 一条 invoke 就把首帧状态补齐，比「返回值 + 推送」两条通道竞争同一状态安全。
+ */
+export function resyncDockState(): void {
+  safeSend('dock:hidden', dock.hidden())
+  safeSend('dock:fluid', { phase: lastFluid.phase, edge: lastFluid.edge })
+}
+
 /** 贴边隐藏位移异常只记一次日志（窗口关闭/退出竞态时原生调用会抛） */
 let dockMoveErrorLogged = false
 /** 贴边自动隐藏开关（extras ui:dockHide，缺省开：值 !== '0' 即开，R7） */
