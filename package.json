@@ -1,6 +1,6 @@
 {
   "name": "balancedeck",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "BalanceDeck 余额板 — coding plan 与 API 余额悬浮仪表盘",
   "main": "./out/main/index.js",
   "author": "zhouri",
