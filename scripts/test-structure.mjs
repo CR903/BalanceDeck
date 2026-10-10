@@ -691,6 +691,56 @@ ok(
   )
 }
 
+// D6c · 灵动岛展开态结构（10-10-island-fidelity-2 R2/R3/R5）：对照原型 `.tcell` 的三条硬指标。
+// 与 D6b 同一条纪律：stripTsComments 在文件后部定义（TDZ），这里内联剥注释 ——
+// 注释里出现 `StatusDot` / `isl-open-head` 字样时裸 grep 会假红/假绿。
+{
+  const stripTsLocal = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const islandCss = read('src/renderer/src/island.css').replace(/\/\*[\s\S]*?\*\//g, '')
+  const islandTsx = stripTsLocal(read('src/renderer/src/IslandView.tsx'))
+  ok(
+    islandCss.length > 0 && islandTsx.length > 0,
+    'D6c 前置：island.css / IslandView.tsx 读得到（下面的负向断言不能空洞通过）'
+  )
+  // ① 单行横排骨架 [mark26][环40][右列 side] —— 旧的两行 top/mid 结构改到位
+  ok(
+    /className="isl-cell-top"/.test(islandTsx) && /className="isl-cell-side"/.test(islandTsx),
+    'D6c1 cell 单行骨架 .isl-cell-top > .isl-cell-side（右列 = 名称 + 图例/窗口条）'
+  )
+  ok(
+    !/isl-cell-mid/.test(islandTsx) && !/<StatusDot/.test(islandTsx),
+    'D6c2 旧两行 .isl-cell-mid 与 StatusDot 已删（等级由环/条色表达，原型 cell 内无点）'
+  )
+  // ② 头部条整块删除（R5：回卡片走既有双击岛身 / 右键菜单，不新增交互）
+  ok(
+    !/isl-open-head|isl-open-hint|isl-open-expand/.test(islandTsx) &&
+      !/isl-open-(head|hint|expand)/.test(islandCss),
+    'D6c3 头部条 .isl-open-head（提示 + 「展开面板」按钮）JSX 与 CSS 都已删'
+  )
+  // ③ 非嵌套窗口条：4px track #333 + 内层 i 宽=percent、色=等级色
+  const wbarBody = ruleBody(islandCss, '.isl-wbar')
+  const wbarDecls = decls(wbarBody)
+  ok(
+    wbarBody != null && wbarDecls.height === '4px' && /#333/.test(wbarDecls.background || ''),
+    `D6c4 .isl-wbar 4px / track #333（实际 ${wbarDecls.height || '?'} / ${wbarDecls.background || '?'}；缺 block 即空洞红）`
+  )
+  ok(
+    /className="isl-wbar"/.test(islandTsx) && /windowLevel\(w\)/.test(islandTsx) &&
+      /width: `\$\{/.test(islandTsx),
+    'D6c5 彩条 i 宽=percent / 色=窗口等级（写死宽度即红）'
+  )
+  // 缺失百分比不画条（p == null 时 `Math.max(0, null)` 会画出一条 0% 的"plausible zero"）。
+  // 断的是**渲染门**本身 —— 只查 className/宽度的 D6c5 在删掉 `p != null &&` 后仍是绿的（实测）。
+  ok(
+    /\{\s*p != null\s*&&\s*\(\s*<span className="isl-wbar"/.test(islandTsx),
+    'D6c7 彩条有 p != null 渲染门（缺失即不画，不补 0；删门即红）'
+  )
+  ok(
+    /className="isl-win-text"/.test(islandTsx) && !/className="isl-win-(name|pct|reset)"/.test(islandTsx),
+    'D6c6 窗口行并成单行「名 · % · N后重置」文字（旧三段式 span 已删）'
+  )
+}
+
 // ─── E. 语音播报链路的主进程前提（09-29-tts-smart-broadcast）────────────────
 //
 // 这四条**改坏了不会抛、不会红、界面上看不出任何异常** —— 它们各自只让「某次播报
@@ -2525,7 +2575,8 @@ ok(/55 - fluidLvl \* 54/.test(petBallWater), 'K6b 液面公式 55 - level×54（
 // ─── L. 灵动岛高保真还原（10-10-island-fidelity）────────────────────────────
 //
 // 对照原型 `prototype/dynamic-island-demo.html?variant=B` 的数值门：
-// 收起氛围（常驻辉光 + 高光线 + danger 呼吸）/ logo 动画 / combo 36 + gap 12 /
+// 收起比例（logo 15 / gap 10 / 高光线 60% / 环几何 36）+ 收起氛围（常驻辉光 +
+// 高光线 + danger 呼吸）/ logo 动画 / 展开容器（padding 16 / 渐变 / 5 层阴影）/
 // 展开嵌套环 + 图例 / 启动先见面板。改回旧值即红（先红后绿已验，见任务日志）。
 console.log('\nL. 灵动岛高保真还原')
 
@@ -2540,24 +2591,39 @@ const stripDecls = decls(stripBody)
 const comboDecls = decls(comboBody)
 const pillDecls = decls(pillBody)
 
-// L1 · 尺寸贴原型：收起环 36（demo.html:154）+ 间距 12（demo.html:81-82），岛高 52 不变。
+// L1 · 尺寸贴原型：收起环 36（demo.html:154）+ 间距 10（demo.html:39 tisland gap），岛高 52 不变。
 ok(comboDecls.width === '36px' && comboDecls.height === '36px',
   `L1 combo 36×36（实际 ${comboDecls.width || '?'}×${comboDecls.height || '?'}；改回 40 即红）`)
-ok(stripDecls.gap === '12px', `L1b strip 间距 12px（实际 ${stripDecls.gap || '未找到'}；改回 10 即红）`)
+ok(stripDecls.gap === '10px', `L1b strip 间距 10px（实际 ${stripDecls.gap || '未找到'}；改回 12 即红）`)
 ok(stripDecls.height === '52px', `L1c 岛高 52 不变（实际 ${stripDecls.height || '未找到'}）`)
+// L1d · logo 边长 15（原型 .combo-logo = combo 36 × 42%，demo.html:153-154；此前 19~20px）
+const logoDecls = decls(ruleBody(isl, '.isl-combo .isl-logo'))
+ok(logoDecls.width === '15px' && logoDecls.height === '15px',
+  `L1d logo 15×15（实际 ${logoDecls.width || '?'}×${logoDecls.height || '?'}；改回 20 即红）`)
+// L1e · 顶部高光线 60% 宽（原型实测 318/430；left/right 各留 20%），opacity/渐变不变。
+const hiLineDecls = decls(ruleBody(isl, '.isl-body::before'))
+ok(hiLineDecls.left === '20%' && hiLineDecls.right === '20%',
+  `L1e 高光线宽 60%（实际 left ${hiLineDecls.left || '?'} / right ${hiLineDecls.right || '?'}；改回 12% 即红）`)
 
 // L2 · 常驻环境辉光：strip 阴影含 `0 0 24px var(--glow`（demo.html:39），颜色由 JS 下发。
 ok(stripBody != null && /0 0 24px var\(--glow/.test(stripBody),
   'L2 strip 阴影含 0 0 24px var(--glow) 常驻环境辉光（删了即回到"看起来平"）')
 
-// L3 · 高光线 + 辉光晕（demo.html:40-41）：挂 body 上（strip 是横滑容器，overflow 会裁晕）。
+// L3 · 高光线 + 辉光晕（demo.html:40-41）：挂 `.isl-body` 本体，**不分收起/展开**
+//     （10-10-island-fidelity-2 R4：此前挂在 collapsed 门上，展开态两者皆空是 bug）；
+//     不挂 .isl-strip —— 它是横滑容器（overflow-x:auto 会裁掉外溢的辉光）。
 {
-  const hi = decls(ruleBody(isl, ".isl-body[data-island='collapsed']::before"))
-  const halo = decls(ruleBody(isl, ".isl-body[data-island='collapsed']::after"))
+  const hiBody = ruleBody(isl, '.isl-body::before')
+  const haloBody = ruleBody(isl, '.isl-body::after')
+  ok(hiBody != null && haloBody != null, 'L3 前置：取得到 .isl-body::before / ::after 整块')
+  const hi = decls(hiBody)
+  const halo = decls(haloBody)
   ok(/linear-gradient/.test(hi.background || ''), `L3 高光线是 gradient（实际 ${(hi.background || '未找到').slice(0, 48)}）`)
   ok(/var\(--glow/.test(halo.background || ''), `L3b 辉光晕吃 var(--glow)（实际 ${halo.background || '未找到'}）`)
   ok(halo.filter === 'blur(22px)' && halo.opacity === '0.35',
     `L3c 晕 blur 22 / opacity .35（实际 ${halo.filter || '?'} / ${halo.opacity || '?'}）`)
+  ok(!/\.isl-body\[data-island='collapsed'\]::(before|after)/.test(isl),
+    'L3d 伪元素不再按 data-island 收窄（收窄回 collapsed = 展开态氛围又变空）')
 }
 
 // L4 · danger 呼吸（demo.html:49-50）：lvl-danger 的 strip 走 glowPulse 动画，不是静态阴影。
@@ -2580,20 +2646,25 @@ ok(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.isl-logo\.live[\s\S]*
 ok(pillDecls.padding === '0 10px' && pillDecls.gap === '10px',
   `L6 pill 瘦身 padding 0 10 / gap 10（实际 ${pillDecls.padding || '?'} / ${pillDecls.gap || '?'}）`)
 
-// L7 · IslandView：--glow 下发 + 环尺寸拆分 + 展开嵌套分支（只判形状，不判文案）。
+// L7 · IslandView：--glow 两态下发 + 环几何同源 + 展开嵌套分支（只判形状，不判文案）。
 const islTsx = stripTsComments(read('src/renderer/src/IslandView.tsx'))
 ok(islTsx.length > 0, 'L7a 前置：IslandView.tsx 剥注释后非空')
-ok(/'--glow': glow/.test(islTsx) && /GLOW\[worstLevel\(ordered\)\]/.test(islTsx),
-  'L7 --glow 由最满家等级下发（删了即辉光恒中性白，R1 落空）')
-ok(/const RING_COLLAPSED = 36/.test(islTsx) && /const RING_NESTED = 40/.test(islTsx) &&
-  /const RING_SINGLE = 40/.test(islTsx) && !/RING_SIZE/.test(islTsx),
-  'L7b 环尺寸三处分立 36/40/40（RING_SIZE 无残留；合回一个数即红）')
-ok(/size=\{RING_NESTED\}/.test(islTsx) && /className="isl-legend"/.test(islTsx),
+ok(/'--glow': glow/.test(islTsx) && /GLOW\[worstLevel\(ordered\)\]/.test(islTsx) &&
+  !/open \? undefined/.test(islTsx),
+  'L7 --glow 由最满家等级下发且两态都在（open ? undefined 曾把 --glow 一起丢掉，展开态红晕吃不到色）')
+ok(/const RING_GEO\s*=/.test(islTsx) && /vb: 36/.test(islTsx) &&
+  /radii: \[15\.5, 11\.5, 7\.5\]/.test(islTsx) && /strokes: \[3\.5, 3\.2, 3\]/.test(islTsx) &&
+  !/viewBox="0 0 40 40"/.test(islTsx) && /RING_COLLAPSED = 36/.test(islTsx) && /RING_OPEN = 40/.test(islTsx),
+  'L7b 环几何单点 RING_GEO（vb36 / r 15.5·11.5·7.5 / stroke 3.5·3.2·3；收起 36 与展开 40 只换画布尺寸，几何再分家即红）')
+ok(/size=\{RING_OPEN\}/.test(islTsx) && /className="isl-legend"/.test(islTsx),
   'L7c 展开多窗走嵌套环 40 + 图例（删分支即回单环老样子）')
 ok(/isl-legend-dot lvl-\$\{/.test(islTsx) && /className="isl-legend-item" key=\{w\.name\} data-win=\{w\.name\}/.test(islTsx),
   'L7d 图例点走 lvl-* 语义色 + data-win 探针（颜色写死即与等级脱钩）')
 ok(/isl-logo \$\{islandLevel\(s\) === 'danger' \? 'danger' : 'live'\}/.test(islTsx),
   'L7e 收起 logo 按 danger 切 live/danger 动画类（删了即全静态）')
+ok(/className="isl-ring-pct"/.test(islTsx) && /fmtPercent\(mainPct\)/.test(islTsx) &&
+  /mainPct != null \? fmtPercent\(mainPct\) : '—'/.test(islTsx),
+  'L7f 展开环心补 fmtPercent 百分比且带缺失门（缺失显示 —，不编 0；写成 ?? 0 即红）')
 
 // L8 · overlay 启动序列（R5）：内存态强制展开，不回写磁盘；首次收起顶部居中。
 {
@@ -2607,6 +2678,22 @@ ok(/isl-logo \$\{islandLevel\(s\) === 'danger' \? 'danger' : 'live'\}/.test(islT
     'L8 loadPersisted 内存态强制展开且不回写磁盘（落盘即下次启动仍先见面板落空）')
   ok(/if \(dotAnchor\)/.test(ovSrc) && /wa\.width - target\.width\) \/ 2/.test(ovSrc),
     'L8b 无展开记录时收起顶部居中（沿用 384 卡片定位会偏 88px）')
+}
+
+// L9 · 展开态容器氛围（10-10-island-fidelity-2 R4）：padding 16 / 渐变 #2b2b31 起
+//     28% / 阴影 5 层（外投影 + glow + 顶高光 + 底部 inset 暗 + 1px ring）。
+{
+  const openBody = ruleBody(isl, '.isl-body.open')
+  ok(openBody != null, 'L9 前置：取得到 .isl-body.open 整块')
+  const openDecls = decls(openBody)
+  ok(openDecls.padding === '16px', `L9 展开 padding 16（实际 ${openDecls.padding || '?'}；改回 14px 16px 即红）`)
+  ok(/^linear-gradient\(180deg, #2b2b31 0%, #0b0b0d 28%/.test(openDecls.background || ''),
+    `L9b 渐变起点 #2b2b31 0% → #0b0b0d 28%（实际 ${(openDecls.background || '未找到').slice(0, 46)}）`)
+  const openLayers = shadowLayers(openDecls['box-shadow'] || '')
+  const hasGlow = openLayers.some((l) => /0 0 24px var\(--glow/.test(l))
+  const hasBottom = openLayers.some((l) => /^inset 0 -8px 18px rgba\(0, 0, 0, 0\.7\)$/.test(l))
+  ok(openLayers.length === 5 && hasGlow && hasBottom,
+    `L9c 阴影 5 层含 glow 与底部 inset 暗（实际 ${openLayers.length} 层，glow=${hasGlow}，底暗=${hasBottom}）`)
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

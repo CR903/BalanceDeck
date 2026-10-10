@@ -183,6 +183,14 @@ adapter — the two files that do it, say so:
 cookie path and the details path can depend on it without a cycle. `pet3d/rig.ts` is the
 equivalent for camera/form constants, and `pet-view.ts` for window dimensions.
 
+**One home also means one table across *states* of the same widget.** `IslandView.tsx` shipped
+with the collapsed ring at `viewBox 40 / r 17 / stroke 3.2` and the expanded ring at
+`viewBox 36 / r 15.5 / stroke 3.5` — two hand-copied literals in one file, drifting until the
+user reported the two views "don't match". Both call sites now read one `RING_GEO`
+(`{ vb, radii, strokes }`); a `grep 'viewBox="0 0 40 40"'` returning nothing is the guard.
+Before duplicating a geometry/sizing literal into a second state, treat it as the same defect
+as duplicating it into a second file — extract the table first.
+
 ### Verify the guard can fail
 
 After adding an assertion, break the thing it guards and watch it fail. An independent
@@ -709,6 +717,49 @@ error propagation, `AbortError` on timeout, and the 2-strike offline accounting.
 
 Also note the stable key-sorted serialization with `undefined` keys dropped (`:46-53`), so
 `note: undefined` does not become a field in a golden sample.
+
+---
+
+## Pattern: 对版参照物 —— 并排提取 computed style，别目测
+
+**Problem**：把实现往原型/设计稿上"还原"时，靠截图目测 + 凭印象改 CSS，会连续几轮都改不到
+点上（2026-10-10 灵动岛：用户连报三轮"和原型不一样"，每轮只修掉最显眼的一两处）。
+
+**Solution**：参照物和实现**在同一浏览器、同一数据**下各取一份 computed style 做结构化 diff。
+两边都用 `getComputedStyle` 抓同一组属性（`height/gap/padding/borderRadius/background/
+boxShadow/animationName/fontSize` + 伪元素 `::before/::after`），加上 `getBoundingClientRect`
+与 `outerHTML`（`fill`/`d` 截断），逐键列成表。
+
+```js
+// 伪元素、投影层数这类"看不见的差异"只有这样才能量出来
+const pick = (el, pseudo) => { const cs = getComputedStyle(el, pseudo); /* … */ }
+getComputedStyle(body, '::before').width   // 高光线 60% 还是 76%
+getComputedStyle(body).boxShadow.match(/rgba?\(/g).length   // 3 层还是 5 层
+```
+
+**Why it works**：本轮所有真差异都是这样定位的 —— logo 20 vs 15、gap 12 vs 10、
+容器阴影 3 层 vs 5 层、展开态 `::before/::after` 整个丢失、cell 两行 vs 原型单行；
+而"阴影渐变动画都不一样"的直觉里，渐变/投影/glowPulse 其实**已经一致**，省掉一轮无效返工。
+反向也有价值：证明哪些项已经对齐，避免为不存在的差异写代码。
+
+**注意**：参照原型若有开关状态（如 `?variant=B` + 「嵌套圆环开」按钮），必须切到与实现相同的
+状态再取值 —— 拿默认态比展开态会得出错误结论。
+
+## Pattern: 红断言集合 = 被打断工作的交接态
+
+**Problem**：子代理/会话被重启打断后，无法判断"做到哪了"；盲目重派会重复劳动或覆盖已完成部分。
+
+**Solution**：先跑测试，**用红断言集合反推剩余范围**，再决定补做还是重派。
+
+```bash
+npm run typecheck && npm test | grep '✗'
+# 2026-10-10 实例：5 红 = D6c3 死规则未删 / D6c4 .isl-wbar 缺 / L9·L9b·L9c 容器三项
+# → 精确等于 island.css 未写完的部分；TSX 与断言已完成，只需补一个文件
+```
+
+**Why it works**：本仓断言是先红后绿写的，红集合天然就是未完成清单；比 diff 猜意图可靠，
+也避免把已绿的部分重做一遍。判据：红集合为空但代码明显不完整 → 断言覆盖有洞，先补断言
+（本轮顺带发现 `D6c5`/`L7f` 两条"标签超覆盖"的空洞断言，见 check 自修）。
 
 ---
 

@@ -5,7 +5,7 @@ import { isPlan } from '../../shared/quality'
 import { defaultWaterAnchors, resolveWaterAnchors, waterColor, type WaterAnchors } from '../../shared/water-color'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { orderForDisplay, snapshotLevel, windowLevel, worstWindow } from './read-model'
-import { Bar, Ring, StatusDot } from './components'
+import { Bar } from './components'
 import { ProviderMark } from './ProviderMark'
 import {
   fmtAmount,
@@ -23,8 +23,9 @@ import {
 //   · 收起：平铺全部启用的供应商 —— plan 家嵌套用量环（外→内 = 窗口顺序，
 //     最多 3 环）+ 中央真实 logo，无名称、无轮询；balance 家 logo + 金额。
 //     超长岛身自动加长（fit-content，上限后横滑）；缺失值保持缺失（灰环 `--`）。
-//   · 展开：点击岛身弹簧 pop 出 2 列卡片（多窗 plan 家嵌套环 + 图例，单窗家单环 +
-//     单行条；余额卡只读）；点击空白收起；双击 /「展开面板」回到卡片视图。
+//   · 展开：点击岛身弹簧 pop 出 2 列卡片（plan 家单行横排 [logo26 | 环40 含环心百分比 |
+//     右列 = 名称 + 图例/窗口条]，多窗嵌套环、单窗并列 4px 彩条；余额卡只读）；
+//     点击空白收起；双击 / 右键菜单 Expand 回到卡片视图（无头部条）。
 //   · 隐藏：dwell 时序沿用 dockHide（1s 藏 / 300ms 唤 / 1.5s 重藏），隐藏态缩成
 //     A 式 mini-pill（窄条 + 各家等级点，顶部原位收缩）；唤出 = 点击 pill。
 //   · 位置：顶栏内左右拖动（岛身，落盘 `ui:islandX` 0..1 中心比例，与 `ui:*` 偏好同机制）；
@@ -39,13 +40,22 @@ import {
 /** 岛内横向位置落盘键（0..1，相对窗口宽；Y 恒定吸顶不存） */
 const ISLAND_X_KEY = 'ui:islandX'
 /**
- * 环尺寸三处各有原型出处，不共用一个数（R3/R4）：
- * 收起嵌套环 36（demo.html:154 combo 36）/ 展开嵌套环 40（demo.html:233）/
- * 展开单环 40（现状，不动）。
+ * 环几何**单点**（10-10-island-fidelity-2 R1）：收起 combo 与展开 cell 只换 svg 画布尺寸，
+ * 画的是同一套 viewBox 36 几何 —— 上一轮两处各写一套（36 vs 40）就是漂移的根因。
+ * 数值出处：prototype/dynamic-island-demo.html:127-128（单环 ringSVG）与 :160-167（嵌套）。
+ * pathLength=100 + stroke-dasharray 的百分比口径不变，只动几何。
  */
+const RING_GEO = {
+  vb: 36,
+  /** 外→内半径（最多 3 环 = windows[0..2]） */
+  radii: [15.5, 11.5, 7.5],
+  /** 外→内线宽（第 3 环 3，原型 widths[2]） */
+  strokes: [3.5, 3.2, 3]
+}
+/** 收起态环画布边长（与 .isl-combo 36×36 同口径，1:1 画 viewBox 36） */
 const RING_COLLAPSED = 36
-const RING_NESTED = 40
-const RING_SINGLE = 40
+/** 展开态 cell 环画布边长（原型 cell 内 ringSVG/nestedRingsSVG 都是 40，等比放大同一几何） */
+const RING_OPEN = 40
 /** 点击与拖动的位移分界（prototype：移动 <6px 算点击展开/收起） */
 const CLICK_SLOP = 6
 /**
@@ -85,7 +95,7 @@ export interface IslandViewProps {
   /** 流体相位 + 贴边（主进程 dock:fluid 推，只切呈现类，不算几何） */
   fluidPhase?: string
   fluidEdge?: string | null
-  /** 回到卡片视图（双击岛身 / 展开态「展开面板」/ 右键菜单 Expand） */
+  /** 回到卡片视图（双击岛身 / 右键菜单「展开面板」；R5 起头部条按钮已删） */
   onExpand: () => void
   /** 右键菜单：交给主进程弹原生菜单，返回被选中的 action */
   onMenu: () => Promise<string | null>
@@ -113,27 +123,40 @@ function NestedRings({ s, size = RING_COLLAPSED }: { s: ProviderSnapshot; size?:
   }, [])
   const pcts = wins.map((w) => windowPercent(w))
   const lvls = wins.map((w) => levelOfPercent(windowPercent(w), s.status))
-  // 半径档：外→内逐层收（40 viewBox 下 17 / 12.5 / 8），线宽 3.2
-  const radii = [17, 12.5, 8]
+  // 半径/线宽档：外→内逐层收，几何只在 RING_GEO（收起 36 与展开 40 共用，只换画布尺寸）
+  const c = RING_GEO.vb / 2
   return (
-    <svg className="isl-rings" width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
-      <circle cx="20" cy="20" r={17} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth={3.2} />
+    <svg
+      className="isl-rings"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${RING_GEO.vb} ${RING_GEO.vb}`}
+      aria-hidden="true"
+    >
+      <circle
+        cx={c}
+        cy={c}
+        r={RING_GEO.radii[0]}
+        fill="none"
+        stroke="rgba(255,255,255,0.14)"
+        strokeWidth={RING_GEO.strokes[0]}
+      />
       {pcts.map((p, i) => {
         const lvl = lvls[i] ?? 'muted'
         const stroke = p == null ? '#636366' : waterColor(p, anchors)
         return (
           <circle
             key={i}
-            cx="20"
-            cy="20"
-            r={radii[i] ?? 8}
+            cx={c}
+            cy={c}
+            r={RING_GEO.radii[i] ?? 7.5}
             fill="none"
             stroke={stroke}
-            strokeWidth={3.2}
+            strokeWidth={RING_GEO.strokes[i] ?? 3}
             strokeLinecap="round"
             pathLength={100}
             strokeDasharray={`${p == null ? 0 : Math.min(100, Math.max(0, p)).toFixed(2)} 100`}
-            transform="rotate(-90 20 20)"
+            transform={`rotate(-90 ${c} ${c})`}
             data-lvl={lvl}
           />
         )
@@ -476,7 +499,14 @@ export function IslandView({
         data-island={mode}
         data-fluid={fluid}
         data-edge={edgeAttr}
-        style={open ? undefined : ({ left: `${(posX * 100).toFixed(1)}%`, '--glow': glow } as React.CSSProperties)}
+        // --glow 两态都要下发：此前 `open ? undefined` 把 --glow 连同 left 一起丢掉，
+        // 展开态的 ::after 红晕与 5 层阴影里的 glow 层就吃不到色（R4）。
+        style={
+          {
+            ...(open ? {} : { left: `${(posX * 100).toFixed(1)}%` }),
+            '--glow': glow
+          } as React.CSSProperties
+        }
       >
         {dockHidden ? (
           // A 式 mini-pill：窄条 + 各家等级点（顶部原位收缩，不贴边）
@@ -493,7 +523,6 @@ export function IslandView({
             hideBalance={hideBalance}
             now={now}
             onBackdrop={() => setOpen(false)}
-            onExpand={onExpand}
           />
         ) : (
           <div className="isl-strip">
@@ -510,7 +539,9 @@ export function IslandView({
                   >
                     <NestedRings s={s} />
                     <span className={`isl-logo ${islandLevel(s) === 'danger' ? 'danger' : 'live'}`}>
-                      <ProviderMark mark={s.mark} size={15} glyph={10} />
+                      {/* 15 = combo 36 的 42%（原型 logoSize，demo.html:153）；glyph 15 同为
+                          原型 logoSVG(mark, brand, 15) 的画布尺寸 —— 黑圆盘上直接画品牌图形 */}
+                      <ProviderMark mark={s.mark} size={15} glyph={15} />
                     </span>
                   </span>
                 ) : (
@@ -590,30 +621,21 @@ function balanceText(s: ProviderSnapshot, hide: boolean): string {
   return fmtAmount(w.used, w.unit)
 }
 
-/** 展开态：2 列只读卡片（plan = 主环 + 各窗口单行条；balance = 大金额） */
+/** 展开态：2 列只读卡片。无头部条（10-10-island-fidelity-2 R5）——
+ * 「点击空白收起」由 .isl-backdrop 承接，「回卡片」由双击岛身 / 右键菜单承接。 */
 function IslandOpen({
   ordered,
   hideBalance,
   now,
-  onBackdrop,
-  onExpand
+  onBackdrop
 }: {
   ordered: ProviderSnapshot[]
   hideBalance: boolean
   now: number
   onBackdrop: () => void
-  onExpand: () => void
 }): React.JSX.Element {
   return (
     <div className="isl-open" data-open={ordered.length}>
-      <div className="isl-open-head">
-        <span className="isl-open-hint" title="点击空白收起，双击回到卡片">
-          点击空白收起 · 双击回到卡片 · {ordered.length} 家 · 多窗家嵌套环 + 图例
-        </span>
-        <button type="button" className="isl-open-expand" title="回到卡片视图" onClick={onExpand}>
-          展开面板
-        </button>
-      </div>
       <div
         className="isl-backdrop"
         title="点击空白收起"
@@ -642,66 +664,81 @@ function IslandOpen({
   )
 }
 
-/** 展开态 plan 卡：多窗（≥2）嵌套环 40 + 图例（R4，原型 nested 开时）；
- * 单窗回退单环 + 单行条；缺失值保持缺失（灰环 `—`，图例 `—`，不编 0）。 */
+/** 展开态 plan 卡（10-10-island-fidelity-2 R2，贴原型 `.tcell`）：
+ * 单行横排 [logo 26 | 环 40 含环心百分比 | 右列 = 名称 +（嵌套 ? 图例 : 文字 + 4px 彩条）]。
+ * 嵌套（≥2 窗）与单窗共用同一套 RING_GEO 几何（单窗 = NestedRings 只画 1 环，与原型
+ * ringSVG 同参）；缺失值保持缺失：环心 `—`、彩条不画、不编 0。 */
 function PlanCell({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.Element {
   const main = worstWindow(s.status === 'ok' ? s : undefined)
   const mainPct = main ? windowPercent(main) : null
   const lvl = snapshotLevel(s)
   const nested = s.windows.length >= 2
+  // 无可比窗口（无窗 / 非 ok / 百分比缺失）时干脆不画环 —— 缺失保持缺失
+  const hasRing = nested || (s.status === 'ok' && mainPct != null)
   return (
     <div className="isl-cell" data-supplier={s.id} data-kind="plan" data-lvl={lvl}>
       <div className="isl-cell-top">
-        <ProviderMark mark={s.mark} size={20} glyph={12} />
-        <span className="isl-cell-name" title={s.name}>
-          {s.name}
+        <ProviderMark mark={s.mark} size={26} glyph={16} />
+        <span className="isl-ringbox">
+          {hasRing ? (
+            <>
+              <NestedRings s={s} size={RING_OPEN} />
+              {/* 环心百分比（原型 text 9px/700）：缺失显示 —，不编 0 */}
+              <span className="isl-ring-pct">{mainPct != null ? fmtPercent(mainPct) : '—'}</span>
+            </>
+          ) : (
+            <span className="isl-cell-fallback" title={s.status === 'error' ? '出错' : '暂无用量'}>
+              {s.status === 'error' ? '!' : '—'}
+            </span>
+          )}
         </span>
-        <StatusDot lvl={lvl} />
-      </div>
-      <div className="isl-cell-mid">
-        {nested ? (
-          <NestedRings s={s} size={RING_NESTED} />
-        ) : s.status === 'ok' && mainPct != null ? (
-          <Ring pct={mainPct} lvl={lvl} size={RING_SINGLE} stroke={4} />
-        ) : (
-          <span className="isl-cell-fallback" title={s.status === 'error' ? '出错' : '暂无用量'}>
-            {s.status === 'error' ? '!' : '—'}
+        <div className="isl-cell-side">
+          <span className="isl-cell-name" title={s.name}>
+            {s.name}
           </span>
-        )}
-        {nested ? (
-          <div className="isl-legend">
-            {s.windows.slice(0, 3).map((w) => {
-              const p = windowPercent(w)
-              return (
-                <div className="isl-legend-item" key={w.name} data-win={w.name}>
-                  <i className={`isl-legend-dot lvl-${levelOfPercent(p, s.status)}`} />
-                  <span className="isl-legend-name">{shortWindowLabel(w.name)}</span>
-                  <span className="isl-legend-pct">{p != null ? fmtPercent(p) : '—'}</span>
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className="isl-wins">
-            {s.windows.length ? (
-              s.windows.map((w) => {
+          {nested ? (
+            <div className="isl-legend">
+              {s.windows.slice(0, 3).map((w) => {
                 const p = windowPercent(w)
                 return (
-                  <div className="isl-win" key={w.name} data-win={w.name}>
-                    <span className="isl-win-name">{shortWindowLabel(w.name)}</span>
-                    <span className="isl-win-pct">{p != null ? fmtPercent(p) : '—'}</span>
-                    <span className="isl-win-reset">
-                      {w.resetAt ? `${humanDur(new Date(w.resetAt).getTime() - now)}后重置` : ''}
-                    </span>
-                    {p != null && <Bar pct={p} lvl={windowLevel(w)} />}
+                  <div className="isl-legend-item" key={w.name} data-win={w.name}>
+                    <i className={`isl-legend-dot lvl-${levelOfPercent(p, s.status)}`} />
+                    <span className="isl-legend-name">{shortWindowLabel(w.name)}</span>
+                    <span className="isl-legend-pct">{p != null ? fmtPercent(p) : '—'}</span>
                   </div>
                 )
-              })
-            ) : (
-              <span className="isl-win-empty">无窗口数据</span>
-            )}
-          </div>
-        )}
+              })}
+            </div>
+          ) : (
+            <div className="isl-wins">
+              {s.windows.length ? (
+                s.windows.map((w) => {
+                  const p = windowPercent(w)
+                  // 原型 .tcell .win 的单行格式：名 · % · N后重置（缺 resetAt 就不带尾巴）
+                  const reset = w.resetAt ? ` · ${humanDur(new Date(w.resetAt).getTime() - now)}后重置` : ''
+                  return (
+                    <div className="isl-win" key={w.name} data-win={w.name}>
+                      <span className="isl-win-text">
+                        {`${shortWindowLabel(w.name)} · ${p != null ? fmtPercent(p) : '—'}${reset}`}
+                      </span>
+                      {/* 4px 彩条：条宽 = 百分比、颜色 = 窗口等级；p 缺失就不画（不编 0） */}
+                      {p != null && (
+                        <span className="isl-wbar">
+                          <i
+                            className={`lvl-${windowLevel(w)}`}
+                            style={{ width: `${Math.min(100, Math.max(0, p))}%` }}
+                          />
+                        </span>
+                      )}
+                    </div>
+                  )
+                })
+              ) : (
+                <span className="isl-win-empty">无窗口数据</span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -720,7 +757,6 @@ function BalanceCell({ s, hide }: { s: ProviderSnapshot; hide: boolean }): React
         <span className="isl-cell-name" title={s.name}>
           {s.name}
         </span>
-        <StatusDot lvl={lvl} />
       </div>
       <div className="isl-big">
         {active ? (

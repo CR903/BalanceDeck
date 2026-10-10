@@ -32,7 +32,7 @@
 .isl-strip {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: fit-content;
   max-width: 528px;
   height: 52px;
@@ -49,22 +49,23 @@
     inset 0 -8px 18px rgba(0, 0, 0, 0.7),
     inset 0 0 0 1px rgba(255, 255, 255, 0.09);
 }
-/* 收起氛围（R1，数值贴原型 B demo.html:39-41）：顶部高光线 + 常驻环境辉光。
- * 挂在 .isl-body 上 —— .isl-strip 是横滑容器（overflow-x:auto 会裁掉外溢的辉光），
- * body 才是无裁剪的定位包装（收起态与 strip 等大，top 对齐，伪元素定位等价）。 */
-.isl-body[data-island='collapsed']::before {
+/* 氛围（R1/R4，数值贴原型 B demo.html:39-41）：顶部高光线 + 常驻环境辉光。
+ * 挂在 .isl-body 本体，**不分收起/展开** —— 此前挂 [data-island='collapsed'] 门上，
+ * 展开态两者皆空（氛围丢失是 bug）；只用宽度表达状态（收起/展开同为 60%）。
+ * 不挂 .isl-strip：它是横滑容器（overflow-x:auto 会裁掉外溢的辉光）。 */
+.isl-body::before {
   content: '';
   position: absolute;
   top: 3px;
-  left: 12%;
-  right: 12%;
+  left: 20%;
+  right: 20%;
   height: 1px;
   border-radius: 999px;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
   opacity: 0.7;
   pointer-events: none;
 }
-.isl-body[data-island='collapsed']::after {
+.isl-body::after {
   content: '';
   position: absolute;
   inset: -8px -16px;
@@ -108,17 +109,27 @@
   width: 36px;
   height: 36px;
 }
+/* 中央 logo（R1 收起比例）：15px = combo 36 的 42%，与原型 .combo-logo 同
+ * （demo.html:153-154 logoSize = round(size * 0.42)）；此前靠内容撑出 19~20px。
+ * 去掉 ProviderMark 的 chip 底与描边 —— 原型 .combo-logo 只有「黑圆盘 + 品牌 glyph」，
+ * chip 的 surface 底色与浅描边在 15px 圆盘里会读成一圈徽标边框（原型没有）。 */
 .isl-combo .isl-logo {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
+  width: 15px;
+  height: 15px;
   display: grid;
   place-items: center;
   background: #0b0b0d;
   border-radius: 50%;
   padding: 2px;
   color: #f2f2f7;
+}
+.isl-combo .isl-logo .pmark {
+  background: transparent;
+  border: 0;
 }
 /* logo 动画（R2，贴原型 demo.html:68-74）：呼吸 + ping 环 + danger 抖动。
  * 只用合成器属性 —— 呼吸/抖动走独立 `scale`/`rotate`（不碰 `transform`，
@@ -247,14 +258,19 @@
   scrollbar-width: thin;
   scrollbar-color: #444 transparent;
   border-radius: 26px;
-  background: linear-gradient(180deg, #232328 0%, #0b0b0d 30%, #000 100%);
-  padding: 14px 16px;
+  /* R4 展开容器与收起 strip **同一套氛围**（贴原型 .tisland.open）：渐变起点 #2b2b31、
+   * padding 16、阴影 5 层 —— 此前是 #232328 起 + 14px 16px + 3 层（缺 glow 红晕与底部
+   * inset 暗，展开态看着比收起态「平」一层）。 */
+  background: linear-gradient(180deg, #2b2b31 0%, #0b0b0d 28%, #000 100%);
+  padding: 16px;
   cursor: default;
   animation: islandPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.3),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
-    0 12px 40px rgba(0, 0, 0, 0.8);
+    0 12px 40px rgba(0, 0, 0, 0.8),
+    0 0 24px var(--glow, rgba(255, 255, 255, 0.06)),
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    inset 0 -8px 18px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09);
 }
 .isl-body.open::-webkit-scrollbar {
   width: 8px;
@@ -279,30 +295,6 @@
     filter: none;
   }
 }
-.isl-open-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.isl-open-hint {
-  flex: 1;
-  font-size: 12px;
-  color: #98989f;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.isl-open-expand {
-  flex: none;
-  font-size: 12px;
-  color: #f2f2f7;
-  background: #2c2c2e;
-  border: 1px solid #3a3a3c;
-  border-radius: 999px;
-  padding: 4px 12px;
-  cursor: pointer;
-}
 .isl-backdrop {
   position: absolute;
   inset: 0;
@@ -324,9 +316,10 @@
   min-width: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
+/* R2 单行横排（贴原型 .tcell .top）：[mark 26] [环 40] [右列 side]，gap 10 同原型 */
 .isl-cell-top {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
   min-width: 0;
 }
@@ -338,10 +331,30 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.isl-cell-mid {
+/* 右列：名称 +（嵌套 ? 图例 : 窗口文字与 4px 彩条），即原型 .top 里的 flex:1 容器 */
+.isl-cell-side {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 环位盒：环 40 画布 + 环心百分比（绝对定位居中，不撑布局） */
+.isl-ringbox {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.isl-ring-pct {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  pointer-events: none;
 }
 .isl-cell-fallback {
   width: 40px;
@@ -361,19 +374,44 @@
   gap: 6px;
 }
 .isl-win {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* R3 窗口文字并成单行「名 · % · N后重置」（原型 .tcell .win） */
+.isl-win-text {
   font-size: 11px;
   color: #98989f;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.isl-win-name {
-  color: #d1d1d6;
+/* R3 4px 彩条（贴原型 .tcell .wbar）：track #333，内层 i 宽 = 百分比、色 = 等级色。
+ * p 缺失时 TSX 干脆不渲染这条 —— 缺失保持缺失，不补 0 画一条空带。 */
+.isl-wbar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: #333;
+  overflow: hidden;
 }
-.isl-win-pct {
-  color: #f2f2f7;
-  margin-left: 6px;
+.isl-wbar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
 }
-.isl-win-reset {
-  margin-left: 6px;
+.isl-wbar .lvl-ok {
+  background: #30d158;
+}
+.isl-wbar .lvl-warn {
+  background: #ff9f0a;
+}
+.isl-wbar .lvl-danger {
+  background: #ff453a;
+}
+.isl-wbar .lvl-muted {
+  background: #636366;
 }
 /* 展开嵌套环的图例（R4，贴原型 .tcell .legend）：多窗家只画它，并列条此时不画。 */
 .isl-legend {
