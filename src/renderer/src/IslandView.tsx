@@ -23,8 +23,8 @@ import {
 //   · 收起：平铺全部启用的供应商 —— plan 家嵌套用量环（外→内 = 窗口顺序，
 //     最多 3 环）+ 中央真实 logo，无名称、无轮询；balance 家 logo + 金额。
 //     超长岛身自动加长（fit-content，上限后横滑）；缺失值保持缺失（灰环 `--`）。
-//   · 展开：点击岛身弹簧 pop 出 2 列卡片（各家多窗口明细 + 余额卡），只读；
-//     点击空白收起；双击 /「展开面板」回到卡片视图。
+//   · 展开：点击岛身弹簧 pop 出 2 列卡片（多窗 plan 家嵌套环 + 图例，单窗家单环 +
+//     单行条；余额卡只读）；点击空白收起；双击 /「展开面板」回到卡片视图。
 //   · 隐藏：dwell 时序沿用 dockHide（1s 藏 / 300ms 唤 / 1.5s 重藏），隐藏态缩成
 //     A 式 mini-pill（窄条 + 各家等级点，顶部原位收缩）；唤出 = 点击 pill。
 //   · 位置：顶栏内左右拖动（岛身，落盘 `ui:islandX` 0..1 中心比例，与 `ui:*` 偏好同机制）；
@@ -38,8 +38,14 @@ import {
 
 /** 岛内横向位置落盘键（0..1，相对窗口宽；Y 恒定吸顶不存） */
 const ISLAND_X_KEY = 'ui:islandX'
-/** 圆环统一尺寸（PRD：收起嵌套环与展开主环都是 40px） */
-const RING_SIZE = 40
+/**
+ * 环尺寸三处各有原型出处，不共用一个数（R3/R4）：
+ * 收起嵌套环 36（demo.html:154 combo 36）/ 展开嵌套环 40（demo.html:233）/
+ * 展开单环 40（现状，不动）。
+ */
+const RING_COLLAPSED = 36
+const RING_NESTED = 40
+const RING_SINGLE = 40
 /** 点击与拖动的位移分界（prototype：移动 <6px 算点击展开/收起） */
 const CLICK_SLOP = 6
 /**
@@ -92,7 +98,7 @@ export interface IslandViewProps {
 }
 
 /** 嵌套用量环：外→内 = windows[0..2]，最多 3 环；无可比窗口时灰环 `--` */
-function NestedRings({ s, size = RING_SIZE }: { s: ProviderSnapshot; size?: number }): React.JSX.Element {
+function NestedRings({ s, size = RING_COLLAPSED }: { s: ProviderSnapshot; size?: number }): React.JSX.Element {
   const wins = s.windows.slice(0, 3)
   // 实时皮肤水色锚点（10-10-island-fixes R3，与 PetBall.readWaterAnchors 同路：
   // 令牌落在 `.app` 上 + data-skin MutationObserver；读不到 → 缺省三色。
@@ -141,6 +147,17 @@ function islandLevel(s: ProviderSnapshot): Level {
   if (s.status === 'error') return 'danger'
   if (s.status !== 'ok') return 'muted'
   return snapshotLevel(s)
+}
+
+/**
+ * 等级 → 环境辉光（R1，原型 `--glow`：最满家等级色 + 0x55 alpha；无数据时中性白 6%）。
+ * 与阈值判定单一来源（levels，经 islandLevel/snapshotLevel），不另起颜色表。
+ */
+const GLOW: Record<Level, string> = {
+  ok: '#30d15855',
+  warn: '#ff9f0a55',
+  danger: '#ff453a55',
+  muted: '#63636655'
 }
 
 export function IslandView({
@@ -416,6 +433,8 @@ export function IslandView({
       : 'edge-visible'
   const edgeAttr = fluidEdge === 'right' || fluidEdge === 'top' || fluidEdge === 'bottom' ? fluidEdge : 'left'
   const mode: string = dockHidden ? 'hidden' : open ? 'open' : 'collapsed'
+  // 环境辉光颜色（R1）：最满家等级 → --glow 下发，CSS 只消费（常驻辉光 + danger 呼吸都读它）
+  const glow = ordered.length ? GLOW[worstLevel(ordered)] : 'rgba(255, 255, 255, 0.06)'
 
   const tooltip = dockHidden
     ? '灵动岛已隐藏 · 单击唤出 · 右键菜单'
@@ -457,7 +476,7 @@ export function IslandView({
         data-island={mode}
         data-fluid={fluid}
         data-edge={edgeAttr}
-        style={open ? undefined : ({ left: `${(posX * 100).toFixed(1)}%` } as React.CSSProperties)}
+        style={open ? undefined : ({ left: `${(posX * 100).toFixed(1)}%`, '--glow': glow } as React.CSSProperties)}
       >
         {dockHidden ? (
           // A 式 mini-pill：窄条 + 各家等级点（顶部原位收缩，不贴边）
@@ -490,8 +509,8 @@ export function IslandView({
                     title={`${s.name}${staleLabel(s) ? `（${staleLabel(s)}）` : ''}`}
                   >
                     <NestedRings s={s} />
-                    <span className="isl-logo">
-                      <ProviderMark mark={s.mark} size={22} glyph={14} />
+                    <span className={`isl-logo ${islandLevel(s) === 'danger' ? 'danger' : 'live'}`}>
+                      <ProviderMark mark={s.mark} size={15} glyph={10} />
                     </span>
                   </span>
                 ) : (
@@ -589,7 +608,7 @@ function IslandOpen({
     <div className="isl-open" data-open={ordered.length}>
       <div className="isl-open-head">
         <span className="isl-open-hint" title="点击空白收起，双击回到卡片">
-          点击空白收起 · 双击回到卡片 · {ordered.length} 家 · 主环 = 各家最满窗口
+          点击空白收起 · 双击回到卡片 · {ordered.length} 家 · 多窗家嵌套环 + 图例
         </span>
         <button type="button" className="isl-open-expand" title="回到卡片视图" onClick={onExpand}>
           展开面板
@@ -623,11 +642,13 @@ function IslandOpen({
   )
 }
 
-/** 展开态 plan 卡：主环（= 最满窗口）+ 各窗口单行条（名 · % · 重置倒计时） */
+/** 展开态 plan 卡：多窗（≥2）嵌套环 40 + 图例（R4，原型 nested 开时）；
+ * 单窗回退单环 + 单行条；缺失值保持缺失（灰环 `—`，图例 `—`，不编 0）。 */
 function PlanCell({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.Element {
   const main = worstWindow(s.status === 'ok' ? s : undefined)
   const mainPct = main ? windowPercent(main) : null
   const lvl = snapshotLevel(s)
+  const nested = s.windows.length >= 2
   return (
     <div className="isl-cell" data-supplier={s.id} data-kind="plan" data-lvl={lvl}>
       <div className="isl-cell-top">
@@ -638,32 +659,49 @@ function PlanCell({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.E
         <StatusDot lvl={lvl} />
       </div>
       <div className="isl-cell-mid">
-        {s.status === 'ok' && mainPct != null ? (
-          <Ring pct={mainPct} lvl={lvl} size={RING_SIZE} stroke={4} />
+        {nested ? (
+          <NestedRings s={s} size={RING_NESTED} />
+        ) : s.status === 'ok' && mainPct != null ? (
+          <Ring pct={mainPct} lvl={lvl} size={RING_SINGLE} stroke={4} />
         ) : (
           <span className="isl-cell-fallback" title={s.status === 'error' ? '出错' : '暂无用量'}>
             {s.status === 'error' ? '!' : '—'}
           </span>
         )}
-        <div className="isl-wins">
-          {s.windows.length ? (
-            s.windows.map((w) => {
+        {nested ? (
+          <div className="isl-legend">
+            {s.windows.slice(0, 3).map((w) => {
               const p = windowPercent(w)
               return (
-                <div className="isl-win" key={w.name} data-win={w.name}>
-                  <span className="isl-win-name">{shortWindowLabel(w.name)}</span>
-                  <span className="isl-win-pct">{p != null ? fmtPercent(p) : '—'}</span>
-                  <span className="isl-win-reset">
-                    {w.resetAt ? `${humanDur(new Date(w.resetAt).getTime() - now)}后重置` : ''}
-                  </span>
-                  {p != null && <Bar pct={p} lvl={windowLevel(w)} />}
+                <div className="isl-legend-item" key={w.name} data-win={w.name}>
+                  <i className={`isl-legend-dot lvl-${levelOfPercent(p, s.status)}`} />
+                  <span className="isl-legend-name">{shortWindowLabel(w.name)}</span>
+                  <span className="isl-legend-pct">{p != null ? fmtPercent(p) : '—'}</span>
                 </div>
               )
-            })
-          ) : (
-            <span className="isl-win-empty">无窗口数据</span>
-          )}
-        </div>
+            })}
+          </div>
+        ) : (
+          <div className="isl-wins">
+            {s.windows.length ? (
+              s.windows.map((w) => {
+                const p = windowPercent(w)
+                return (
+                  <div className="isl-win" key={w.name} data-win={w.name}>
+                    <span className="isl-win-name">{shortWindowLabel(w.name)}</span>
+                    <span className="isl-win-pct">{p != null ? fmtPercent(p) : '—'}</span>
+                    <span className="isl-win-reset">
+                      {w.resetAt ? `${humanDur(new Date(w.resetAt).getTime() - now)}后重置` : ''}
+                    </span>
+                    {p != null && <Bar pct={p} lvl={windowLevel(w)} />}
+                  </div>
+                )
+              })
+            ) : (
+              <span className="isl-win-empty">无窗口数据</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

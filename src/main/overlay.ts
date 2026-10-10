@@ -348,6 +348,10 @@ export function loadPersisted(): void {
   if (state == null || typeof state !== 'object') state = {}
   // 非法岛标记不进内存（坏值当没存过，下次 notePosition 落盘覆盖）
   if (!validIsland(state.island)) delete state.island
+  // R5（10-10-island-fidelity）：每次启动先见主面板 —— 内存态强制展开，
+  // 不回写磁盘（下次启动照样先见面板；用户点收起后 setCollapsed 走正常落盘）。
+  // ui:get-collapsed 的通道不动，首帧读到的就是这个内存值。
+  state.collapsed = false
 }
 
 function persist(): void {
@@ -561,11 +565,20 @@ export function setCollapsed(collapsed: boolean): void {
   const wa = display.workArea
   let nx: number, ny: number
   if (collapsed) {
-    // 圆点还原到展开前记录的位置；无记录时以卡片左上角为准
-    const ax = dotAnchor?.x ?? b.x
-    const ay = dotAnchor?.y ?? b.y
-    nx = clampToWorkArea(ax, wa.x, wa.x + wa.width - target.width)
-    ny = clampToWorkArea(ay, wa.y, wa.y + wa.height - target.height)
+    // R5（10-10-island-fidelity）：本进程没见过展开（启动即面板，dotAnchor 为空）时，
+    // b 是 384 卡片的定位 —— 沿用它会偏 88px（(560−384)/2），此时顶部居中；
+    // 有记录时仍还原到展开前的位置。
+    if (dotAnchor) {
+      nx = clampToWorkArea(dotAnchor.x, wa.x, wa.x + wa.width - target.width)
+      ny = clampToWorkArea(dotAnchor.y, wa.y, wa.y + wa.height - target.height)
+    } else {
+      nx = clampToWorkArea(
+        Math.round(wa.x + (wa.width - target.width) / 2),
+        wa.x,
+        wa.x + wa.width - target.width
+      )
+      ny = clampToWorkArea(wa.y, wa.y, wa.y + wa.height - target.height)
+    }
   } else {
     // 记住圆点位置；卡片从圆点处展开，越界（屏幕右/下边缘）时夹回工作区
     dotAnchor = { x: b.x, y: b.y }

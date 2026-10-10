@@ -2510,5 +2510,92 @@ ok(
 ok(/id="fluid-clip"[\s\S]{0,120}r="27"/.test(petBallWater), 'K6a 水体 clip 圆 r=27（全屏水，不是 r=17 的小圆）')
 ok(/55 - fluidLvl \* 54/.test(petBallWater), 'K6b 液面公式 55 - level×54（顶 1 / 底 55，与 r=27 的圆同口径）')
 
+// ─── L. 灵动岛高保真还原（10-10-island-fidelity）────────────────────────────
+//
+// 对照原型 `prototype/dynamic-island-demo.html?variant=B` 的数值门：
+// 收起氛围（常驻辉光 + 高光线 + danger 呼吸）/ logo 动画 / combo 36 + gap 12 /
+// 展开嵌套环 + 图例 / 启动先见面板。改回旧值即红（先红后绿已验，见任务日志）。
+console.log('\nL. 灵动岛高保真还原')
+
+const islRaw = read('src/renderer/src/island.css')
+const isl = islRaw.replace(/\/\*[\s\S]*?\*\//g, '')
+ok(isl.length > 0, 'L0 前置：island.css 剥注释后非空（下面的负向断言不能空洞通过）')
+const stripBody = ruleBody(isl, '.isl-strip')
+const comboBody = ruleBody(isl, '.isl-combo')
+const pillBody = ruleBody(isl, '.isl-pill')
+ok(stripBody != null && comboBody != null && pillBody != null, 'L0b 前置：取得到 .isl-strip / .isl-combo / .isl-pill 整块')
+const stripDecls = decls(stripBody)
+const comboDecls = decls(comboBody)
+const pillDecls = decls(pillBody)
+
+// L1 · 尺寸贴原型：收起环 36（demo.html:154）+ 间距 12（demo.html:81-82），岛高 52 不变。
+ok(comboDecls.width === '36px' && comboDecls.height === '36px',
+  `L1 combo 36×36（实际 ${comboDecls.width || '?'}×${comboDecls.height || '?'}；改回 40 即红）`)
+ok(stripDecls.gap === '12px', `L1b strip 间距 12px（实际 ${stripDecls.gap || '未找到'}；改回 10 即红）`)
+ok(stripDecls.height === '52px', `L1c 岛高 52 不变（实际 ${stripDecls.height || '未找到'}）`)
+
+// L2 · 常驻环境辉光：strip 阴影含 `0 0 24px var(--glow`（demo.html:39），颜色由 JS 下发。
+ok(stripBody != null && /0 0 24px var\(--glow/.test(stripBody),
+  'L2 strip 阴影含 0 0 24px var(--glow) 常驻环境辉光（删了即回到"看起来平"）')
+
+// L3 · 高光线 + 辉光晕（demo.html:40-41）：挂 body 上（strip 是横滑容器，overflow 会裁晕）。
+{
+  const hi = decls(ruleBody(isl, ".isl-body[data-island='collapsed']::before"))
+  const halo = decls(ruleBody(isl, ".isl-body[data-island='collapsed']::after"))
+  ok(/linear-gradient/.test(hi.background || ''), `L3 高光线是 gradient（实际 ${(hi.background || '未找到').slice(0, 48)}）`)
+  ok(/var\(--glow/.test(halo.background || ''), `L3b 辉光晕吃 var(--glow)（实际 ${halo.background || '未找到'}）`)
+  ok(halo.filter === 'blur(22px)' && halo.opacity === '0.35',
+    `L3c 晕 blur 22 / opacity .35（实际 ${halo.filter || '?'} / ${halo.opacity || '?'}）`)
+}
+
+// L4 · danger 呼吸（demo.html:49-50）：lvl-danger 的 strip 走 glowPulse 动画，不是静态阴影。
+ok(/\.isl-body\.lvl-danger \.isl-strip\s*\{[^}]*animation:\s*islandGlowPulse 2\.6s/.test(isl),
+  'L4 danger 家 strip 走 islandGlowPulse 2.6s 呼吸（改回静态阴影即红）')
+ok(/@keyframes islandGlowPulse/.test(isl) && /0 0 34px var\(--glow\)/.test(isl),
+  'L4b 呼吸峰值 0 0 34px var(--glow)（原型 50% 帧；删峰值等于没呼吸）')
+
+// L5 · logo 动画（demo.html:68-74）：呼吸 + ping 环 + danger 抖动，全部只用合成器属性。
+ok(/@keyframes islBreathe/.test(isl) && /\.isl-logo\.live\s*\{[^}]*animation:\s*islBreathe/.test(isl),
+  'L5 logo 呼吸 islBreathe 在（删了即静态 logo 回归）')
+ok(/\.isl-logo\.live::after\s*\{[^}]*animation:\s*islPing/.test(isl) && /@keyframes islPing/.test(isl),
+  'L5b ping 环是 ::after + islPing（不新增 DOM；删了即无 ping 环）')
+ok(/@keyframes islShake/.test(isl) && /\.isl-logo\.danger\s*\{[^}]*animation:\s*islShake/.test(isl),
+  'L5c danger 家抖动 islShake 在（删了即 danger 不抖）')
+ok(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.isl-logo\.live[\s\S]*?animation:\s*none/.test(isl),
+  'L5d reduced-motion 下 logo 动画全静止（删了即动效敏感用户被闪）')
+
+// L6 · mini-pill 收窄不改高：padding 0 14→0 10，gap 7→5，高 26 由 D6b 钉。
+ok(pillDecls.padding === '0 10px' && pillDecls.gap === '5px',
+  `L6 pill 收窄 padding 0 10 / gap 5（实际 ${pillDecls.padding || '?'} / ${pillDecls.gap || '?'}）`)
+
+// L7 · IslandView：--glow 下发 + 环尺寸拆分 + 展开嵌套分支（只判形状，不判文案）。
+const islTsx = stripTsComments(read('src/renderer/src/IslandView.tsx'))
+ok(islTsx.length > 0, 'L7a 前置：IslandView.tsx 剥注释后非空')
+ok(/'--glow': glow/.test(islTsx) && /GLOW\[worstLevel\(ordered\)\]/.test(islTsx),
+  'L7 --glow 由最满家等级下发（删了即辉光恒中性白，R1 落空）')
+ok(/const RING_COLLAPSED = 36/.test(islTsx) && /const RING_NESTED = 40/.test(islTsx) &&
+  /const RING_SINGLE = 40/.test(islTsx) && !/RING_SIZE/.test(islTsx),
+  'L7b 环尺寸三处分立 36/40/40（RING_SIZE 无残留；合回一个数即红）')
+ok(/size=\{RING_NESTED\}/.test(islTsx) && /className="isl-legend"/.test(islTsx),
+  'L7c 展开多窗走嵌套环 40 + 图例（删分支即回单环老样子）')
+ok(/isl-legend-dot lvl-\$\{/.test(islTsx) && /className="isl-legend-item" key=\{w\.name\} data-win=\{w\.name\}/.test(islTsx),
+  'L7d 图例点走 lvl-* 语义色 + data-win 探针（颜色写死即与等级脱钩）')
+ok(/isl-logo \$\{islandLevel\(s\) === 'danger' \? 'danger' : 'live'\}/.test(islTsx),
+  'L7e 收起 logo 按 danger 切 live/danger 动画类（删了即全静态）')
+
+// L8 · overlay 启动序列（R5）：内存态强制展开，不回写磁盘；首次收起顶部居中。
+{
+  const ovSrc = stripTsComments(read('src/main/overlay.ts'))
+  const lpAt = ovSrc.indexOf('export function loadPersisted')
+  const coAt = ovSrc.indexOf('export function createOverlay', lpAt)
+  const lpSeg = lpAt >= 0 && coAt > lpAt ? ovSrc.slice(lpAt, coAt) : ''
+  // `function persist()` 是声明行不是调用：先去掉它再数调用（否则恒有 1 命中，门永真）。
+  const lpCalls = lpSeg.split('function persist()').join('')
+  ok(lpSeg.includes('state.collapsed = false') && !/persist\(\)/.test(lpCalls),
+    'L8 loadPersisted 内存态强制展开且不回写磁盘（落盘即下次启动仍先见面板落空）')
+  ok(/if \(dotAnchor\)/.test(ovSrc) && /wa\.width - target\.width\) \/ 2/.test(ovSrc),
+    'L8b 无展开记录时收起顶部居中（沿用 384 卡片定位会偏 88px）')
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

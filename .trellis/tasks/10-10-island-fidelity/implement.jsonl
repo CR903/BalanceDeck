@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "IslandView/CSS 改动规范与 D6 裁剪门禁"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "启动内存态与持久化不污染纪律"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "typecheck + 断言门禁与 harness 验收"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "缺失值与字面类型纪律"}

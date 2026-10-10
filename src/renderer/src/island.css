@@ -30,7 +30,7 @@
 .isl-strip {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: fit-content;
   max-width: 528px;
   height: 52px;
@@ -41,21 +41,61 @@
   border-radius: 999px;
   background: linear-gradient(180deg, #2b2b31 0%, #0b0b0d 28%, #000 100%);
   box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.8),
+    0 0 24px var(--glow, rgba(255, 255, 255, 0.06)),
     inset 0 1px 1px rgba(255, 255, 255, 0.35),
     inset 0 -8px 18px rgba(0, 0, 0, 0.7),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
-    0 8px 24px rgba(0, 0, 0, 0.55);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+}
+/* 收起氛围（R1，数值贴原型 B demo.html:39-41）：顶部高光线 + 常驻环境辉光。
+ * 挂在 .isl-body 上 —— .isl-strip 是横滑容器（overflow-x:auto 会裁掉外溢的辉光），
+ * body 才是无裁剪的定位包装（收起态与 strip 等大，top 对齐，伪元素定位等价）。 */
+.isl-body[data-island='collapsed']::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.isl-body[data-island='collapsed']::after {
+  content: '';
+  position: absolute;
+  inset: -8px -16px;
+  border-radius: 999px;
+  background: var(--glow, transparent);
+  filter: blur(22px);
+  opacity: 0.35;
+  z-index: -1;
+  pointer-events: none;
 }
 .isl-strip::-webkit-scrollbar {
   display: none;
 }
 .isl-body.lvl-danger .isl-strip {
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.35),
-    inset 0 -8px 18px rgba(0, 0, 0, 0.7),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
-    0 8px 24px rgba(0, 0, 0, 0.55),
-    0 0 22px rgba(255, 69, 58, 0.35);
+  animation: islandGlowPulse 2.6s ease-in-out infinite;
+}
+/* danger 呼吸（原型 demo.html:49-50）：只脉动外层投影 + 辉光，内嵌立体不动。 */
+@keyframes islandGlowPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 12px 40px rgba(0, 0, 0, 0.8),
+      0 0 18px var(--glow),
+      inset 0 1px 1px rgba(255, 255, 255, 0.35),
+      inset 0 -8px 18px rgba(0, 0, 0, 0.7);
+  }
+  50% {
+    box-shadow:
+      0 12px 44px rgba(0, 0, 0, 0.85),
+      0 0 34px var(--glow),
+      inset 0 1px 1px rgba(255, 255, 255, 0.35),
+      inset 0 -8px 18px rgba(0, 0, 0, 0.7);
+  }
 }
 .isl-combo {
   position: relative;
@@ -63,8 +103,8 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
 }
 .isl-combo .isl-logo {
   position: absolute;
@@ -77,6 +117,72 @@
   border-radius: 50%;
   padding: 2px;
   color: #f2f2f7;
+}
+/* logo 动画（R2，贴原型 demo.html:68-74）：呼吸 + ping 环 + danger 抖动。
+ * 只用合成器属性 —— 呼吸/抖动走独立 `scale`/`rotate`（不碰 `transform`，
+ * 那是居中定位 translate(-50%,-50%) 的位置，动了 logo 会跳到 combo 角上，
+ * 正是 dynamic-island 原型已踩过的坑）；ping 环是 ::after，不新增 DOM。 */
+.isl-logo.live {
+  animation: islBreathe 2.2s ease-in-out infinite;
+}
+@keyframes islBreathe {
+  0%,
+  100% {
+    scale: 1;
+  }
+  50% {
+    scale: 1.1;
+  }
+}
+.isl-logo.live::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0.5;
+  animation: islPing 2.2s ease-out infinite;
+}
+@keyframes islPing {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+.isl-logo.danger {
+  animation: islShake 1.8s ease-in-out infinite;
+}
+@keyframes islShake {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  20% {
+    rotate: -8deg;
+    scale: 1.08;
+  }
+  40% {
+    rotate: 8deg;
+    scale: 1.08;
+  }
+  60% {
+    rotate: 0deg;
+    scale: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .isl-logo.live,
+  .isl-logo.danger,
+  .isl-body.lvl-danger .isl-strip {
+    animation: none;
+  }
+  .isl-logo.live::after {
+    animation: none;
+  }
 }
 .isl-rings {
   display: block;
@@ -100,11 +206,11 @@
 .isl-pill {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   width: fit-content;
   max-width: 200px;
   height: 26px;
-  padding: 0 14px;
+  padding: 0 10px;
   border-radius: 999px;
   background: linear-gradient(180deg, #2b2b31 0%, #000 100%);
   box-shadow:
@@ -265,6 +371,44 @@
 }
 .isl-win-reset {
   margin-left: 6px;
+}
+/* 展开嵌套环的图例（R4，贴原型 .tcell .legend）：多窗家只画它，并列条此时不画。 */
+.isl-legend {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.isl-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #98989f;
+  white-space: nowrap;
+}
+.isl-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: #636366;
+}
+.isl-legend-dot.lvl-ok {
+  background: #30d158;
+}
+.isl-legend-dot.lvl-warn {
+  background: #ff9f0a;
+}
+.isl-legend-dot.lvl-danger {
+  background: #ff453a;
+}
+.isl-legend-name {
+  color: #d1d1d6;
+}
+.isl-legend-pct {
+  color: #f2f2f7;
 }
 .isl-big {
   font-size: 17px;
