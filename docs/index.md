@@ -23,3 +23,4 @@
 | 2026-10-10 | [灵动岛高保真还原（复检 pass，截图交付）](daily/2026-10-10_island-fidelity.md) | `10-10-island-fidelity` |
 | 2026-10-10 | [mini微调与点击穿透修复（复检 pass）](daily/2026-10-10_island-mini-tune.md) | `10-10-island-mini-tune` |
 | 2026-10-10 | [收起比例与展开结构还原（复检 pass，截图交付）](daily/2026-10-10_island-fidelity-2.md) | `10-10-island-fidelity-2` |
+| 2026-10-10 | [余额家logo对版（复检 pass，截图交付）](daily/2026-10-10_island-balance-mark.md) | `10-10-island-balance-mark` |

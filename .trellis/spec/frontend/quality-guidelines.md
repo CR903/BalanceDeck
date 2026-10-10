@@ -680,6 +680,20 @@ green-forever before they were fixed:
   (`overlay` came from a `--ballshot` diag and was authoritative; `idx`/`caption` did not, and
   the two could not describe the same frame).
 
+**`test-structure` 静态断言的三个新坑（2026-10-10，`10-10-island-balance-mark`）**，都以
+「变异注入后 0 失败」实测复现过：
+
+- **别跨字符串比下标。** 位置门拿「剥掉 `@media` 的串」与「原串」各取一次 `indexOf` 比大小 ——
+  两个坐标系的下标不可比；且同名选择器在 reduce 块里也出现一次，`indexOf` 先命中的可能正是
+  那一行。改为**在同一串内**用规则头正则锚定（选择器列表后紧跟 `{`；reduce 里那行后面接的是更多
+  选择器，天然不命中）。
+- **存在性正则要卡边界。** 断言 reduce 块含 `.pmark.live` 时，`\.pmark\.live` 会先命中
+  `.pmark.live::after`，于是「把 `.isl-combo.bal .pmark.live,` 从 reduce 块删掉」照样绿。
+  补 `(?:,|\s)` 边界后变异才红。
+- **钉值，不钉名字出现过。** 只断言选择器在 reduce 块里，把值从 `animation: none` 改回
+  `islBreathe 2.2s` 仍是 0 失败（「同组静止」静默失效）。改成按**规则**取值断言后，
+  同一变异 3 条红 —— 这是「guard reads like verification but isn't」在 `@media` 上的形态。
+
 **Synthetic events.** React handlers (`onWheel`, `onClick`, …) fire from
 `el.dispatchEvent(new WheelEvent('wheel', {deltaY: 100, bubbles: true}))`.
 `:active` does **not** — it is driven by the UA compositor, so dispatching it never lights the

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "check 门禁：变异验红 + 并排对版 + 负向门（卡片视图不受影响）"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "作用域覆盖回归核对"}

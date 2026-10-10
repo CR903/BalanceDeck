@@ -741,6 +741,190 @@ ok(
   )
 }
 
+// D6d · 灵动岛余额家 mark 对版（10-10-island-balance-mark）：原型 `.picon`
+// （demo.html:68 / :145-151）是**正圆黑盘 + 双层立体投影 + 呼吸/ping**，实现里此前
+// 却是 chips 时代的 22×22 / 7px 圆角方块 / 描边 / 半透明底，且无动画。
+// 覆盖只许写在 .isl-* 作用域下 —— 卡片视图（CardView/DetailView/picker）的 chip
+// 必须原样，所以 AC3 是**负向门**，单独钉在 D6d13/D6d14。
+{
+  const stripTsLocal = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const islandCss = read('src/renderer/src/island.css').replace(/\/\*[\s\S]*?\*\//g, '')
+  const islandTsx = stripTsLocal(read('src/renderer/src/IslandView.tsx'))
+  ok(
+    islandCss.length > 0 && islandTsx.length > 0,
+    'D6d 前置：island.css / IslandView.tsx 读得到（下面的断言不能空洞通过）'
+  )
+  // 取「选择器列表 → 声明块」整块（原型的形态是两个作用域共用一份声明，写成逗号列表，
+  // 故 ruleBody 的单选择器契约用不上）。定位不到 / 花括号不配平就返回 null ——
+  // 绝不返回半个块，否则「没写 border」这种负向判断会变成永真。
+  const multiRule = (src, headerRe) => {
+    const m = headerRe.exec(src)
+    if (!m) return null
+    const start = m.index + m[0].length
+    const end = src.indexOf('}', start)
+    return end < 0 || src.slice(start, end).includes('{') ? null : src.slice(start, end)
+  }
+  // 余额家两条作用域写成同一份声明的逗号列表，后缀由调用方给（'' / '.live' / '.live::after' / '.danger'）
+  const balHeader = (extra) =>
+    new RegExp(String.raw`\.isl-combo\.bal \.pmark${extra},\s*\.isl-cell\[data-kind='balance'\] \.pmark${extra}\s*\{`)
+  // reduce 块里也写着**同样的选择器列表**（那正是 R4 要的），所以判形态/动画时必须把 @media
+  // 摘掉：否则 multiRule 会先命中 reduce 块，把 `animation: none` 读成「动画写好了」。
+  const stripMedia = (s) => {
+    let out = ''
+    let i = 0
+    for (;;) {
+      const at = s.indexOf('@media', i)
+      if (at < 0) return out + s.slice(i)
+      out += s.slice(i, at)
+      const open = s.indexOf('{', at)
+      let depth = 0
+      let j = open
+      for (; j < s.length; j++) {
+        if (s[j] === '{') depth++
+        else if (s[j] === '}' && --depth === 0) break
+      }
+      i = j + 1
+    }
+  }
+  const islandCssMain = stripMedia(islandCss)
+  ok(islandCssMain.length > 0, 'D6d0 前置：island.css 剥掉 @media 后非空（下面几条多规则查找不能空洞通过）')
+  // ① 形态（R1/R2）：26×26 正圆黑盘、无边、双层立体阴影（inset 高光 + 外投影）
+  const formBody = multiRule(islandCssMain, balHeader(''))
+  const form = decls(formBody)
+  ok(
+    formBody != null && form['border-radius'] === '50%' && form.background === '#0b0b0d',
+    `D6d1 余额家 mark 正圆黑盘 radius 50% / #0b0b0d（实际 ${form['border-radius'] || '?'} / ${form.background || '?'}）`
+  )
+  ok(formBody != null && form.border === '0', `D6d2 余额家 mark 无描边 border: 0（实际 ${form.border || '?'}）`)
+  const formShadow = form['box-shadow'] || ''
+  ok(
+    formBody != null && /inset 0 1px 1px/.test(formShadow) && /0 2px 8px/.test(formShadow),
+    `D6d3 双层阴影：inset 0 1px 1px 高光 + 0 2px 8px 外投影（实际 ${formShadow || '?'}）`
+  )
+  ok(
+    formBody != null && form.position === 'relative',
+    `D6d4 position: relative（ping 环 ::after 的定位上下文；实际 ${form.position || '?'}）`
+  )
+  // ② 动画（R1）：复用用量家同款 keyframes —— 呼吸 islBreathe / ping 环 islPing / 抖动 islShake
+  const liveBody = multiRule(islandCssMain, balHeader('\\.live'))
+  const liveDecls = decls(liveBody)
+  ok(
+    liveBody != null && /^islBreathe 2\.2s ease-in-out infinite$/.test(liveDecls.animation || ''),
+    `D6d5 live 态呼吸 islBreathe 2.2s（实际 ${liveDecls.animation || '?'}）`
+  )
+  const pingBody = multiRule(islandCssMain, balHeader('\\.live::after'))
+  const pingDecls = decls(pingBody)
+  ok(
+    pingBody != null && /^islPing 2\.2s ease-out infinite$/.test(pingDecls.animation || '') &&
+      pingDecls.inset === '-4px' && pingDecls.border === '2px solid currentColor' && pingDecls.opacity === '0.5',
+    `D6d6 live 态 ping 环挂 ::after（islPing 2.2s / inset -4px / 2px currentColor / 0.5；实际 ${pingDecls.animation || '?'}, ${pingDecls.inset || '?'}, ${pingDecls.border || '?'}, ${pingDecls.opacity || '?'}）`
+  )
+  const dangerBody = multiRule(islandCssMain, balHeader('\\.danger'))
+  const dangerDecls = decls(dangerBody)
+  ok(
+    dangerBody != null && /^islShake 1\.8s ease-in-out infinite$/.test(dangerDecls.animation || ''),
+    `D6d7 danger 态抖动 islShake 1.8s（实际 ${dangerDecls.animation || '?'}）`
+  )
+  // ③ reduce（R4）：新增动画并入既有 reduce 块（@media 内层有嵌套花括号，ruleBody 会返回
+  // null，这里手工配平取整个 media 块再判）
+  let reduceBlock = null
+  const reduceAt = islandCss.indexOf('@media (prefers-reduced-motion: reduce)')
+  if (reduceAt >= 0) {
+    const open = islandCss.indexOf('{', reduceAt)
+    let depth = 0
+    for (let j = open; j >= 0 && j < islandCss.length; j++) {
+      if (islandCss[j] === '{') depth++
+      else if (islandCss[j] === '}' && --depth === 0) {
+        reduceBlock = islandCss.slice(open + 1, j)
+        break
+      }
+    }
+  }
+  ok(reduceBlock != null, 'D6d8 前置：island.css 的 prefers-reduced-motion 块取得到（缺块即红）')
+  // ⚠ 结尾必须卡到 `,` 或空白：`.pmark.live` 是 `.pmark.live::after` 的**前缀**，
+  // 不卡边界时把 reduce 里的 `.live,` 整行删掉，剩下的 ::after 那行仍让断言绿（实测踩过）。
+  ok(
+    reduceBlock != null &&
+      /\.isl-combo\.bal \.pmark\.live(?:,|\s)/.test(reduceBlock) &&
+      /\.isl-cell\[data-kind='balance'\] \.pmark\.live(?:,|\s)/.test(reduceBlock) &&
+      /\.isl-combo\.bal \.pmark\.danger(?:,|\s)/.test(reduceBlock) &&
+      /\.isl-cell\[data-kind='balance'\] \.pmark\.danger(?:,|\s)/.test(reduceBlock),
+    'D6d9 reduce 块并入余额家 .pmark.live / .pmark.danger 两个作用域（R4 同组静止）'
+  )
+  ok(
+    reduceBlock != null && /\.isl-combo\.bal \.pmark\.live::after/.test(reduceBlock),
+    'D6d10 reduce 块并入余额家 .pmark.live::after（ping 环也要静止）'
+  )
+  // 选择器在块里 ≠ 它被静止：D6d9/D6d10 只查字符串存在，把余额家选择器拆成自己的规则、
+  // 值仍写 `animation: islBreathe` 时那两条照样绿（实测 0 失败）。故这里按**规则**取，
+  // 要求「选择器出现在该规则的列表里」与「该规则的值是 none」同时成立。
+  const reduceRules = []
+  for (let k = 0; reduceBlock != null && k < reduceBlock.length; ) {
+    const ob = reduceBlock.indexOf('{', k)
+    if (ob < 0) break
+    const cb = reduceBlock.indexOf('}', ob)
+    if (cb < 0) break
+    reduceRules.push({ sel: reduceBlock.slice(k, ob), body: reduceBlock.slice(ob + 1, cb) })
+    k = cb + 1
+  }
+  const reduceStills = (...needles) =>
+    needles.every((n) =>
+      reduceRules.some((r) => r.sel.split(',').map((x) => x.trim()).includes(n) && /animation:\s*none/.test(r.body))
+    )
+  ok(
+    reduceStills(".isl-combo.bal .pmark.live", ".isl-cell[data-kind='balance'] .pmark.live"),
+    'D6d10c reduce 里余额家 .pmark.live 所在规则的值是 animation: none（选择器在、值不是即红）'
+  )
+  ok(
+    reduceStills(".isl-combo.bal .pmark.live::after", ".isl-cell[data-kind='balance'] .pmark.live::after"),
+    'D6d10d reduce 里余额家 .pmark.live::after 所在规则的值是 animation: none（ping 环同组静止）'
+  )
+  ok(
+    reduceStills(".isl-combo.bal .pmark.danger", ".isl-cell[data-kind='balance'] .pmark.danger"),
+    'D6d10e reduce 里余额家 .pmark.danger 所在规则的值是 animation: none（抖动同组静止）'
+  )
+  // reduce 块必须排在余额家动画规则**之后**：两边选择器特异性同为 0,3,0，同分靠源码顺序，
+  // 挪到前面 `animation: none` 会被后写的 islBreathe 盖回去（R4 的「同组静止」静默失效）。
+  // ⚠ 两个索引必须取自**同一个串**：islandCssMain（剥了 @media）与 islandCss（没剥）的
+  // 下标不可比。也不能直接 indexOf('.isl-combo.bal .pmark.live,') —— reduce 块里那行
+  // 同名选择器更靠前时会先命中，比较就反了。故锚定**规则头**（选择器列表后紧跟 `{`），
+  // reduce 块那行后面接的是更多选择器而不是 `{`，天然不会命中。
+  const balLiveHead = /\.isl-combo\.bal \.pmark\.live,\s*\.isl-cell\[data-kind='balance'\] \.pmark\.live\s*\{/
+  const balLiveHit = balLiveHead.exec(islandCss)
+  const balLiveAt = balLiveHit ? balLiveHit.index : -1
+  ok(
+    reduceBlock != null && balLiveAt >= 0 && reduceAt > balLiveAt,
+    `D6d10b reduce 块排在余额家动画规则之后（实际 reduce@${reduceAt}, bal-live@${balLiveAt}）`
+  )
+  // ④ 尺寸（R1/R2）：收起 26/glyph16、展开 BalanceCell 26/glyph16；等级类挂到承载动画的 .pmark 自身。
+  // 跨行 JSX 用 \s+ 而非硬空格（多行组件写法一改就假红），且从各自的 data-kind 锚点切片 ——
+  // 展开 PlanCell 的 mark 也是 26/16，不锚定作用域就会被它顶成永真。
+  ok(
+    /data-kind="balance"\s+data-lvl=\{islandLevel\(s\)\}[\s\S]{0,700}?<ProviderMark\s+mark=\{s\.mark\}\s+size=\{26\}\s+glyph=\{16\}\s+className=\{islandLevel\(s\) === 'danger' \? 'danger' : 'live'\}/.test(
+      islandTsx
+    ),
+    'D6d11 收起余额家 ProviderMark size 26 / glyph 16，且 live|danger 类挂到 .pmark 上'
+  )
+  ok(
+    /data-kind="balance" data-lvl=\{lvl\}[\s\S]{0,700}?<ProviderMark\s+mark=\{s\.mark\}\s+size=\{26\}\s+glyph=\{16\}\s+className=\{lvl === 'danger' \? 'danger' : 'live'\}/.test(
+      islandTsx
+    ),
+    'D6d12 展开 BalanceCell ProviderMark size 26 / glyph 16，且 live|danger 类挂到 .pmark 上'
+  )
+  // ⑤ 负向门（AC3）：全局 .pmark 不许被动 —— 卡片视图 chip 仍是 7px 方块 + 描边 + 半透明底
+  const pmBody = ruleBody(css, '.pmark')
+  const pm = decls(pmBody)
+  ok(
+    pmBody != null && pm['border-radius'] === '7px' && /surface-sunken/.test(pm.background || '') &&
+      /^1px solid/.test(pm.border || ''),
+    `D6d13 负向门：skins.css 全局 .pmark 仍是 7px 方块 + 1px 描边 + surface 半透明底（实际 ${pm['border-radius'] || '?'}, ${pm.border || '?'}）`
+  )
+  ok(
+    !/(?:^|[{}])\s*\.pmark\s*\{/.test(islandCss),
+    'D6d14 负向门：island.css 里没有全局 .pmark 规则（覆盖都带 .isl-* 作用域前缀）'
+  )
+}
+
 // ─── E. 语音播报链路的主进程前提（09-29-tts-smart-broadcast）────────────────
 //
 // 这四条**改坏了不会抛、不会红、界面上看不出任何异常** —— 它们各自只让「某次播报

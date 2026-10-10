@@ -553,7 +553,15 @@ export function IslandView({
                     data-lvl={islandLevel(s)}
                     title={`${s.name}${staleLabel(s) ? `（${staleLabel(s)}）` : ''}`}
                   >
-                    <ProviderMark mark={s.mark} size={22} glyph={14} />
+                    {/* 26 = 原型 .picon（demo.html:68，展开态同为 26），glyph 16 =
+                        logoSVG(mark, brand, 16)（demo.html:146）；live|danger 类挂在
+                        承载动画的 .pmark 自身（与用量家 .isl-logo 同一套判定） */}
+                    <ProviderMark
+                      mark={s.mark}
+                      size={26}
+                      glyph={16}
+                      className={islandLevel(s) === 'danger' ? 'danger' : 'live'}
+                    />
                     <span className="isl-amount">{balanceText(s, hideBalance)}</span>
                   </span>
                 )
@@ -753,7 +761,14 @@ function BalanceCell({ s, hide }: { s: ProviderSnapshot; hide: boolean }): React
   return (
     <div className="isl-cell" data-supplier={s.id} data-kind="balance" data-lvl={lvl}>
       <div className="isl-cell-top">
-        <ProviderMark mark={s.mark} size={20} glyph={12} />
+        {/* 26/16 与原型 .picon 同（demo.html:231 展开态也用 picon 26）；形态与动画
+            由 island.css 的 .isl-cell[data-kind='balance'] .pmark 作用域覆盖提供 */}
+        <ProviderMark
+          mark={s.mark}
+          size={26}
+          glyph={16}
+          className={lvl === 'danger' ? 'danger' : 'live'}
+        />
         <span className="isl-cell-name" title={s.name}>
           {s.name}
         </span>

@@ -187,16 +187,6 @@
     scale: 1;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .isl-logo.live,
-  .isl-logo.danger,
-  .isl-body.lvl-danger .isl-strip {
-    animation: none;
-  }
-  .isl-logo.live::after {
-    animation: none;
-  }
-}
 .isl-rings {
   display: block;
 }
@@ -209,6 +199,57 @@
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+}
+/* 余额家 mark 对版（10-10-island-balance-mark，原型 `.picon`：demo.html:68 / :145-151）：
+ * 26 正圆黑盘 + inset 高光 + 外投影 + 呼吸/ping —— keyframes 复用用量家那三套，
+ * 不新写。覆盖**只写 .isl-* 作用域**（特异性 0,2,0 > skins.css 的 .pmark 0,1,0）：
+ * 卡片视图（CardView/DetailView/picker）的 chip 必须仍是 7px 方块 + 描边 + 半透明底。
+ * position: relative 是 ping 环 ::after 的定位上下文；呼吸/抖动只用独立 scale/rotate
+ * （本文件头的纪律：transform 不碰，原型已踩坑）。 */
+.isl-combo.bal .pmark,
+.isl-cell[data-kind='balance'] .pmark {
+  position: relative;
+  border-radius: 50%;
+  background: #0b0b0d;
+  border: 0;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.4), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.isl-combo.bal .pmark.live,
+.isl-cell[data-kind='balance'] .pmark.live {
+  animation: islBreathe 2.2s ease-in-out infinite;
+}
+.isl-combo.bal .pmark.live::after,
+.isl-cell[data-kind='balance'] .pmark.live::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0.5;
+  animation: islPing 2.2s ease-out infinite;
+}
+.isl-combo.bal .pmark.danger,
+.isl-cell[data-kind='balance'] .pmark.danger {
+  animation: islShake 1.8s ease-in-out infinite;
+}
+/* reduce（R4）：余额家动画与用量家同组静止。
+ * 位置有讲究 —— 必须排在**所有动画规则之后**：reduce 里的选择器与 .pmark.live/.danger
+ * 特异性相同（0,3,0），同分靠源码顺序决胜，放前面会被余额家那几条动画规则盖回去。 */
+@media (prefers-reduced-motion: reduce) {
+  .isl-logo.live,
+  .isl-logo.danger,
+  .isl-combo.bal .pmark.live,
+  .isl-cell[data-kind='balance'] .pmark.live,
+  .isl-combo.bal .pmark.danger,
+  .isl-cell[data-kind='balance'] .pmark.danger,
+  .isl-body.lvl-danger .isl-strip {
+    animation: none;
+  }
+  .isl-logo.live::after,
+  .isl-combo.bal .pmark.live::after,
+  .isl-cell[data-kind='balance'] .pmark.live::after {
+    animation: none;
+  }
 }
 .isl-empty {
   font-size: 12px;

@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "作用域化样式覆盖与 token-driven CSS 纪律，避免全局 .pmark 波及卡片视图"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "断言先红后绿 + 几何常量跨状态同源 + 并排 computed style 对版"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "字面量记录表与缺失值纪律（等级→动画类映射）"}
