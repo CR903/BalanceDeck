@@ -19,3 +19,4 @@
 | 2026-10-08 | [贴边柱内液高为零（诚实水位收口）](daily/2026-10-08_column-zero-fill.md) | `10-06-column-zero-fill` |
 | 2026-10-10 | [灵动岛替换水柱（复检 pass，待实机）](daily/2026-10-10_dynamic-island.md) | `10-10-dynamic-island` |
 | 2026-10-10 | [灵动岛跟进修复（复检 pass，实机待验）](daily/2026-10-10_island-fixes.md) | `10-10-island-fixes` |
+| 2026-10-10 | [灵动岛边缘裁剪修复（复检 pass，截图交付）](daily/2026-10-10_island-clip-fix.md) | `10-10-island-clip-fix` |

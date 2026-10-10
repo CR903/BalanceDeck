@@ -29,3 +29,42 @@ export const BALL_VIEW = { width: 56, height: 56 }
  * 动态 setBounds 会与拖拽坐标、贴边持久化纠缠，否决 —— 窗口只在收起/展开切换时改尺寸。
  */
 export const ISLAND_VIEW = { width: 560, height: 480 }
+
+/**
+ * 灵动岛宽度感知钳制（10-10-island-clip-fix R1/R2，纯函数，无 DOM，可单测）。
+ *
+ * 背景：岛宽随供应商数量变（fit-content，上限 528px），旧钳制只按中心比例
+ * [0.08, 0.92]、不看岛宽 —— 靠边时 center ± islandW/2 伸出 560 窗口被透明
+ * 窗口裁掉（harness 实测 posX=0.821 右溢 142px）。
+ *
+ * 约定：入参出参都是**中心比例**（`ui:islandX` 口径不变，仍按中心落盘）；
+ * hostW 缺省 ISLAND_VIEW.width，调用方不要写字面 560。
+ * 与 legacy 界取交（都要满足）：极窄岛（宽度界比 0.08/0.92 更松）退化为现行行为；
+ * islandW 非正/非法 = 还没测到，同样走现行行为。非法 raw 回居中，不抛。
+ */
+export const ISLAND_EDGE_PX = 8
+export const ISLAND_POS_MIN = 0.08
+export const ISLAND_POS_MAX = 0.92
+
+export function clampIslandPos(raw: number, islandW: number, hostW: number = ISLAND_VIEW.width): number {
+  if (!Number.isFinite(raw)) return 0.5
+  let lo = ISLAND_POS_MIN
+  let hi = ISLAND_POS_MAX
+  if (
+    Number.isFinite(islandW) &&
+    islandW > 0 &&
+    Number.isFinite(hostW) &&
+    hostW > 0
+  ) {
+    const wLo = (islandW / 2 + ISLAND_EDGE_PX) / hostW
+    const wHi = (hostW - islandW / 2 - ISLAND_EDGE_PX) / hostW
+    if (wLo <= wHi) {
+      if (wLo > lo) lo = wLo
+      if (wHi < hi) hi = wHi
+    }
+  }
+  // wLo<=wHi 蕴含 islandW<=hostW-16，此时 lo<=0.5<=hi 恒成立（wLo<=0.5、wHi>=0.5）；
+  // 分支只防后人改常量改出反转，反转时宁可居中也不落盘一个越界值。
+  if (lo > hi) return 0.5
+  return Math.min(hi, Math.max(lo, raw))
+}

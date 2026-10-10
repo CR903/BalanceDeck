@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderInfo, ProviderSnapshot, ProviderWindow } from '../../shared/types'
-import { ISLAND_VIEW } from '../../shared/pet-view'
+import { ISLAND_VIEW, clampIslandPos } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
 import { defaultWaterAnchors, resolveWaterAnchors, waterColor, type WaterAnchors } from '../../shared/water-color'
 import { shortWindowLabel } from '../../shared/tray-text'
@@ -27,7 +27,7 @@ import {
 //     点击空白收起；双击 /「展开面板」回到卡片视图。
 //   · 隐藏：dwell 时序沿用 dockHide（1s 藏 / 300ms 唤 / 1.5s 重藏），隐藏态缩成
 //     A 式 mini-pill（窄条 + 各家等级点，顶部原位收缩）；唤出 = 点击 pill。
-//   · 位置：顶栏内左右拖动（岛身，落盘 `ui:islandX` 0..1，与 `ui:*` 偏好同机制）；
+//   · 位置：顶栏内左右拖动（岛身，落盘 `ui:islandX` 0..1 中心比例，与 `ui:*` 偏好同机制）；
 //     岛边缘 rim / 命中层空白拖 = 主进程窗口拖拽（R7 拖拽分区，CLICK_SLOP 内算点击）；
 //     容器深黑独立文件不跟换皮，嵌套环色跟皮肤水色锚点（`.app` 计算样式 +
 //     data-skin 监听，与 PetBall 同路；等级点保持语义色）。
@@ -40,9 +40,6 @@ import {
 const ISLAND_X_KEY = 'ui:islandX'
 /** 圆环统一尺寸（PRD：收起嵌套环与展开主环都是 40px） */
 const RING_SIZE = 40
-/** 顶栏内拖动范围（两侧留边，不贴死窗口边） */
-const POS_MIN = 0.08
-const POS_MAX = 0.92
 /** 点击与拖动的位移分界（prototype：移动 <6px 算点击展开/收起） */
 const CLICK_SLOP = 6
 /**
@@ -173,8 +170,14 @@ export function IslandView({
   })
   /** 展开态（内存态，不落盘；隐藏时强制收起） */
   const [open, setOpen] = useState(false)
-  /** 顶栏内横向位置（0..1；落盘 ui:islandX，缺省 0.5 居中） */
+  /** 顶栏内横向位置（0..1 中心比例；落盘 ui:islandX，缺省 0.5 居中） */
   const [posX, setPosX] = useState(0.5)
+  /**
+   * 岛实测宽（bodyRef.clientWidth；10-10-island-clip-fix R1：钳制看岛宽，不只看比例。
+   * ordered.length / 展开 / 隐藏变化时重测 —— 岛宽随供应商数量变，旧值会把新宽度的岛
+   * 钳错地方。0 = 还没测到，钳制退化为 legacy 比例界。）
+   */
+  const [islandW, setIslandW] = useState(0)
   /** 展开态重置倒计时的显示时钟（15s 粒度，与 CardView 同口径） */
   const [now, setNow] = useState(Date.now())
 
@@ -192,7 +195,8 @@ export function IslandView({
       .sort((a, b) => (rank.get(a.id) ?? BIG) - (rank.get(b.id) ?? BIG))
   }, [snapshots, instanceInfo])
 
-  // 位置落盘读回（extras:get 对缺失键给 ''，判 !v 不判 == null）
+  // 位置落盘读回（extras:get 对缺失键给 ''，判 !v 不判 == null；
+  // 读回值经同一宽度钳制 —— 存量 0.08..0.92 在宽岛下仍可能越界，就地收敛一次）
   useEffect(() => {
     let cancelled = false
     void window.api
@@ -200,13 +204,23 @@ export function IslandView({
       .then((e) => {
         if (cancelled) return
         const n = Number.parseFloat(e[ISLAND_X_KEY] ?? '')
-        if (Number.isFinite(n)) setPosX(Math.min(POS_MAX, Math.max(POS_MIN, n)))
+        if (Number.isFinite(n)) setPosX(clampIslandPos(n, bodyRef.current?.clientWidth || 0))
       })
       .catch(() => {})
     return () => {
       cancelled = true
     }
   }, [])
+
+  // 宽度感知钳制 R1：岛宽随家数变，ordered.length / 展开 / 隐藏变化时重测；
+  // 越界就地收敛（函数式 set，界内原值返回，React 自行 bail-out 不死循环）。
+  // 展开态跳过 —— 此时 body 是 430px 居中卡，拿它的宽去钳 posX 会在收起时跳岛。
+  useEffect(() => {
+    if (open) return
+    const w = bodyRef.current?.clientWidth || 0
+    setIslandW((prev) => (prev === w ? prev : w))
+    setPosX((prev) => clampIslandPos(prev, w))
+  }, [ordered.length, open, dockHidden])
 
   // 展开态才走倒计时（收起态无倒计时文案，不挂空转定时器）
   useEffect(() => {
@@ -316,7 +330,14 @@ export function IslandView({
   }, [stopWinDrag])
 
   const persistPos = (x: number): void => {
-    void window.api.setExtras({ [ISLAND_X_KEY]: String(Math.round(x * 1000) / 1000) })
+    // 落盘经同一宽度钳制（R2）：state 已是钳制值，这里是幂等的第二道门 ——
+    // 直接调 persistPos 的路径（以后加的）不会落盘一个越界值
+    const cx = clampIslandPos(
+      x,
+      bodyRef.current?.clientWidth || islandW,
+      hostRef.current?.clientWidth || ISLAND_VIEW.width
+    )
+    void window.api.setExtras({ [ISLAND_X_KEY]: String(Math.round(cx * 1000) / 1000) })
   }
 
   const onPointerDown = (e: React.PointerEvent): void => {
@@ -352,9 +373,11 @@ export function IslandView({
     // 分区：岛身拖 = 顶栏内调 posX（仅收起态；展开态居中固定，拖即移窗）；
     // 边缘/空白拖 = 主进程窗口拖拽。CLICK_SLOP 内仍算点击（见 finishPress）。
     if (press.current.zone === 'body' && !open) {
-      // 顶栏内左右拖动：位移按窗口宽折成 0..1（Y 恒定吸顶，不存）
+      // 顶栏内左右拖动：位移按窗口宽折成 0..1（Y 恒定吸顶，不存），落点经同一宽度钳制
+      // （R2：dx 分母仍是窗口宽；岛宽读实时 clientWidth，state 兜底；CLICK_SLOP/分区不动）
       const hostW = hostRef.current?.clientWidth || ISLAND_VIEW.width
-      setPosX(Math.min(POS_MAX, Math.max(POS_MIN, press.current.basePos + dx / hostW)))
+      const w = bodyRef.current?.clientWidth || islandW
+      setPosX(clampIslandPos(press.current.basePos + dx / hostW, w, hostW))
     } else {
       startWinDrag(e.clientX, e.clientY)
     }

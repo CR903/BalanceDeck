@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Island harness (throwaway)</title>
+<link rel="stylesheet" href="/src/renderer/src/skins.css">
+<link rel="stylesheet" href="/src/renderer/src/island.css">
+<style>
+  html, body { margin: 0; background: #101014; }
+  .harness-bar { display: flex; gap: 8px; padding: 12px; align-items: flex-start; }
+  .harness-bar button { background: #2c2c2e; color: #fff; border: 1px solid #444; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .harness-window { width: 560px; height: 480px; position: relative; margin: 0 auto; outline: 1px dashed #444; border-radius: 8px; overflow: hidden; }
+  .harness-window .isl-root { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="./bundle.js"></script>
+</body>
+</html>
