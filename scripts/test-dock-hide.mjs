@@ -1,16 +1,16 @@
 // shared/dock-hide.ts + main/dockHide.ts 行为测试（纯函数 + 注入依赖，node 直接跑）
 // 用法：node scripts/test-dock-hide.mjs
 //
-// 悬浮球贴边自动隐藏：边沿判定/隐藏偏移/痕迹命中区/角落平局 + 主进程状态机的
+// 悬浮球贴边自动隐藏：边沿判定/隐藏偏移/角落平局 + 主进程状态机的
 // 计时与取消路径（隐藏/唤出/重藏/路过不唤出/拖拽取消/开关关闭）。
+// 隐藏态命中区是渲染层 reportHit 上报的实测矩形 —— 主进程零覆盖
+// （10-10-island-mini-tune R3 新契约，见用例 6）。
 
 import { loadTs } from './lib/load-ts.mjs'
 
 const shared = await loadTs('src/shared/dock-hide.ts')
 const {
   EDGE_THRESHOLD,
-  MINI_PILL_W,
-  MINI_PILL_H,
   HIDE_DWELL_MS,
   REVEAL_DWELL_MS,
   REHIDE_MS,
@@ -18,7 +18,6 @@ const {
   REVEAL_ANIM_MS,
   detectEdge,
   hiddenBounds,
-  peekHitbox,
   easeOutCubic,
   animBounds
 } = shared
@@ -54,10 +53,13 @@ async function waitPhase(d, want, maxMs = 5000) {
 const WA = { x: 0, y: 25, width: 1440, height: 875 } // 主屏工作区（菜单栏 25px）
 const B = (x, y, w = 56, h = 56) => ({ x, y, width: w, height: h })
 
-console.log('用例 1：常量口径（PRD R1–R5 + 10-10-dynamic-island R6 mini-pill）')
+console.log('用例 1：常量口径（PRD R1–R5 + 10-10-island-mini-tune R3 零覆盖）')
 eq(EDGE_THRESHOLD, 8, '贴边阈值 8px')
-eq(MINI_PILL_W, 132, 'mini-pill 宽 132px（窄条 + 各家等级点）')
-eq(MINI_PILL_H, 26, 'mini-pill 高 26px（细条）')
+// R3：MINI_PILL_* 已删除 —— 隐藏态信任渲染层实测矩形，不再覆盖居中 pill；
+// pill 高 22 只活在 island.css（D6b 钉），本模块不再备第二个数。
+eq(shared.MINI_PILL_W, undefined, 'MINI_PILL_W 已删除（pill 宽 fit-content，随家数变）')
+eq(shared.MINI_PILL_H, undefined, 'MINI_PILL_H 已删除（pill 高 22 只活在 island.css）')
+eq(shared.peekHitbox, undefined, 'peekHitbox 已删除（morph 期全窗可点即 fail-open，无覆盖可设）')
 eq(HIDE_DWELL_MS, 1000, '隐藏停留 1000ms')
 eq(REVEAL_DWELL_MS, 300, '唤出停留 300ms')
 eq(REHIDE_MS, 1500, '离开重藏 1500ms')
@@ -95,12 +97,23 @@ eq(hiddenBounds(B(1384, 400), 'right'), { x: 1384, y: 400, width: 56, height: 56
 eq(hiddenBounds(B(700, 25), 'top'), { x: 700, y: 25, width: 56, height: 56 }, '上：原地')
 eq(hiddenBounds(B(700, 844), 'bottom'), { x: 700, y: 844, width: 56, height: 56 }, '下：原地')
 
-console.log('用例 6：mini-pill 命中区（窗口局部坐标，顶部居中；岛只吸顶，四边同形）')
-eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '左：窄窗夹紧为 56×26 顶条')
-eq(peekHitbox('right', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '右：同上（不再镜像，水柱已退役）')
-eq(peekHitbox('top', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '上：顶条')
-eq(peekHitbox('bottom', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '下：同样收成顶部 pill')
-eq(peekHitbox('top', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '岛窗：132×26 顶部居中')
+console.log('用例 6：隐藏稳态信任渲染层（10-10-island-mini-tune R3：主进程零覆盖）')
+// 旧契约（居中 132×26 覆盖）三处全对不上渲染：跟 posX 走（非居中）、宽 fit-content
+// （非 132）、岛 top:0（非 y=0）→ 点 pill 必穿透。新契约：落定只通知 + 持久化，
+// 一次 setPeekOverride 都不调 —— 命中判定走渲染层 reportHit 实测矩形。
+{
+  const w = fakeWorld({ bounds: B(700, 25, 560, 480) })
+  const d = createDockHide(w.api)
+  d.onDragStop()
+  eq(d.edge(), 'top', '岛窗上沿贴边（y=wa.y 时 d=0，锁顶与 dwell 相容）')
+  await sleep(90)
+  eq(d.phase(), 'hidden', '计时到 → hidden')
+  eq(w.calls.peek.length, 0, '隐藏落定零 setPeekOverride（信任渲染层实测矩形）')
+  eq(w.calls.hiddenChange, [true], '通知渲染层 hidden=true（渲染层据此切 pill 形态）')
+  eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'top', hidden: true }, '持久化 {edge, hidden}')
+  eq(w.boundsOf().x, 700, '窗口原地不动（R4-5 无滑出）')
+  eq(w.calls.setPosition.length, 0, '隐藏全程零 setPosition（无位移可崩）')
+}
 
 console.log('用例 7：动画曲线')
 eq(easeOutCubic(0), 0, 't=0 → 0')
@@ -133,7 +146,7 @@ function fakeWorld(opts = {}) {
   return { calls, api, boundsOf: () => ({ ...bounds }) }
 }
 
-console.log('用例 8：贴边 dragStop → 隐藏（水柱覆盖 + 持久化，窗口不动）')
+console.log('用例 8：贴边 dragStop → 隐藏（零覆盖 + 持久化，窗口不动）')
 {
   const w = fakeWorld()
   const d = createDockHide(w.api)
@@ -143,8 +156,7 @@ console.log('用例 8：贴边 dragStop → 隐藏（水柱覆盖 + 持久化，
   eq(d.phase(), 'hidden', '计时到 → hidden')
   eq(d.hidden(), true, 'hidden() 为真')
   eq(d.edge(), 'left', '记住贴的是左邊')
-  const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 0, y: 0, width: 56, height: 26 }, '命中区覆盖为顶部 mini-pill（窄窗夹紧）')
+  eq(w.calls.peek.length, 0, '隐藏落定零覆盖（R3：信任渲染层实测矩形）')
   eq(w.calls.hiddenChange, [true], '通知渲染层 hidden=true')
   eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'left', hidden: true }, '持久化 {edge, hidden}')
   eq(w.boundsOf().x, 0, '窗口原地不动（R4-5 无滑出）')
@@ -380,13 +392,12 @@ console.log('用例 23：上沿同样隐藏（R4-5：无位移 → 无菜单栏�
   eq(d.edge(), 'top', '记住上沿')
   eq(await waitPhase(d, 'hidden'), 'hidden', '计时到 → hidden')
   eq(w.boundsOf().y, 25, '窗口原地（无处可夹）')
-  const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 0, y: 0, width: 56, height: 26 }, '命中区覆盖为顶部 mini-pill')
+  eq(w.calls.peek.length, 0, '上沿隐藏同样零覆盖（R3）')
   eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'top', hidden: true }, '持久化 hidden=true')
 }
 
-console.log('用例 24：右沿隐藏同样收成顶部 pill（水柱镜像已退役，四边同形）')
-// 主进程只管命中矩形，形状由 peekHitbox 的 pill 分支决定 —— 四边一致。
+console.log('用例 24：右沿隐藏同样信任渲染层（R3：零覆盖，四边一致）')
+// 隐藏态命中区不再由主进程决定 —— 四边都是"通知 + 持久化"，无覆盖可设。
 {
   const w = fakeWorld({ bounds: B(1384, 400) })
   const d = createDockHide(w.api)
@@ -394,8 +405,7 @@ console.log('用例 24：右沿隐藏同样收成顶部 pill（水柱镜像已�
   eq(d.edge(), 'right', '记住右沿')
   await sleep(90)
   eq(d.phase(), 'hidden', '右沿照常隐藏')
-  const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 0, y: 0, width: 56, height: 26 }, '命中区覆盖为顶部 mini-pill（不再是右侧柱）')
+  eq(w.calls.peek.length, 0, '右沿隐藏同样零覆盖（R3）')
   eq(w.boundsOf().x, 1384, '窗口原地')
 }
 
@@ -437,22 +447,18 @@ console.log('用例 26：morph 期间窗口纹丝不动（R4-5：morph 是唯一
 }
 
 console.log('用例 27：非法几何永不产生 undefined（744 崩溃回归 · 纯函数层）')
-// 崩溃前 hiddenBounds/peekHitbox 对非法边直接回 undefined（switch 无 default，
+// 崩溃前 hiddenBounds 对非法边直接回 undefined（switch 无 default，
 // 类型却写 Rect）—— 调用方读 to.x 先抛 TypeError，抛在无 try/catch 的定时器里
 // 就是主进程对话框。现在非法一律回 null，调用方走"不动 + idle"。
+// （peekHitbox 已随 R3 删除：覆盖本身不存在了，无需再守它的非法输入。）
 {
   eq(hiddenBounds(B(0, 400), 'up'), null, '非法边 → null（不是 undefined）')
   eq(hiddenBounds(B(0, 400), null), null, 'null 边 → null')
   eq(hiddenBounds(B(0, 400), undefined), null, 'undefined 边 → null')
   eq(hiddenBounds({ x: NaN, y: 400, width: 56, height: 56 }, 'left'), null, 'NaN docked → null')
   eq(hiddenBounds(undefined, 'left'), null, 'undefined docked → null')
-  eq(peekHitbox('up', { width: 56, height: 56 }), null, '非法边 → null（不是 undefined）')
-  eq(peekHitbox('left', { width: NaN, height: 56 }), null, 'NaN 尺寸 → null')
-  eq(peekHitbox('left', null), null, 'null 尺寸 → null')
-  eq(peekHitbox('left', { width: 0, height: 56 }), null, '零宽尺寸 → null')
   // 有效输入不受影响（正常路别被守卫改坏）
   eq(hiddenBounds(B(0, 400), 'left'), { x: 0, y: 400, width: 56, height: 56 }, '有效边原地返回')
-  eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '有效边仍精确（顶部 pill，窄窗夹紧）')
   // fuzz：任何边 × 任何 docked → null 或有限矩形，永不出现 undefined
   const edges = ['left', 'right', 'top', 'bottom', 'up', '', null, undefined, 0]
   const dockeds = [B(0, 400), B(NaN, 400), undefined, null]
@@ -462,12 +468,9 @@ console.log('用例 27：非法几何永不产生 undefined（744 崩溃回归 �
       const r = hiddenBounds(dk, ed)
       if (r === undefined) bad++
       else if (r !== null && (!Number.isFinite(r.x) || !Number.isFinite(r.y))) bad++
-      const q = peekHitbox(ed, { width: 56, height: 56 })
-      if (q === undefined) bad++
-      else if (q !== null && (!Number.isFinite(q.x) || !Number.isFinite(q.y))) bad++
     }
   }
-  eq(bad, 0, `fuzz ${edges.length * dockeds.length * 2} 组：无 undefined、无非有限坐标`)
+  eq(bad, 0, `fuzz ${edges.length * dockeds.length} 组：无 undefined、无非有限坐标`)
 }
 
 console.log('用例 28：隐藏全程零位移（744 崩溃回归 · R4-5：无步进无处抛）')

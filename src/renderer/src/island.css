@@ -23,7 +23,9 @@
 }
 .isl-body {
   position: absolute;
-  top: 10px;
+  /* R2 真贴边（10-10-island-mini-tune）：岛与屏顶零距离，顶部辉光被窗沿裁掉一点，接受。
+   * hitbox 上报的是实测矩形，不受这个偏移影响。 */
+  top: 0;
   transform: translateX(-50%);
   z-index: 2;
 }
@@ -202,14 +204,15 @@
   color: #98989f;
   white-space: nowrap;
 }
-/* A 式 mini-pill：窄条 + 各家等级点（隐藏态，顶部原位收缩） */
+/* A 式 mini-pill：窄条 + 各家等级点（隐藏态，顶部原位收缩）。
+ * R1 瘦身（10-10-island-mini-tune）：点距 5→10，条高 26→22，padding 保持 0 10。 */
 .isl-pill {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 10px;
   width: fit-content;
   max-width: 200px;
-  height: 26px;
+  height: 22px;
   padding: 0 10px;
   border-radius: 999px;
   background: linear-gradient(180deg, #2b2b31 0%, #000 100%);

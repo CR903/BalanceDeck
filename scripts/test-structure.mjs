@@ -663,20 +663,31 @@ ok(
 )
 
 // D6b · 灵动岛（10-10-dynamic-island）：岛窗口 560×480 远大于岛本体，窗口级裁方
-// 纪律不适用岛 —— 但岛自己的两条要钉：① .isl-body 规则在（删了岛样式即红）；
-// ② pill 窄条高度与 shared/dock-hide.MINI_PILL_H 同源（两处各写一个 26 必然漂移，
-// 与 I2 同一条纪律；DOM pill 宽是 fit-content，随家数变，只钉高）。
+// 纪律不适用岛 —— 但岛自己的三条要钉：① .isl-body 规则在（删了岛样式即红）；
+// ② pill 高 22（R1 瘦身，口径只活在 island.css —— R3 起 shared/dock-hide 不再备
+// 第二个数，D6b2/D6b3 钉住删除）；③ 岛顶距 0（R2 真贴边）。
 {
   const islandCss = read('src/renderer/src/island.css').replace(/\/\*[\s\S]*?\*\//g, '')
   ok(islandCss.length > 0, 'D6b 前置：island.css 读得到（下面的断言不能空洞通过）')
   ok(/\.isl-body\s*\{/.test(islandCss), 'D6b 岛主体规则在（删了岛样式即红）')
-  // stripTsComments 在文件后部定义，这里直接读原文 —— 注释里没有 `MINI_PILL_H = 数字`
-  // 形状的赋值语句，正则不会误命中注释。
-  const miniH = /MINI_PILL_H\s*=\s*(\d+)/.exec(read('src/shared/dock-hide.ts'))?.[1]
   const pillH = /\.isl-pill\s*\{[^}]*height:\s*(\d+)px/.exec(islandCss)?.[1]
+  ok(pillH === '22', `D6b pill 高 22px（R1 瘦身；实际 ${pillH || '?'}px）`)
+  const pillGap = /\.isl-pill\s*\{[^}]*gap:\s*(\d+)px/.exec(islandCss)?.[1]
+  ok(pillGap === '10', `D6b2 pill 点距 10px（R1 拉开；实际 ${pillGap || '?'}px）`)
+  const bodyTop = /\.isl-body\s*\{[^}]*top:\s*(\d+)/.exec(islandCss)?.[1]
+  ok(bodyTop === '0', `D6b3 岛顶距 0（R2 真贴边；实际 ${bodyTop == null ? '?' : bodyTop}）`)
+  // stripTsComments 在文件后部定义（TDZ），这里内联剥注释 —— 注释里出现
+  // `MINI_PILL_H` 字样时裸 grep 会假红（quality-guidelines §D 的"注释里的词"坑）。
+  const stripTsLocal = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const dockShared = stripTsLocal(read('src/shared/dock-hide.ts'))
+  ok(dockShared.length > 0, 'D6b4 前置：dock-hide.ts 剥注释后非空（下面的负向断言不能空洞通过）')
   ok(
-    miniH != null && pillH != null && miniH === pillH,
-    `D6b pill 高 ${pillH || '?'}px 与 shared/dock-hide.MINI_PILL_H=${miniH || '?'} 同源（改一边即红）`
+    !/MINI_PILL_W|MINI_PILL_H/.test(dockShared),
+    'D6b5 MINI_PILL_* 已删除（R3：隐藏态信任渲染层实测矩形，pill 几何只活在 island.css）'
+  )
+  ok(
+    !/peekHitbox/.test(dockShared),
+    'D6b6 peekHitbox 已删除（R3：morph 期全窗可点即 fail-open，无覆盖可设）'
   )
 }
 
@@ -1053,7 +1064,8 @@ eq2(
 //
 // 几何唯一来源是 shared/dock-hide.ts（主进程状态机与单测共用）；overlay.ts 只做
 // 转接（三个调用点：dragStop 尾 / dragStart 头 / 显示器重定位处）。
-// 隐藏态命中区覆盖为顶部 mini-pill —— 渲染层常规上报在隐藏态下不被采信（跨层契约）。
+// 隐藏态命中区是渲染层 reportHit 上报的实测矩形 —— 主进程零覆盖（R3 新契约：
+// 居中 pill 覆盖与渲染三处对不上，点 pill 必穿透；morph 期本来就不覆盖，全窗可点）。
 console.log('\nI. 贴边自动隐藏的单一几何来源')
 
 const DOCK_SHARED = 'src/shared/dock-hide.ts'
@@ -2466,8 +2478,8 @@ for (const feature of ['caps']) {
 
 // K4 · 水柱几何已随水球退役（R4）：CSS 四边规则 / 柱内液 / 柱顶波全无残留 ——
 // 逐条判，回来一条即红（css 非空前置防空洞通过）。
-// 命中区几何的唯一口径是 shared/dock-hide.peekHitbox（mini-pill，test-dock-hide 钉），
-// 不再有 CSS 与纯函数各写一套数的脱钩口（旧 K4 守的正是那个脱钩）。
+// 隐藏态命中区是渲染层实测矩形（R3 新契约），不再有"主进程覆盖几何"这一口径 ——
+// 旧 K4 守的"CSS 与纯函数各写一套数脱钩"已无载体（test-dock-hide 钉新契约）。
 for (const sel of [
   '.petball.no3d .fluid-pill',
   ".petball.no3d .petball-fallback[data-edge='left'] .fluid-pill",
@@ -2564,9 +2576,9 @@ ok(/@keyframes islShake/.test(isl) && /\.isl-logo\.danger\s*\{[^}]*animation:\s*
 ok(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.isl-logo\.live[\s\S]*?animation:\s*none/.test(isl),
   'L5d reduced-motion 下 logo 动画全静止（删了即动效敏感用户被闪）')
 
-// L6 · mini-pill 收窄不改高：padding 0 14→0 10，gap 7→5，高 26 由 D6b 钉。
-ok(pillDecls.padding === '0 10px' && pillDecls.gap === '5px',
-  `L6 pill 收窄 padding 0 10 / gap 5（实际 ${pillDecls.padding || '?'} / ${pillDecls.gap || '?'}）`)
+// L6 · mini-pill 瘦身（10-10-island-mini-tune R1）：padding 保持 0 10，gap 5→10，高 22 由 D6b 钉。
+ok(pillDecls.padding === '0 10px' && pillDecls.gap === '10px',
+  `L6 pill 瘦身 padding 0 10 / gap 10（实际 ${pillDecls.padding || '?'} / ${pillDecls.gap || '?'}）`)
 
 // L7 · IslandView：--glow 下发 + 环尺寸拆分 + 展开嵌套分支（只判形状，不判文案）。
 const islTsx = stripTsComments(read('src/renderer/src/IslandView.tsx'))

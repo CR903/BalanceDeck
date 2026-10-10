@@ -3,7 +3,9 @@
 //
 // 本模块是纯函数（不依赖 electron / DOM / React），因此主进程的状态机
 // （src/main/dockHide.ts）与单元测试（scripts/test-dock-hide.mjs）共用同一实现。
-// 渲染层不算几何 —— 隐藏态的命中区由主进程按这里的 peekHitbox 覆盖。
+// 隐藏态的命中区是渲染层 reportHit 上报的 pill 实测矩形 —— 主进程不再覆盖
+// （10-10-island-mini-tune R3：渲染的 pill 跟 posX 走、宽 fit-content，
+//   居中 132×26 覆盖三处全对不上 → 点 pill 必穿透）。
 //
 // 口径（与 overlay.ts 同源）：
 //   · 贴边基准是显示器的 workArea（非全屏 bounds），与 snapBackToWorkArea 一致；
@@ -11,19 +13,12 @@
 //   · 坐标仍存贴边全可见位置，state.json 只多记 {edge, hidden}。
 //
 // 10-10-dynamic-island：可见态是顶部灵动岛（全供应商），隐藏态是 A 式 mini-pill
-// （窄条 + 各家等级点，顶部原位收缩，不贴边）。旧 12px 温度计水柱（COLUMN_W）
-// 随水球退役，命中区即 pill 体。
+// （窄条 + 各家等级点，顶部原位收缩，不贴边；几何只活在 island.css，
+//   本模块不再备第二个数 —— 10-10-island-mini-tune R3）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** 贴边判定阈值：窗口边与工作区边距离 ≤ 8px 算贴边（PRD R1/R4） */
 export const EDGE_THRESHOLD = 8
-/**
- * 隐藏态 mini-pill 尺寸（10-10-dynamic-island R6：A 式窄条 + 各家等级点）。
- * 132 宽放得下 8 家等级点（每点 ~10px + 间距），26 高是细条（不抢视觉）；
- * 窗口比它窄时按窗口夹紧（fail-open 的一部分，见 peekHitbox）。
- */
-export const MINI_PILL_W = 132
-export const MINI_PILL_H = 26
 /** 贴边停留多久才隐藏（PRD R1，防误触） */
 export const HIDE_DWELL_MS = 1000
 /** 痕迹区停留多久才滑出（PRD R3，防路过抖动） */
@@ -104,28 +99,6 @@ export function hiddenBounds(docked: Rect, edge: DockEdge): Rect | null {
   if (!docked || !finiteRect(docked)) return null
   if (edge !== 'left' && edge !== 'right' && edge !== 'top' && edge !== 'bottom') return null
   return { ...docked }
-}
-
-/**
- * 隐藏态的命中区覆盖（窗口局部坐标，DIP）= 顶部 mini-pill 矩形（与渲染层
- * .isl-pill 同形，居中吸顶；窗口比 pill 窄时按窗口夹紧）。
- * 主进程以它为准，不采信渲染层常规上报（跨层契约）。
- *
- * 岛只吸顶：四边统一收成顶部 pill（edge 仍校验，非法边回 null）。
- * 窗口 560×480 下 pill 为 132×26 居中；旧 56×56 窗口下夹紧为 56×26 顶条
- * （过渡期兼容，窗口尺寸切到 ISLAND_VIEW 后自然消失）。
- *
- * 非法输入（非法边 / 非有限非正尺寸）回 null —— 调用方跳过覆盖、
- * 保持整窗可点（fail-open：绝不造出"看得见点不着"的半态）。
- */
-export function peekHitbox(edge: DockEdge, size: { width: number; height: number }): Rect | null {
-  const w = size?.width
-  const h = size?.height
-  if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return null
-  if (edge !== 'left' && edge !== 'right' && edge !== 'top' && edge !== 'bottom') return null
-  const pw = Math.min(MINI_PILL_W, w)
-  const ph = Math.min(MINI_PILL_H, h)
-  return { x: Math.round((w - pw) / 2), y: 0, width: pw, height: ph }
 }
 
 /** easeOutCubic：隐藏/唤出动画共用（PRD R5） */

@@ -22,7 +22,6 @@ import {
   REVEAL_DWELL_MS,
   detectEdge,
   hiddenBounds,
-  peekHitbox,
   type DockEdge,
   type Rect,
   type WorkArea
@@ -226,15 +225,12 @@ export function createDockHide(deps: DockHideDeps): {
     enterHidden()
   }
 
-  /** 进入隐藏态：覆盖命中区为顶部 mini-pill，通知渲染层，持久化 */
+  /** 进入隐藏态：通知渲染层（由它切 pill 形态），持久化。
+   * R3（10-10-island-mini-tune）：主进程不再覆盖命中区 —— 渲染的 pill 跟 posX 走
+   * （非居中）、宽 fit-content（非 132），居中覆盖必对不上 → 点 pill 必穿透。
+   * 隐藏稳态信任渲染层 reportHit 上报的实测矩形；morph 期本来就不覆盖
+   * （peekOverride 恒为 null，整窗可点 = fail-open，语义不变）。 */
   function enterHidden(): void {
-    const b = safeBounds()
-    if (edge && b) {
-      // peekHitbox 回 null（非法边/尺寸）→ 跳过覆盖、保持整窗可点
-      // （fail-open：绝不造出"看得见点不着"的半态）
-      const box = peekHitbox(edge, { width: b.width, height: b.height })
-      if (box) deps.setPeekOverride(box)
-    }
     deps.onHiddenChange(true)
     persist()
     // morph 期间光标已到柱上（pendingOver）：直接起唤出停留，不让用户再wiggle一次鼠标
@@ -468,11 +464,7 @@ export function createDockHide(deps: DockHideDeps): {
           Math.abs(cur.y - to.y) <= 1
         if (unmoved && to) {
           if (Number.isFinite(to.x) && Number.isFinite(to.y)) deps.setPosition(Math.round(to.x), Math.round(to.y))
-          const b = safeBounds()
-          if (b) {
-            const box = peekHitbox(edge, { width: b.width, height: b.height })
-            if (box) deps.setPeekOverride(box)
-          }
+          // R3：不再重算覆盖 —— 隐藏态信任渲染层实测矩形（主进程零覆盖）
           persist()
           return
         }

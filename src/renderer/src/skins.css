@@ -2466,7 +2466,7 @@ textarea {
  *   ① .fluid-disc（渐变球盘）② .fluid-waves（全屏水 + 三层错速波 + 液面高光，仅套餐类）
  *   ③ .fluid-bridge（液桥）。水柱（fluid-pill / 柱内液 / 柱顶波 / 液光流 / 刻度 /
  *   悬停 peek）已随 10-10-dynamic-island R4 退役，隐藏态命中区即 mini-pill
- *   （shared/dock-hide.ts peekHitbox，与渲染层 .isl-pill 同形）。
+ *   （渲染层实测矩形上报，主进程 morph 期外不再覆盖）。
  * 环/数字/标记在 goo 容器之外，读数永远 crisp。
  * 时序（shared/fluid.ts 唯一口径）：吸入 150 拉伸 → 300 合并 → 80 定形（关键帧 % 即 28/85/100），
  * 汇聚反向 400ms。位移走主进程 setPosition 步进，morph 与位移串行不重叠。

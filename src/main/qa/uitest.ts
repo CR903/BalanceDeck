@@ -12,8 +12,8 @@ import { join } from 'path'
 import { consumeDragFired } from '../ipc'
 import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
 import { ISLAND_VIEW } from '../../shared/pet-view'
-// 隐藏态几何口径与主进程同一常数（mini-pill 尺寸改时这里跟着变，不各自硬编码）
-import { MINI_PILL_W, MINI_PILL_H } from '../../shared/dock-hide'
+// R3（10-10-island-mini-tune）：隐藏态命中区即渲染层实测矩形，主进程零覆盖 ——
+// 不再经 shared/dock-hide 取 pill 常数（MINI_PILL_* 已删除，几何只活在 island.css）。
 import { refreshNow } from '../scheduler'
 import { defaultWaterAnchors, parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
@@ -1971,7 +1971,7 @@ export async function runUiTest(
   // ── 隐藏态 mini-pill（AC5）：窄条 + 各家等级点，原位吸顶 ──────────────────
   //
   // 仍在 hidden 落定态内：pill 在 + 等级点数 = 岛上家数 + 命中区即 pill 体
-  // （与 shared/dock-hide.peekHitbox 同形，由主进程覆盖）。
+  // （渲染层 reportHit 实测上报，主进程不再覆盖 —— R3 新契约）。
   // 痕迹点击唤出走既有 dockReveal 那条不断（命中区即 pill，见 dock-hide.ts）。
   const pillDom = String(
     await exec(`(()=>{
@@ -1994,9 +1994,9 @@ export async function runUiTest(
   } else {
     try {
       const c = JSON.parse(pillDom) as { mode: string; pillW: number; pillH: number; dots: number; lvls: string[] }
-      // 前置：pill 窄条（高 26 = MINI_PILL_H；宽 ≤ 200，A 式窄条）
+      // 前置：pill 窄条（高 22，R1 瘦身，口径在 island.css；宽 ≤ 200，A 式窄条）
       if (c.mode !== 'hidden') pillWhy = `fail:mode=${c.mode}`
-      else if (c.pillH !== MINI_PILL_H) pillWhy = `fail:pillH=${c.pillH}（应为 ${MINI_PILL_H}）`
+      else if (c.pillH !== 22) pillWhy = `fail:pillH=${c.pillH}（应为 22）`
       else if (!(c.pillW > 0 && c.pillW <= 200)) pillWhy = `fail:pillW=${c.pillW}（A 式窄条）`
       else if (c.dots < 1) pillWhy = `fail:dots=${c.dots}（各家等级点至少 1 个）`
       else if (!c.lvls.every((l) => /lvl-(ok|warn|danger|muted)/.test(l))) {
@@ -2007,13 +2007,14 @@ export async function runUiTest(
     }
   }
   r.islandPill = pillWhy || 'ok'
-  // 主进程覆盖的命中区即 peekHitbox（宽 = MINI_PILL_W；DOM pill 宽是 fit-content，随家数变，只钉高）：
+  // R3 新契约：隐藏稳态信任渲染层实测矩形（petHitboxDebug 即 reportHit 上报的 pill 区，
+  // 主进程零覆盖）。DOM pill 宽是 fit-content，随家数变，只断宽 >0 与高 22（R1 瘦身）：
   // 命中区与可见 pill 脱钩 = 看得见点不着，见 dock-hide 跨层契约。
   const hbHidden = petHitboxDebug()
   r.islandPillHit =
-    hbHidden && hbHidden.width === MINI_PILL_W && hbHidden.height === MINI_PILL_H
+    hbHidden && hbHidden.width > 0 && hbHidden.height === 22
       ? 'ok'
-      : `fail:hitbox=${JSON.stringify(hbHidden)}（应为 ${MINI_PILL_W}×${MINI_PILL_H} 的顶部 pill 区）`
+      : `fail:hitbox=${JSON.stringify(hbHidden)}（应为渲染层实测 pill 区：宽>0，高 22）`
 
   // 路过不停留 → 不唤出（两次喂送之间无等待：50ms 的 fast 唤出计时也来不及触发）
   await exec('window.api.debugDockCursor(true)')

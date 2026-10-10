@@ -1,10 +1,10 @@
 // shared/fluid.ts 行为测试（纯函数，node 直接跑）
 // 用法：node scripts/test-fluid.mjs
 //
-// 隐藏相位与液位：时序常量/液位映射/mini-pill 命中区/相位映射（吸入/汇聚两段
+// 隐藏相位与液位：时序常量/液位映射/相位映射（吸入/汇聚两段
 // morph 与 dock:fluid 通道的唯一口径。渲染层与主进程状态机共用同一实现，
-// 不各自硬编码；隐藏态几何归 shared/dock-hide.ts 的 mini-pill，不归这里 ——
-// 旧 waterColumn（屏边温度计水柱）已随水球退役，用例 3/4 改钉 pill）。
+// 不各自硬编码；隐藏态命中区是渲染层实测矩形，主进程零覆盖 ——
+// 旧 peekHitbox/mini-pill 口径已随 10-10-island-mini-tune R3 删除（见用例 3）。
 
 import { loadTs } from './lib/load-ts.mjs'
 import { readFileSync } from 'node:fs'
@@ -15,7 +15,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const fluid = await loadTs('src/shared/fluid.ts')
 const dockHide = await loadTs('src/shared/dock-hide.ts')
-const { peekHitbox } = dockHide
 const {
   ABSORB_STRETCH_MS,
   ABSORB_MERGE_MS,
@@ -69,23 +68,14 @@ eq(level(undefined), 0, '缺失 → 0')
 eq(level(33.35), 0.334, '33.35 → 0.334（一位小数粒度：33.35*10=333.5→334）')
 ok(level(13.7) === level(13.7), '同样输入永远同样输出（CSS 高度不抖）')
 
-console.log('用例 3：隐藏命中区即 mini-pill（10-10-dynamic-island R6：peekHitbox 直出顶部 pill）')
-eq(dockHide.MINI_PILL_W, 132, 'pill 宽 132px（窄条 + 各家等级点放得下）')
-eq(dockHide.MINI_PILL_H, 26, 'pill 高 26px（细条不抢视觉）')
-eq(peekHitbox('top', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '岛窗 560×480：132×26 顶部居中（(560-132)/2=214）')
-eq(peekHitbox('left', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '岛只吸顶：左沿同样收成顶部 pill')
-eq(peekHitbox('right', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '右沿同样收成顶部 pill')
-eq(peekHitbox('bottom', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '下沿同样收成顶部 pill')
-// 窄窗夹紧（fail-open 的一部分）：窗口比 pill 窄时按窗口收，不凭空摆错位 pill
-eq(peekHitbox('top', { width: 100, height: 480 }), { x: 0, y: 0, width: 100, height: 26 }, '窄窗：宽按窗口夹紧（x=0）')
-eq(peekHitbox('top', { width: 560, height: 20 }), { x: 214, y: 0, width: 132, height: 20 }, '矮窗：高按窗口夹紧')
-eq(peekHitbox('left', { width: NaN, height: 480 }), null, 'NaN 尺寸 → null')
-eq(peekHitbox('left', { width: 0, height: 480 }), null, '零宽 → null')
-eq(peekHitbox('bogus', { width: 560, height: 480 }), null, '非法边 → null')
+console.log('用例 3：隐藏命中区零覆盖（10-10-island-mini-tune R3：信任渲染层实测矩形）')
+// 旧契约（peekHitbox 直出顶部 pill）已删除：渲染的 pill 跟 posX 走、宽 fit-content，
+// 居中覆盖三处全对不上 → 点 pill 必穿透。本用例钉住删除本身（加回来即红）。
+eq(dockHide.peekHitbox, undefined, 'peekHitbox 已删除（morph 期全窗可点即 fail-open）')
+eq(dockHide.MINI_PILL_W, undefined, 'MINI_PILL_W 已删除（pill 宽 fit-content，随家数变）')
+eq(dockHide.MINI_PILL_H, undefined, 'MINI_PILL_H 已删除（pill 高 22 只活在 island.css，D6b 钉）')
 
-console.log('用例 4：pill 几何守卫（坏输入回 null，不摆错位 pill）')
-eq(peekHitbox('left', null), null, 'null 尺寸 → null')
-eq(peekHitbox('up', { width: 560, height: 480 }), null, '非法边 → null（不是 undefined）')
+// 用例 4 已随 peekHitbox 退役（R3）：编号留空，不断号。
 
 console.log('用例 5：相位映射（DockPhase → FluidPhase，唯一口径）')
 eq(fluidForPhase('hiding'), 'absorbing', 'hiding → absorbing（morph 中）')

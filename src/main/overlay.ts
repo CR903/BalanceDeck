@@ -108,7 +108,10 @@ let dockMoveErrorLogged = false
 let dockEnabled = true
 /** prefers-reduced-motion（渲染层 matchMedia 上报）：命中则跳动画、留计时（R5） */
 let reducedMotion = false
-/** 隐藏态命中区覆盖（窗口局部坐标）：非 null 时不采信渲染层常规上报（跨层契约） */
+/** 隐藏态命中区覆盖（窗口局部坐标）：恒为 null —— R3 后主进程零覆盖，
+ * 隐藏稳态信任渲染层 reportHit 上报的实测矩形（跨层契约）。
+ * 字段与 setPeekOverride 管道保留：morph 期本来就不覆盖（整窗可点 = fail-open），
+ * 清除调用（传 null）是无害的复位，I3e 钉住决策点形状不变。 */
 let peekOverride: { x: number; y: number; width: number; height: number } | null = null
 /**
  * 流体相位冻结（--uitest / --shots 用）：冻结期间主进程的 dock:fluid 推送被拦住，
@@ -369,15 +372,14 @@ export function createOverlay(): BrowserWindow {
   const w = (state.collapsed ? collapsedSize : EXPANDED).width
   const h = (state.collapsed ? collapsedSize : EXPANDED).height
   // 历史持久化位置可能已漂出屏幕（旧版开合漂移），启动时夹回可视区。
+  // R2 锁顶（10-10-island-mini-tune）：y 恒为 workArea 顶部（重启后仍贴顶，旧 y 直接丢弃）；
   // R1 首次启动默认吸顶：无岛标记 → 顶部居中（x = wa.x + (wa.width - w)/2，收起态 w=560
-  // 即 PRD 公式；y = wa.y），旧水球 x/y 不再直接复用；有标记 → 沿用持久化位置。
+  // 即 PRD 公式），旧水球 x/y 不再直接复用；有标记 → x 沿用持久化位置。
   const savedIsland = validIsland(state.island)
   const x = savedIsland
     ? clampToWorkArea(savedIsland.x, wa.x, wa.x + wa.width - w)
     : Math.round(wa.x + (wa.width - w) / 2)
-  const y = savedIsland
-    ? clampToWorkArea(savedIsland.y, wa.y, wa.y + wa.height - h)
-    : wa.y
+  const y = wa.y
 
   win = new BrowserWindow({
     width: w,
@@ -440,6 +442,18 @@ export function createOverlay(): BrowserWindow {
   })
   win.on('closed', () => {
     win = null
+  })
+  win.on('show', () => {
+    // R2 锁顶（10-10-island-mini-tune）：显隐切换（toggleOverlay）后 y 回 workArea 顶部，
+    // x 自由不动。落盘走 moved 事件的统一口径（隐藏相位不采纳，见 moved handler 的 R6 守卫）。
+    const w = win
+    const b = w?.getBounds()
+    if (!w || !b) return
+    const wa = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + b.height / 2 }).workArea
+    if (!Number.isFinite(wa.y) || b.y === wa.y) return
+    applyingBounds = true
+    w.setPosition(b.x, Math.round(wa.y))
+    applyingBounds = false
   })
 
   // BD_DEBUG_RING=1：渲染层显示命中调试环（自检用，核对命中判定）
@@ -526,13 +540,14 @@ function clampToWorkArea(v: number, lo: number, hi: number): number {
 /**
  * 把窗口整体收回工作区（与 setCollapsed / resizeCollapsed / watchDisplays 同一口径）。
  * 按窗口中心挑显示器：拖拽出来的窗口常横跨屏幕边界，按左上角会选错屏。
+ * R2 锁顶（10-10-island-mini-tune）：y 直接回 workArea 顶部（x 仍夹回工作区内，自由）。
  */
 function snapBackToWorkArea(): void {
   if (!win) return
   const b = win.getBounds()
   const wa = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + b.height / 2 }).workArea
   const nx = Math.round(clampToWorkArea(b.x, wa.x, wa.x + wa.width - b.width))
-  const ny = Math.round(clampToWorkArea(b.y, wa.y, wa.y + wa.height - b.height))
+  const ny = wa.y
   if (nx === b.x && ny === b.y) return
   // 744 崩溃同类：裸 win.setPosition 不得吃非有限数（与注入的 setPosition 同口径）
   if (!Number.isFinite(nx) || !Number.isFinite(ny)) return
@@ -629,10 +644,11 @@ export function dragStart(grab?: { x: number; y: number }): void {
       if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) return
       const display = screen.getDisplayNearestPoint(c)
       const wa = display.workArea
-      // 故意比工作区宽松（首提交起就是这样）：贴边拖时不让窗口顶到"看不见的墙"，
-      // 抓取点也能推到画面外。落位由 dragStop 的 snapBackToWorkArea 收回严格区内。
+      // R2 锁顶（10-10-island-mini-tune）：拖拽中 y 恒为 workArea 顶部（纵向不动，x 自由）。
+      // x 仍走宽松夹取（贴边拖不顶"看不见的墙"，落位由 dragStop 的 snapBack 收回严格区内）；
+      // 顶部 dwell 判 top 时 d=0，锁顶与隐藏判定相容。
       const nx = Math.min(Math.max(c.x - dragOffset.x, wa.x - 40), wa.x + wa.width - 8)
-      const ny = Math.min(Math.max(c.y - dragOffset.y, wa.y - 8), wa.y + wa.height - 40)
+      const ny = wa.y
       if (!Number.isFinite(nx) || !Number.isFinite(ny)) return
       win.setPosition(Math.round(nx), Math.round(ny))
       state.x = nx
@@ -707,7 +723,9 @@ function tickCursorWatch(): void {
     const b = win.getBounds()
     const cursor = screen.getCursorScreenPoint()
     if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) return
-    // 隐藏态下不采信渲染层常规上报，以痕迹条覆盖值为准（跨层契约：与隐藏偏移同源）
+    // R3（10-10-island-mini-tune）：隐藏态同样采信渲染层实测矩形（主进程零覆盖，
+    // 点 pill 即点中 —— 覆盖与渲染三处对不上正是穿透真因）；morph 期 peekOverride
+    // 恒为 null，整窗可点（fail-open，语义不变）。
     const over = cursorInsideHit(cursor, b, peekOverride ?? hitbox)
     if (over !== cursorOver) {
       cursorOver = over
