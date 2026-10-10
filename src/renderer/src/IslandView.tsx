@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderInfo, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { ISLAND_VIEW } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
-import { defaultWaterAnchors, waterColor } from '../../shared/water-color'
+import { defaultWaterAnchors, resolveWaterAnchors, waterColor, type WaterAnchors } from '../../shared/water-color'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { orderForDisplay, snapshotLevel, windowLevel, worstWindow } from './read-model'
 import { Bar, Ring, StatusDot } from './components'
@@ -29,7 +29,8 @@ import {
 //     A 式 mini-pill（窄条 + 各家等级点，顶部原位收缩）；唤出 = 点击 pill。
 //   · 位置：顶栏内左右拖动（岛身，落盘 `ui:islandX` 0..1，与 `ui:*` 偏好同机制）；
 //     岛边缘 rim / 命中层空白拖 = 主进程窗口拖拽（R7 拖拽分区，CLICK_SLOP 内算点击）；
-//     岛样式独立文件，不跟 skins 换皮（等级色走连续水色口径）。
+//     容器深黑独立文件不跟换皮，嵌套环色跟皮肤水色锚点（`.app` 计算样式 +
+//     data-skin 监听，与 PetBall 同路；等级点保持语义色）。
 //
 // 单文件命名导出、无 children、返回 React.JSX.Element；>5 props 用具名接口。
 // 命中测试走主进程 `pet:hitbox`，渲染层只报几何；控件用 `title` 不用 aria。
@@ -51,6 +52,23 @@ const CLICK_SLOP = 6
 const EDGE_PX = 10
 /** 命中分区：'body' = 岛身（调 posX），'edge' = 边缘/空白（主进程移窗） */
 type DragZone = 'body' | 'edge'
+
+/**
+ * 读当前皮肤的水色锚点（与 PetBall.readWaterAnchors 同一路胶水，shared 不碰 DOM）。
+ * 令牌落在 `.app` 上，不在 body（写错位置会形成继承屏障，读到 :root 旧值）；
+ * 读不到/解析失败 → 缺省三色：环退化成"阈值处仍对"的静态色，不断裂；
+ * 缺失值（pct == null）仍走灰环 `#636366` + `--`，与锚点无关。
+ */
+function readWaterAnchors(): WaterAnchors {
+  try {
+    const app = document.querySelector('.app')
+    if (!app) return defaultWaterAnchors()
+    const cs = getComputedStyle(app)
+    return resolveWaterAnchors((n) => cs.getPropertyValue(n)) ?? defaultWaterAnchors()
+  } catch {
+    return defaultWaterAnchors()
+  }
+}
 
 export interface IslandViewProps {
   /** 全部快照（App state.snapshots；可见口径 = 启用实例，见 ordered） */
@@ -79,7 +97,17 @@ export interface IslandViewProps {
 /** 嵌套用量环：外→内 = windows[0..2]，最多 3 环；无可比窗口时灰环 `--` */
 function NestedRings({ s, size = RING_SIZE }: { s: ProviderSnapshot; size?: number }): React.JSX.Element {
   const wins = s.windows.slice(0, 3)
-  const anchors = useMemo(() => defaultWaterAnchors(), [])
+  // 实时皮肤水色锚点（10-10-island-fixes R3，与 PetBall.readWaterAnchors 同路：
+  // 令牌落在 `.app` 上 + data-skin MutationObserver；读不到 → 缺省三色。
+  // 等级点（isl-dot）保持语义 lvl-* 色，不走这里；容器深黑不动。）
+  const [anchors, setAnchors] = useState<WaterAnchors>(() => readWaterAnchors())
+  useEffect(() => {
+    const app = document.querySelector('.app')
+    if (!app) return
+    const mo = new MutationObserver(() => setAnchors(readWaterAnchors()))
+    mo.observe(app, { attributes: true, attributeFilter: ['data-skin'] })
+    return () => mo.disconnect()
+  }, [])
   const pcts = wins.map((w) => windowPercent(w))
   const lvls = wins.map((w) => levelOfPercent(windowPercent(w), s.status))
   // 半径档：外→内逐层收（40 viewBox 下 17 / 12.5 / 8），线宽 3.2

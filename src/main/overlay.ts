@@ -241,9 +241,7 @@ export function dockTestToEdge(edge: DockEdge): { x: number; y: number } {
   // 744 崩溃同类：裸 win.setPosition 不得吃非有限数（守卫与注入的 setPosition 同口径）
   if (Number.isFinite(pos.x) && Number.isFinite(pos.y)) win.setPosition(pos.x, pos.y)
   applyingBounds = false
-  state.x = pos.x
-  state.y = pos.y
-  persist()
+  notePosition(pos.x, pos.y)
   dock.onDragStop()
   // 同步返回摆位坐标：fast 模式下 50ms 后窗口已经藏进去了，调用方事后读 bounds
   // 拿到的是隐藏坐标而非贴边全可见坐标（dockedX 竞态，曾让 dockHide 误红）
@@ -296,9 +294,7 @@ function resizeCollapsed(): void {
   win.setBounds({ x: Math.round(nx), y: Math.round(ny), width: target.width, height: target.height })
   applyingBounds = false
   win.setResizable(false)
-  state.x = nx
-  state.y = ny
-  persist()
+  notePosition(nx, ny)
 }
 
 
@@ -308,6 +304,32 @@ interface PersistedState {
   collapsed?: boolean
   /** 贴边隐藏：贴边全可见坐标仍记 x/y，这里只记边与隐藏态（R6） */
   dock?: DockPersisted
+  /**
+   * 灵动岛窗口位置（10-10-island-fixes R1：首次启动默认吸顶的落盘标记）。
+   * 有它 → 启动沿用；无它（全新启动）→ 顶部居中，旧水球 x/y 不再直接复用。
+   */
+  island?: { x: number; y: number }
+}
+
+/** 岛标记合法性守卫（沿 dock 持久化纪律：坏值当没存过，下次落盘覆盖） */
+function validIsland(v: unknown): { x: number; y: number } | null {
+  if (!v || typeof v !== 'object') return null
+  const { x, y } = v as { x?: unknown; y?: unknown }
+  if (typeof x !== 'number' || typeof y !== 'number') return null
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+  return { x, y }
+}
+
+/**
+ * 用户可见位置落盘（R1）：x/y 兼容旧版 + island 岛标记同写。
+ * 隐藏偏移/隐藏态坐标不进这里（moved 里按隐藏相位跳过，dock 动画逐帧不调这里）。
+ */
+function notePosition(x: number, y: number): void {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return
+  state.x = x
+  state.y = y
+  state.island = { x, y }
+  persist()
 }
 
 let state: PersistedState = {}
@@ -323,6 +345,9 @@ export function loadPersisted(): void {
   } catch {
     state = {}
   }
+  if (state == null || typeof state !== 'object') state = {}
+  // 非法岛标记不进内存（坏值当没存过，下次 notePosition 落盘覆盖）
+  if (!validIsland(state.island)) delete state.island
 }
 
 function persist(): void {
@@ -339,9 +364,16 @@ export function createOverlay(): BrowserWindow {
   const collapsedSize = collapsedTarget()
   const w = (state.collapsed ? collapsedSize : EXPANDED).width
   const h = (state.collapsed ? collapsedSize : EXPANDED).height
-  // 历史持久化位置可能已漂出屏幕（旧版开合漂移），启动时夹回可视区
-  const x = clampToWorkArea(state.x ?? wa.x + wa.width - w - 16, wa.x, wa.x + wa.width - w)
-  const y = clampToWorkArea(state.y ?? wa.y + wa.height - h - 16, wa.y, wa.y + wa.height - h)
+  // 历史持久化位置可能已漂出屏幕（旧版开合漂移），启动时夹回可视区。
+  // R1 首次启动默认吸顶：无岛标记 → 顶部居中（x = wa.x + (wa.width - w)/2，收起态 w=560
+  // 即 PRD 公式；y = wa.y），旧水球 x/y 不再直接复用；有标记 → 沿用持久化位置。
+  const savedIsland = validIsland(state.island)
+  const x = savedIsland
+    ? clampToWorkArea(savedIsland.x, wa.x, wa.x + wa.width - w)
+    : Math.round(wa.x + (wa.width - w) / 2)
+  const y = savedIsland
+    ? clampToWorkArea(savedIsland.y, wa.y, wa.y + wa.height - h)
+    : wa.y
 
   win = new BrowserWindow({
     width: w,
@@ -395,12 +427,11 @@ export function createOverlay(): BrowserWindow {
       // 下一次启动夹取就按错坐标来，R6）。用户拖拽走 dragTimer 自己的 state 更新，不走这里。
       const ph = dock.phase()
       if (ph === 'hidden' || ph === 'hiding' || ph === 'revealing' || ph === 'dwell-reveal') return
-      state.x = b.x
-      state.y = b.y
+      // 岛标记同写（R1）：moved 是窗口移动的统一出口，拖拽逐帧与程序化移窗都经这里落盘
+      notePosition(b.x, b.y)
       // 展开态下用户拖动卡片后，圆点锚点跟随卡片左上角（收起时圆点出现在卡片原位）
       // 展开态拖动卡片时记录锚点：收起时球出现在卡片原位
       if (!applyingBounds && b.width > collapsedTarget().width) dotAnchor = { x: b.x, y: b.y }
-      persist()
     }
   })
   win.on('closed', () => {
@@ -417,6 +448,12 @@ export function createOverlay(): BrowserWindow {
   }
   // 启动恢复：持久化的隐藏态按当前 workArea 重算偏移（R6，多显示器断开重连不漂移）
   dock.restore(state.dock)
+  // R2 启动即起隐藏计时（与显示器变化同路）：show 后走一次 onDragStop；
+  // 在顶部边沿即起 1s dwell，不在边沿是无害空转；开关关闭/展开态由 onDragStop 内部清掉。
+  // 已可见直接走（默认 show:true 建窗即见），否则等首个 show —— 只走一次，
+  // 后续 toggle 的显隐不重进（不替用户做决定）。
+  if (win.isVisible()) dock.onDragStop()
+  else win.once('show', () => dock.onDragStop())
   return win
 }
 
@@ -460,9 +497,7 @@ function watchDisplays(): void {
     applyingBounds = true
     win.setBounds({ x: Math.round(nx), y: Math.round(ny), width: target.width, height: target.height })
     applyingBounds = false
-    state.x = nx
-    state.y = ny
-    persist()
+    notePosition(nx, ny)
     dock.onDragStop()
   }
   screen.on('display-removed', reposition)
@@ -502,6 +537,8 @@ function snapBackToWorkArea(): void {
   applyingBounds = false
   state.x = nx
   state.y = ny
+  // 岛标记同写（R1；落盘由调用方 persist 冲掉，这里只跟内存——moved 事件稍后也会同值覆盖）
+  state.island = { x: nx, y: ny }
 }
 
 // 展开前的圆点位置：收起时精确还原到原位，杜绝开合漂移
@@ -542,9 +579,7 @@ export function setCollapsed(collapsed: boolean): void {
   win.setResizable(false)
   // 窗口阴影：收起态关（否则 GPU 合成内容会被投一层方框阴影），展开态开（卡片圆角阴影）
   win.setHasShadow(!collapsed)
-  state.x = nx
-  state.y = ny
-  persist()
+  notePosition(nx, ny)
   safeSend('ui:collapsed', collapsed)
 }
 
@@ -589,6 +624,8 @@ export function dragStart(grab?: { x: number; y: number }): void {
       win.setPosition(Math.round(nx), Math.round(ny))
       state.x = nx
       state.y = ny
+      // 岛标记内存同写（R1；落盘由 dragStop 统一冲，moved 事件也会同值覆盖）
+      state.island = { x: nx, y: ny }
     } catch (e) {
       if (!dragErrorLogged) {
         dragErrorLogged = true

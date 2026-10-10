@@ -18,3 +18,4 @@
 | 2026-10-07 | [去预计耗尽 + 用量热力图（日历网格 + streak）](daily/2026-10-07_detail-predict-trim-heatmap.md) | `10-07-detail-predict-trim-heatmap` |
 | 2026-10-08 | [贴边柱内液高为零（诚实水位收口）](daily/2026-10-08_column-zero-fill.md) | `10-06-column-zero-fill` |
 | 2026-10-10 | [灵动岛替换水柱（复检 pass，待实机）](daily/2026-10-10_dynamic-island.md) | `10-10-dynamic-island` |
+| 2026-10-10 | [灵动岛跟进修复（复检 pass，实机待验）](daily/2026-10-10_island-fixes.md) | `10-10-island-fixes` |
