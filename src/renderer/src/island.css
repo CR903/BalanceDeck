@@ -1,0 +1,335 @@
+/* 灵动岛（10-10-dynamic-island）：独立视觉资产，不跟 skins 换皮。
+ *
+ * 深黑 iPhone 式固定样式；等级色走连续水色（JS 内联 waterColor），
+ * 容器只提供 lvl-* 环境辉光。窗口固定 560×480（ISLAND_VIEW），岛收起
+ * fit-content（上限 528px + 两侧辉光余量，超长横滑）；展开 430px 居中。
+ * 外层阴影只用在远小于窗口的元素上（岛 / pill / 展开卡四周都有余量），
+ * 不存在窗口级裁剪成方框的纪律问题（component-guidelines D6 同理）。
+ * 展开动画用独立 `scale` 属性 —— `transform` 留给居中定位，原型已踩坑。
+ */
+.isl-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, 'PingFang SC', system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.isl-hit {
+  position: absolute;
+  inset: 0;
+}
+.isl-body {
+  position: absolute;
+  top: 10px;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+.isl-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 528px;
+  height: 52px;
+  min-width: 120px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2b2b31 0%, #0b0b0d 28%, #000 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    inset 0 -8px 18px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    0 8px 24px rgba(0, 0, 0, 0.55);
+}
+.isl-strip::-webkit-scrollbar {
+  display: none;
+}
+.isl-body.lvl-danger .isl-strip {
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    inset 0 -8px 18px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    0 8px 24px rgba(0, 0, 0, 0.55),
+    0 0 22px rgba(255, 69, 58, 0.35);
+}
+.isl-combo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+.isl-combo .isl-logo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  background: #0b0b0d;
+  border-radius: 50%;
+  padding: 2px;
+  color: #f2f2f7;
+}
+.isl-rings {
+  display: block;
+}
+.isl-combo.bal {
+  width: auto;
+  gap: 6px;
+  color: #f2f2f7;
+}
+.isl-combo.bal .isl-amount {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.isl-empty {
+  font-size: 12px;
+  color: #98989f;
+  white-space: nowrap;
+}
+/* A 式 mini-pill：窄条 + 各家等级点（隐藏态，顶部原位收缩） */
+.isl-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: 200px;
+  height: 26px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2b2b31 0%, #000 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.25),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    0 6px 18px rgba(0, 0, 0, 0.55);
+}
+.isl-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: #636366;
+}
+.isl-dot.lvl-ok {
+  background: #30d158;
+}
+.isl-dot.lvl-warn {
+  background: #ff9f0a;
+}
+.isl-dot.lvl-danger {
+  background: #ff453a;
+  box-shadow: 0 0 8px rgba(255, 69, 58, 0.8);
+}
+/* 展开态：2 列只读卡片（430px 居中，独立 scale 动画） */
+.isl-body.open {
+  left: 50%;
+  width: 430px;
+  max-height: 440px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+  border-radius: 26px;
+  background: linear-gradient(180deg, #232328 0%, #0b0b0d 30%, #000 100%);
+  padding: 14px 16px;
+  cursor: default;
+  animation: islandPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    0 12px 40px rgba(0, 0, 0, 0.8);
+}
+.isl-body.open::-webkit-scrollbar {
+  width: 8px;
+}
+.isl-body.open::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 999px;
+}
+.isl-body.open::-webkit-scrollbar-track {
+  background: transparent;
+}
+@keyframes islandPop {
+  0% {
+    scale: 0.94;
+    filter: blur(2px);
+  }
+  60% {
+    scale: 1.02;
+  }
+  100% {
+    scale: 1;
+    filter: none;
+  }
+}
+.isl-open-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.isl-open-hint {
+  flex: 1;
+  font-size: 12px;
+  color: #98989f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isl-open-expand {
+  flex: none;
+  font-size: 12px;
+  color: #f2f2f7;
+  background: #2c2c2e;
+  border: 1px solid #3a3a3c;
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.isl-backdrop {
+  position: absolute;
+  inset: 0;
+  border-radius: 26px;
+}
+.isl-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.isl-cell {
+  background: linear-gradient(180deg, #26262c, #1a1a1e);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.isl-cell-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.isl-cell-name {
+  flex: 1;
+  font-size: 12px;
+  color: #f2f2f7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isl-cell-mid {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.isl-cell-fallback {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 800;
+  color: #98989f;
+  flex: none;
+}
+.isl-wins {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.isl-win {
+  font-size: 11px;
+  color: #98989f;
+  white-space: nowrap;
+}
+.isl-win-name {
+  color: #d1d1d6;
+}
+.isl-win-pct {
+  color: #f2f2f7;
+  margin-left: 6px;
+}
+.isl-win-reset {
+  margin-left: 6px;
+}
+.isl-big {
+  font-size: 17px;
+  font-weight: 800;
+  color: #f2f2f7;
+  letter-spacing: 0.01em;
+}
+.isl-sub {
+  font-size: 11px;
+  color: #98989f;
+}
+.isl-cell-empty {
+  font-size: 12px;
+  color: #98989f;
+}
+.isl-win-empty {
+  font-size: 11px;
+  color: #98989f;
+}
+/* 语音确认条 / 视觉通知（与岛同位，确认优先） */
+.isl-bubble {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 300px;
+  font-size: 11px;
+  color: #f2f2f7;
+  background: rgba(28, 28, 30, 0.95);
+  border: 1px solid #3a3a3c;
+  border-radius: 10px;
+  padding: 5px 10px;
+  z-index: 3;
+}
+.isl-confirm {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 300px;
+  background: rgba(28, 28, 30, 0.95);
+  border: 1px solid #3a3a3c;
+  border-radius: 10px;
+  padding: 5px 10px;
+  z-index: 3;
+}
+.isl-confirm-text {
+  font-size: 11px;
+  color: #f2f2f7;
+}
+.isl-confirm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.isl-confirm-eta {
+  font-size: 10px;
+  color: #98989f;
+}
+.isl-confirm-btn {
+  font-size: 11px;
+  color: #0a84ff;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTYPE — 水柱换灵动岛 Demo（throwaway，不进 main）</title>
+<!-- Three variants of the docked island, switchable via `?variant=` on this single file. -->
+<!-- 参考设计（sn-search-code）：Apple-Dynamic-Island-Animation（展开/收起+微交互）、w3bmstr/DynamicPillDock（悬浮pill+clip-path:circle()扩散）、openNook（桌面岛 Tauri+React+Motion，可插拔 widgets）。水柱口径：COLUMN_W=12，液位=percent，环 pathLength=100（见 src/shared/dock-hide.ts、fluid.ts、skin-rings.ts）。 -->
+<style>
+  :root {
+    --bg: #101014; --panel: #1c1c1e; --text: #f2f2f7; --dim: #98989f;
+    --ok: #30d158; --warn: #ff9f0a; --danger: #ff453a; --muted: #636366;
+    --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, 'PingFang SC', system-ui, sans-serif; padding: 24px 24px 90px; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p.hint { color: var(--dim); font-size: 13px; margin: 0 0 4px; }
+  p.hint code { color: var(--text); background: #2c2c2e; padding: 1px 6px; border-radius: 6px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+  .toolbar button, .toolbar label { background: #2c2c2e; color: var(--text); border: 1px solid #3a3a3c; border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .toolbar button.on { background: #0a84ff; border-color: #0a84ff; }
+  .toolbar label { display: inline-flex; gap: 6px; align-items: center; }
+  .screen { position: relative; height: 480px; border: 1px dashed #3a3a3c; border-radius: 16px; background: radial-gradient(1200px 400px at 50% -10%, #1e1e24, var(--bg)); overflow: hidden; }
+  .edge-tag { position: absolute; top: 10px; font-size: 11px; color: var(--dim); }
+  /* —— Variant A：侧边胶囊 —— */
+  .pill { position: absolute; top: 50%; width: 16px; height: 132px; transform: translateY(-50%); background: #000; border-radius: 999px; cursor: pointer; transition: width .35s var(--spring), height .35s var(--spring), border-radius .3s; box-shadow: 0 4px 20px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.12); display: flex; align-items: center; justify-content: center; }
+  .pill.left { left: 6px; } .pill.right { right: 6px; }
+  .pill .dots { display: flex; flex-direction: column; gap: 6px; }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .pill.open { width: 236px; height: auto; min-height: 170px; border-radius: 20px; padding: 12px; cursor: default; align-items: flex-start; }
+  .pill.open .dots { display: none; }
+  .card { display: none; width: 100%; }
+  .pill.open .card { display: block; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-radius: 10px; }
+  .row:hover { background: rgba(255,255,255,.06); }
+  .row .name { flex: 1; font-size: 13px; }
+  .row .pct { font-size: 12px; color: var(--dim); min-width: 40px; text-align: right; }
+  /* —— Variant B：顶部岛（iPhone 式立体） —— */
+  .tisland { position: absolute; top: 10px; width: fit-content; max-width: 560px; background: linear-gradient(180deg, #2b2b31 0%, #0b0b0d 28%, #000 100%); border-radius: 999px; height: 52px; min-width: 120px; display: flex; align-items: center; gap: 10px; padding: 0 16px; cursor: pointer; transition: width .45s var(--spring), height .45s var(--spring), border-radius .35s, box-shadow .3s; box-shadow: 0 12px 40px rgba(0,0,0,.8), 0 0 24px var(--glow, rgba(255,255,255,.06)), inset 0 1px 1px rgba(255,255,255,.35), inset 0 -8px 18px rgba(0,0,0,.7), inset 0 0 0 1px rgba(255,255,255,.09); }
+  .tisland::before { content: ''; position: absolute; top: 3px; left: 12%; right: 12%; height: 1px; border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); opacity: .7; pointer-events: none; }
+  .tisland::after { content: ''; position: absolute; inset: -8px -16px; border-radius: 999px; background: var(--glow, transparent); filter: blur(22px); opacity: .35; z-index: -1; pointer-events: none; }
+  .tisland.pos-free { transform: translateX(-50%); }
+  .tisland.open { width: 430px; height: auto; min-height: 230px; max-height: 420px; overflow-y: auto; border-radius: 26px; align-items: flex-start; padding: 16px; cursor: default; animation: islandPop .45s var(--spring); scrollbar-width: thin; scrollbar-color: #444 transparent; }
+  .tisland.open::-webkit-scrollbar { width: 8px; }
+  .tisland.open::-webkit-scrollbar-thumb { background: #444; border-radius: 999px; }
+  .tisland.open::-webkit-scrollbar-track { background: transparent; }
+  @keyframes islandPop { 0% { scale: .94; filter: blur(2px); } 60% { scale: 1.02; } 100% { scale: 1; filter: none; } }
+  .tisland.pos-free.open { transform: translateX(-50%); }
+  .tisland.danger { animation: glowPulse 2.6s ease-in-out infinite; }
+  @keyframes glowPulse { 0%, 100% { box-shadow: 0 12px 40px rgba(0,0,0,.8), 0 0 18px var(--glow), inset 0 1px 1px rgba(255,255,255,.35), inset 0 -8px 18px rgba(0,0,0,.7); } 50% { box-shadow: 0 12px 44px rgba(0,0,0,.85), 0 0 34px var(--glow), inset 0 1px 1px rgba(255,255,255,.35), inset 0 -8px 18px rgba(0,0,0,.7); } }
+  .tisland .mini { font-size: 12px; display: flex; align-items: center; gap: 12px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .tisland .mini::-webkit-scrollbar { display: none; }
+  .tisland .mini.slide-in { animation: slideUp .4s ease; }
+  @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .tisland .cdot { width: 5px; height: 5px; border-radius: 50%; background: #3a3a3c; cursor: pointer; }
+  .tisland .cdot.on { background: #fff; }
+  .tisland .grid { display: none; width: 100%; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .tisland.open .grid { display: grid; }
+  .tisland.open .mini { display: none; }
+  .tcell { background: linear-gradient(180deg, #26262c, #1a1a1e); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,.12); min-width: 0; }
+  .tcell .top { display: flex; gap: 10px; align-items: center; min-width: 0; }
+  .tcell .name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .tcell .pct { font-size: 11px; color: var(--dim); }
+  .tcell .wins { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+  .tcell .win { font-size: 11px; color: var(--dim); white-space: nowrap; }
+  .tcell .wbar { height: 4px; border-radius: 999px; background: #333; overflow: hidden; margin-top: 2px; }
+  .tcell .wbar i { display: block; height: 100%; border-radius: 999px; }
+  /* —— 站点图标（brand 点 + 突出动画，代替纯文字） —— */
+  .picon { position: relative; width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff; flex: none; box-shadow: inset 0 1px 1px rgba(255,255,255,.4), 0 2px 8px rgba(0,0,0,.5); }
+  .picon.live { animation: livePulse 2.2s ease-in-out infinite; }
+  @keyframes livePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+  .picon.live::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid currentColor; opacity: .5; animation: ringPing 2.2s ease-out infinite; }
+  @keyframes ringPing { 0% { transform: scale(.7); opacity: .7; } 100% { transform: scale(1.25); opacity: 0; } }
+  .picon.danger { animation: dangerShake 1.8s ease-in-out infinite; }
+  @keyframes dangerShake { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-8deg) scale(1.08); } 40% { transform: rotate(8deg) scale(1.08); } 60% { transform: rotate(0) scale(1); } }
+  .picon.flash { animation: iconPop .45s var(--spring); }
+  @keyframes iconPop { 0% { transform: scale(.6); } 60% { transform: scale(1.2); } 100% { transform: scale(1); } }
+  .tcell .big-amount { font-size: 17px; font-weight: 800; letter-spacing: .01em; }
+  .tcell .legend { font-size: 10px; color: var(--dim); display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .tcell .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
+  /* —— 收起态组合：嵌套环 + 中央 logo（无名称） —— */
+  .combo { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .combo .combo-logo { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; background: #0b0b0d; border-radius: 50%; padding: 2px; }
+  /* —— Variant C：侧边轨（常展） —— */
+  .rail { position: absolute; top: 0; bottom: 0; width: 64px; background: rgba(0,0,0,.85); backdrop-filter: blur(8px); display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 0; overflow-y: auto; border-inline: 1px solid rgba(255,255,255,.1); }
+  .rail.left { left: 0; } .rail.right { right: 0; }
+  .rail .ritem { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; padding: 6px; border-radius: 12px; }
+  .rail .ritem.sel { background: rgba(10,132,255,.25); }
+  .rail .rname { font-size: 10px; color: var(--dim); max-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .detail { position: absolute; top: 50%; transform: translateY(-50%); background: #1c1c1e; border-radius: 16px; padding: 14px 16px; min-width: 200px; border: 1px solid #333; }
+  /* —— 圆环 —— */
+  svg.ring { display: block; }
+  /* —— 状态与切换条 —— */
+  #state { background: #000; border: 1px solid #333; border-radius: 12px; padding: 12px; font-size: 12px; white-space: pre-wrap; margin-top: 14px; color: #d1d1d6; }
+  .switcher { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: #000; border: 1px solid #444; color: #fff; border-radius: 999px; display: flex; align-items: center; gap: 14px; padding: 8px 10px; box-shadow: 0 8px 30px rgba(0,0,0,.6); z-index: 50; }
+  .switcher button { background: #2c2c2e; color: #fff; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 15px; }
+  .switcher .lab { font-size: 12px; min-width: 190px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>PROTOTYPE · 灵动岛替换水柱（3 变体对比）</h1>
+<p class="hint">throwaway 原型：双击即开，无依赖、不持久化（状态只在内存 + <code>?variant=</code> 分享）。水柱已拿掉（A/C 侧边，B 只吸顶、可左右拖动）。键盘 <code>←</code>/<code>→</code> 切换变体。</p>
+<div class="toolbar" id="toolbar"></div>
+<div class="screen" id="screen"></div>
+<pre id="state"></pre>
+
+<div class="switcher" id="switcher">
+  <button id="prev" aria-label="上一个">←</button>
+  <span class="lab" id="curlab"></span>
+  <button id="next" aria-label="下一个">→</button>
+</div>
+
+<script>
+// —— mock 数据（内存态，不落盘）：plan（一供多窗）+ balance（直充余额，金额为主） ——
+const SUPPLIERS = [
+  { id: 'claude', name: 'Claude 公司', kind: 'plan', mark: 'claude', brand: '#D97757', glyph: 'C', pct: 73, lvl: 'warn', windows: [{ name: '5小时', pct: 73, reset: '2h12m后重置' }, { name: '本周', pct: 41, reset: '3天后重置' }] },
+  { id: 'gpt', name: 'GPT 个人', kind: 'plan', mark: 'codex', brand: '#10a37f', glyph: 'G', pct: 42, lvl: 'ok', windows: [{ name: '本月', pct: 42, reset: '12天后重置' }] },
+  { id: 'gemini', name: 'Gemini', kind: 'plan', mark: 'gemini', brand: '#4e8df5', glyph: 'Ge', pct: 91, lvl: 'danger', windows: [{ name: '5小时', pct: 91, reset: '48m后重置' }, { name: '每日', pct: 65, reset: '7h后重置' }, { name: 'Token', pct: 30, reset: '月末重置' }] },
+  { id: 'openai', name: 'OpenAI 余额', kind: 'balance', mark: 'openai-billing', brand: '#fff', glyph: 'O', amount: '¥128.50', sub: '剩余额度 · 按量付费', lvl: 'ok', pct: null, windows: [] },
+  { id: 'qwen', name: 'Qwen', kind: 'plan', mark: 'qwen', brand: '#7c5cff', glyph: 'Q', pct: null, lvl: 'muted', windows: [] },
+];
+const COLOR = { ok: '#30d158', warn: '#ff9f0a', danger: '#ff453a', muted: '#636366' };
+const S = { variant: 'B', edge: 'left', open: false, enabled: { claude: true, gpt: true, gemini: true, openai: true, qwen: false }, selected: 'claude', posX: 0.5, carIdx: 0, carHover: false, iconMode: true, nested: false };
+function ringSVG(pct, lvl, size) {
+  size = size || 34;
+  const v = (pct == null ? 0 : Math.min(100, Math.max(0, pct))).toFixed(2);
+  const c = COLOR[lvl] || COLOR.muted;
+  const r = 15.5, circ = 2 * Math.PI * r;
+  return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 36 36"><circle cx="18" cy="18" r="${r}" fill="none" stroke="#333" stroke-width="3.5"/><circle cx="18" cy="18" r="${r}" fill="none" stroke="${c}" stroke-width="3.5" stroke-linecap="round" pathLength="100" stroke-dasharray="${v} 100" transform="rotate(-90 18 18)"/><text x="18" y="21.5" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">${pct == null ? '--' : Math.round(pct) + '%'}</text></svg>`;
+}
+function enabledList() { return SUPPLIERS.filter(s => S.enabled[s.id]); }
+function lvlOf(pct) { if (pct == null) return 'muted'; if (pct >= 85) return 'danger'; if (pct >= 60) return 'warn'; return 'ok'; }
+const LOGOS = {
+  "claude": { viewBox: "0 0 24 24", body: "<path fill=\"currentColor\" d=\"m4.714 15.956l4.718-2.648l.079-.23l-.08-.128h-.23l-.79-.048l-2.695-.073l-2.337-.097l-2.265-.122l-.57-.121l-.535-.704l.055-.353l.48-.321l.685.06l1.518.104l2.277.157l1.651.098l2.447.255h.389l.054-.158l-.133-.097l-.103-.098l-2.356-1.596l-2.55-1.688l-1.336-.972l-.722-.491L2 6.223l-.158-1.008l.656-.722l.88.06l.224.061l.893.686l1.906 1.476l2.49 1.833l.364.304l.146-.104l.018-.072l-.164-.274l-1.354-2.446l-1.445-2.49l-.644-1.032l-.17-.619a3 3 0 0 1-.103-.729L6.287.133L6.7 0l.995.134l.42.364l.619 1.415L9.735 4.14l1.555 3.03l.455.898l.243.832l.09.255h.159V9.01l.127-1.706l.237-2.095l.23-2.695l.08-.76l.376-.91l.747-.492l.583.28l.48.685l-.067.444l-.286 1.851l-.558 2.903l-.365 1.942h.213l.243-.242l.983-1.306l1.652-2.064l.728-.82l.85-.904l.547-.431h1.032l.759 1.129l-.34 1.166l-1.063 1.347l-.88 1.142l-1.263 1.7l-.79 1.36l.074.11l.188-.02l2.853-.606l1.542-.28l1.84-.315l.832.388l.09.395l-.327.807l-1.967.486l-2.307.462l-3.436.813l-.043.03l.049.061l1.548.146l.662.036h1.62l3.018.225l.79.522l.473.638l-.08.485l-1.213.62l-1.64-.389l-3.825-.91l-1.31-.329h-.183v.11l1.093 1.068l2.003 1.81l2.508 2.33l.127.578l-.321.455l-.34-.049l-2.204-1.657l-.85-.747l-1.925-1.62h-.127v.17l.443.649l2.343 3.521l.122 1.08l-.17.353l-.607.213l-.668-.122l-1.372-1.924l-1.415-2.168l-1.141-1.943l-.14.08l-.674 7.254l-.316.37l-.728.28l-.607-.461l-.322-.747l.322-1.476l.388-1.924l.316-1.53l.285-1.9l.17-.632l-.012-.042l-.14.018l-1.432 1.967l-2.18 2.945l-1.724 1.845l-.413.164l-.716-.37l.066-.662l.401-.589l2.386-3.036l1.439-1.882l.929-1.086l-.006-.158h-.055L4.138 18.56l-1.13.146l-.485-.456l.06-.746l.231-.243l1.907-1.312Z\"/>" },
+  "codex": { viewBox: "0 0 24 24", body: "<path fill=\"currentColor\" d=\"M22.282 9.821a6 6 0 0 0-.516-4.91a6.05 6.05 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a6 6 0 0 0-3.998 2.9a6.05 6.05 0 0 0 .743 7.097a5.98 5.98 0 0 0 .51 4.911a6.05 6.05 0 0 0 6.515 2.9A6 6 0 0 0 13.26 24a6.06 6.06 0 0 0 5.772-4.206a6 6 0 0 0 3.997-2.9a6.06 6.06 0 0 0-.747-7.073M13.26 22.43a4.48 4.48 0 0 1-2.876-1.04l.141-.081l4.779-2.758a.8.8 0 0 0 .392-.681v-6.737l2.02 1.168a.07.07 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494M3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085l4.783 2.759a.77.77 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646M2.34 7.896a4.5 4.5 0 0 1 2.366-1.973V11.6a.77.77 0 0 0 .388.677l5.815 3.354l-2.02 1.168a.08.08 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.08.08 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667m2.01-3.023l-.141-.085l-4.774-2.782a.78.78 0 0 0-.785 0L9.409 9.23V6.897a.07.07 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.8.8 0 0 0-.393.681zm1.097-2.365l2.602-1.5l2.607 1.5v2.999l-2.597 1.5l-2.607-1.5Z\"/>" },
+  "gemini": { viewBox: "0 0 24 24", body: "<path fill=\"currentColor\" d=\"M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68q.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58a12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68q-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96q2.19.93 3.81 2.55t2.55 3.81\"/>" },
+  "qwen": { viewBox: "0 0 24 24", body: "<path fill=\"currentColor\" d=\"M23.919 14.545L20.817 9.17l1.47-2.544a.56.56 0 0 0 0-.566l-1.633-2.83a.57.57 0 0 0-.49-.283h-6.207L12.487.402a.57.57 0 0 0-.49-.284H8.732a.56.56 0 0 0-.49.284L5.139 5.775h-2.94a.56.56 0 0 0-.49.284L.077 8.887a.56.56 0 0 0 0 .567L3.18 14.83l-1.47 2.545a.56.56 0 0 0 0 .566l1.634 2.83a.57.57 0 0 0 .49.283h6.205l1.47 2.545a.57.57 0 0 0 .49.284h3.266a.57.57 0 0 0 .49-.284l3.104-5.375h2.94a.57.57 0 0 0 .49-.283l1.634-2.828a.55.55 0 0 0-.004-.568M8.733.686l1.634 2.828l-1.634 2.828H21.8L20.164 9.17H7.425L5.63 6.06Zm1.306 19.801l-6.205-.002l1.634-2.83h3.265L2.201 6.344h3.267q3.182 5.517 6.367 11.032zm10.124-5.66L18.53 12l-6.532 11.315l-1.634-2.83c2.129-3.673 4.25-7.351 6.373-11.028h3.592l3.102 5.374z\"/>" },
+  "openai-billing": { viewBox: "0 0 24 24", body: "<path fill=\"currentColor\" d=\"M22.282 9.821a6 6 0 0 0-.516-4.91a6.05 6.05 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a6 6 0 0 0-3.998 2.9a6.05 6.05 0 0 0 .743 7.097a5.98 5.98 0 0 0 .51 4.911a6.05 6.05 0 0 0 6.515 2.9A6 6 0 0 0 13.26 24a6.06 6.06 0 0 0 5.772-4.206a6 6 0 0 0 3.997-2.9a6.06 6.06 0 0 0-.747-7.073M13.26 22.43a4.48 4.48 0 0 1-2.876-1.04l.141-.081l4.779-2.758a.8.8 0 0 0 .392-.681v-6.737l2.02 1.168a.07.07 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494M3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085l4.783 2.759a.77.77 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646M2.34 7.896a4.5 4.5 0 0 1 2.366-1.973V11.6a.77.77 0 0 0 .388.677l5.815 3.354l-2.02 1.168a.08.08 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.08.08 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667m2.01-3.023l-.141-.085l-4.774-2.782a.78.78 0 0 0-.785 0L9.409 9.23V6.897a.07.07 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.8.8 0 0 0-.393.681zm1.097-2.365l2.602-1.5l2.607 1.5v2.999l-2.597 1.5l-2.607-1.5Z\"/>" },
+};
+function logoSVG(mark, color, size) {
+  const m = (typeof LOGOS !== 'undefined' && LOGOS[mark]) || null;
+  size = size || 16;
+  if (!m) return `<span style="width:${size}px;height:${size}px;display:inline-grid;place-items:center;font-size:10px;font-weight:800;color:#fff">?</span>`;
+  return `<svg width="${size}" height="${size}" viewBox="${m.viewBox}" style="color:${color || '#fff'};display:block">${m.body}</svg>`;
+}
+function piconHTML(s, extra) {
+  return `<span class="picon ${s.lvl === 'danger' ? 'danger' : 'live'} ${extra || ''}" style="background:#0b0b0d;color:${s.brand || '#fff'}" title="${s.name}">${logoSVG(s.mark, s.brand || '#fff', 16)}</span>`;
+}
+// 收起态组合：嵌套环中间叠 logo（无供应商名称）
+function comboHTML(s, size) {
+  size = size || 38;
+  if (s.kind === 'balance') return `<span class="combo" style="width:auto;height:${size}px">${piconHTML(s, 'flash')}<span style="font-size:12px;font-weight:700;margin-left:6px">${s.amount}</span></span>`;
+  const ring = nestedRingsSVG(s, size);
+  const logoSize = Math.round(size * 0.42);
+  return `<span class="combo" style="width:${size}px;height:${size}px">${ring}<span class="combo-logo" style="width:${logoSize}px;height:${logoSize}px;color:${s.brand || '#fff'}">${logoSVG(s.mark, s.brand || '#fff', logoSize)}</span></span>`;
+}
+// 嵌套圆环：一供多窗同心画（外→内 = windows[0..2]），最多 3 环 + 图例；超 3 窗回落并列条
+function nestedRingsSVG(s, size) {
+  size = size || 64;
+  const wins = (s.windows || []).slice(0, 3);
+  const radii = [15.5, 11.5, 7.5];
+  const widths = [3.5, 3.2, 3];
+  let rings = `<circle cx="18" cy="18" r="15.5" fill="none" stroke="#2c2c2e" stroke-width="3.5"/>`;
+  wins.forEach((w, i) => {
+    const c = COLOR[lvlOf(w.pct)];
+    rings += `<circle cx="18" cy="18" r="${radii[i]}" fill="none" stroke="${c}" stroke-width="${widths[i]}" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.min(100, Math.max(0, w.pct)).toFixed(2)} 100" transform="rotate(-90 18 18)"/>`;
+  });
+  return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 36 36">${rings}<text x="18" y="21" text-anchor="middle" font-size="8" font-weight="800" fill="#fff">${s.pct == null ? '--' : Math.round(s.pct) + '%'}</text></svg>`;
+}
+function emit() {
+  const list = enabledList();
+  document.getElementById('state').textContent = JSON.stringify({ variant: S.variant, edge: S.edge, posX: S.variant === 'B' ? +S.posX.toFixed(2) : undefined, open: S.open, selected: S.selected, view: S.variant === 'B' ? { iconMode: S.iconMode, nested: S.nested } : undefined, collapsedShows: S.variant === 'B' && !S.open ? list.map(s => s.id) : undefined, enabledCount: list.length, suppliers: list.map(s => s.kind === 'balance' ? { id: s.id, kind: s.kind, amount: s.amount } : ({ id: s.id, kind: s.kind, worstPct: s.pct, lvl: s.lvl, windows: s.windows })) }, null, 2);
+}
+function toolbar() {
+  const t = document.getElementById('toolbar'); t.innerHTML = '';
+  const mk = (label, on, fn) => { const b = document.createElement('button'); b.textContent = label; if (on) b.classList.add('on'); b.onclick = () => { fn(); render(); }; t.appendChild(b); };
+  if (S.variant !== 'B') { mk('◀ 左吸附', S.edge === 'left', () => S.edge = 'left'); mk('右吸附 ▶', S.edge === 'right', () => S.edge = 'right'); }
+  else { mk('回中', S.posX === 0.5, () => S.posX = 0.5); }
+  if (S.variant !== 'C') mk(S.open ? '收起' : '展开', S.open, () => S.open = !S.open);
+  if (S.variant === 'B') {
+    mk(S.iconMode ? '图标模式开' : '图标模式关', S.iconMode, () => S.iconMode = !S.iconMode);
+    mk(S.nested ? '嵌套圆环开' : '嵌套圆环关', S.nested, () => S.nested = !S.nested);
+  }
+  SUPPLIERS.forEach(sp => { const l = document.createElement('label'); const c = document.createElement('input'); c.type = 'checkbox'; c.checked = !!S.enabled[sp.id]; c.onchange = () => { S.enabled[sp.id] = c.checked; render(); }; l.appendChild(c); l.appendChild(document.createTextNode(sp.name)); t.appendChild(l); });
+}
+function render() {
+  toolbar();
+  const sc = document.getElementById('screen'); sc.innerHTML = '';
+  const list = enabledList();
+  const worst = list.slice().sort((a, b) => (b.pct || -1) - (a.pct || -1))[0];
+  if (S.variant === 'A') {
+    const pill = document.createElement('div');
+    pill.className = 'pill ' + S.edge + (S.open ? ' open' : '');
+    if (!S.open) {
+      pill.innerHTML = `<div class="dots">${list.map(s => `<span class="dot" style="background:${COLOR[s.lvl]}"></span>`).join('')}</div>`;
+      pill.title = '点击展开（' + list.length + ' 家）';
+      pill.onclick = () => { S.open = true; render(); };
+    } else {
+      pill.innerHTML = `<div class="card">${list.map(s => `<div class="row">${ringSVG(s.pct, s.lvl)}<span class="name">${s.name}</span><span class="pct">${s.pct == null ? '--' : s.pct + '%'}</span></div>`).join('') || '<div class="row">暂无启用的供应商</div>'}</div>`;
+      pill.querySelectorAll('.row').forEach(r => r.onclick = e => e.stopPropagation());
+      const x = document.createElement('div'); x.style.cssText = 'text-align:right;font-size:11px;color:#98989f;cursor:pointer'; x.textContent = '收起 ✕'; x.onclick = e => { e.stopPropagation(); S.open = false; render(); }; pill.prepend(x);
+    }
+    sc.appendChild(pill);
+  } else if (S.variant === 'B') {
+    // B：收起态平铺全部有效供应商（嵌套环 + 中央 logo，无名称）；超长岛身自动加长，溢出横滑
+    const isl = document.createElement('div');
+    const worst = list.slice().sort((a, b) => (b.pct || -1) - (a.pct || -1))[0];
+    const glow = worst ? COLOR[worst.lvl] + '55' : 'rgba(255,255,255,.06)';
+    isl.className = 'tisland pos-free' + (S.open ? ' open' : '') + (worst && worst.lvl === 'danger' && !S.open ? ' danger' : '');
+    isl.style.setProperty('--glow', glow);
+    // 只吸顶：top 固定，左右拖动（pointer 拖拽，移动 <6px 算点击展开/收起）
+    isl.style.left = (S.posX * 100).toFixed(1) + '%';
+    let dragX = null, moved = false;
+    isl.onpointerdown = e => { dragX = e.clientX; moved = false; isl.setPointerCapture(e.pointerId); };
+    isl.onpointermove = e => {
+      if (dragX == null) return;
+      const dx = e.clientX - dragX;
+      if (Math.abs(dx) > 6) moved = true;
+      if (moved) {
+        const w = sc.clientWidth || 800;
+        S.posX = Math.min(0.92, Math.max(0.08, S.posX + dx / w));
+        dragX = e.clientX;
+        isl.style.left = (S.posX * 100).toFixed(1) + '%';
+      }
+    };
+    isl.onpointerup = () => { const wasDrag = moved; dragX = null; if (!wasDrag) { S.open = !S.open; render(); } else emit(); };
+    if (!S.open) {
+      isl.innerHTML = `<div class="mini slide-in">${list.map(s => comboHTML(s, 36)).join('') || '<span>暂无启用的供应商</span>'}</div>`;
+    } else {
+      // 展开：一供多窗 —— balance=金额为主；plan=嵌套圆环（≤3窗）或并列条
+      isl.innerHTML = `<div style="width:100%"><div style="font-size:12px;color:#98989f">点击空白收起 · ${list.length} 家 · 主环=各家最满窗口 · 图标=站点 mark（呼吸/告警抖动）</div><div class="grid">${list.map(s => {
+        if (s.kind === 'balance') return `<div class="tcell"><div class="top">${S.iconMode ? piconHTML(s, 'live') : ''}<div style="flex:1;min-width:0"><div class="name">${S.iconMode ? '' : s.name + ' · '}直充余额</div><div class="big-amount">${s.amount}</div><div class="pct">${s.sub}</div></div></div></div>`;
+        const useNested = S.nested && (s.windows || []).length >= 2;
+        const visual = useNested ? nestedRingsSVG(s, 40) : ringSVG(s.pct, s.lvl, 40);
+        const legend = useNested ? `<div class="legend">${s.windows.slice(0, 3).map(w => `<span><i style="background:${COLOR[lvlOf(w.pct)]}"></i>${w.name}${w.pct}%</span>`).join('')}</div>` : '';
+        const bars = useNested ? '' : `<div class="wins">${(s.windows || []).map(w => `<div><div class="win">${w.name} · ${w.pct}% · ${w.reset}</div><div class="wbar"><i style="width:${w.pct}%;background:${COLOR[lvlOf(w.pct)]}"></i></div></div>`).join('') || '<div class="win">无窗口数据</div>'}</div>`;
+        return `<div class="tcell"><div class="top">${S.iconMode ? piconHTML(s, '') : ''}${visual}<div style="flex:1;min-width:0"><div class="name">${s.name}</div>${legend}</div></div>${bars}</div>`;
+      }).join('')}</div></div>`;
+    }
+    sc.appendChild(isl);
+  } else {
+    const rail = document.createElement('div');
+    rail.className = 'rail ' + S.edge;
+    rail.innerHTML = list.map(s => `<div class="ritem${S.selected === s.id ? ' sel' : ''}" data-id="${s.id}">${ringSVG(s.pct, s.lvl, 36)}<span class="rname">${s.name}</span></div>`).join('') || '<span style="font-size:11px;color:#98989f">无</span>';
+    rail.querySelectorAll('.ritem').forEach(el => el.onclick = () => { S.selected = el.dataset.id; render(); });
+    sc.appendChild(rail);
+    const sel = SUPPLIERS.find(s => s.id === S.selected);
+    if (sel) { const d = document.createElement('div'); d.className = 'detail'; d.style[S.edge === 'left' ? 'left' : 'right'] = '78px'; d.innerHTML = `<div style="font-size:14px;font-weight:700">${sel.name}</div><div style="font-size:12px;color:#98989f;margin:6px 0">${sel.pct == null ? '暂无数据' : '已用 ' + sel.pct + '% · ' + sel.lvl}</div><div style="font-size:12px;color:#98989f">常展轨：无展开态，点环即选中（primary affordance 是浏览不是展开）</div>`; sc.appendChild(d); }
+  }
+  const names = { A: 'A — 侧边胶囊（收起小 pill，点开展示列表）', B: 'B — 顶部灵动岛（只吸顶，可左右拖动）', C: 'C — 侧边常展轨（无收起，纵向环列）' };
+  document.getElementById('curlab').textContent = names[S.variant] || S.variant;
+  emit();
+}
+// —— ?variant= 路由 + 底栏切换（可分享、reload-stable；←/→ 键，输入框内不拦截） ——
+const qs = new URLSearchParams(location.search);
+if (['A', 'B', 'C'].includes((qs.get('variant') || '').toUpperCase())) S.variant = qs.get('variant').toUpperCase();
+function go(v) { S.variant = v; S.open = false; history.replaceState(null, '', '?variant=' + v); render(); }
+const order = ['A', 'B', 'C'];
+document.getElementById('prev').onclick = () => go(order[(order.indexOf(S.variant) + 2) % 3]);
+document.getElementById('next').onclick = () => go(order[(order.indexOf(S.variant) + 1) % 3]);
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (e.key === 'ArrowLeft') go(order[(order.indexOf(S.variant) + 2) % 3]);
+  if (e.key === 'ArrowRight') go(order[(order.indexOf(S.variant) + 1) % 3]);
+});
+render();
+</script>
+</body>
+</html>

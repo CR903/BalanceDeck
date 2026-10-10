@@ -9,8 +9,8 @@
 // 产物在 /tmp/balancedeck-shots/。
 import { app } from 'electron'
 import { join } from 'path'
-import { demoSnapshot, column70Snapshot, wave40Snapshot } from './fixtures'
-import { BALL_VIEW } from '../../shared/pet-view'
+import { demoSnapshot } from './fixtures'
+import { ISLAND_VIEW } from '../../shared/pet-view'
 
 export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   const { mkdirSync, writeFileSync } = await import('fs')
@@ -92,7 +92,7 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec("document.querySelector('.advanced')?.scrollIntoView({block:'center'})")
   await sleep(500)
   await shoot('6-settings-advanced')
-  // ─── 收起态：2D 小水球（唯一的形态）─────────────────
+  // ─── 收起态：顶部灵动岛（唯一的形态）─────────────────
   const backBtn = "[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()"
   const collapseBtn = "[...document.querySelectorAll('.btn-secondary')].find(b=>b.textContent.includes('收起'))?.click()"
   /**
@@ -118,254 +118,94 @@ export async function runShots(win: Electron.BrowserWindow): Promise<void> {
   await exec(backBtn)
   await sleep(500)
 
-  // ① 小水球（56×56，纯 DOM，球内水体 + 环心读数）。
+  // ─── 收起态：顶部灵动岛（10-10-dynamic-island）─────────────────
   await exec(collapseBtn)
-  await settle(BALL_VIEW)
-  await shoot('5-ball', { frames: 3 })
-  // 波形对照（R1）：先推单家 40% 再循环换肤，五帧同一液面，波顶位置不同即振幅不同。
-  // 拍完恢复演示数据（5l 及之后沿用原夹具，轮播行为不变）。
-  await exec(`window.api.debugPush(${JSON.stringify(wave40Snapshot())}, false)`)
-  await sleep(900)
-  // 各皮肤下的小水球（水色/底色都走令牌，逐皮肤必须都对）
-  for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
-    await exec(`window.api.setSkin('${id}')`)
-    await sleep(1100)
-    await shoot(`5c-ball-${id}`)
-    // 波形自描述：A 层路径纵向极差 = 2×振幅（R1 各皮肤波形对拍，不靠像素猜）
-    const waveRange = String(
+  await settle(ISLAND_VIEW)
+  await shoot('5-island', { frames: 3 })
+  // 岛自描述探针：形态 / 家数 / combos kind（截图解码时不再猜供应商）
+  process.stdout.write(
+    `5-probe: ${String(
       await exec(`(()=>{
-        const w=document.querySelector('.fluid-wave-a');
-        if(!w) return 'no-waves';
-        const nums=[...((w.getAttribute('d')||'').match(/-?\\d+\\.?\\d*/g)||[])].map(Number);
-        // Y 取奇数位；末尾两个是封口角（L 96 60 L -40 60 Z），不是波面，剔除
-        const ys=nums.filter((_,i)=>i%2===1).slice(0,-2);
-        if(ys.length<4) return 'bad-d';
-        return JSON.stringify({n:ys.length,range:+(Math.max(...ys)-Math.min(...ys)).toFixed(2)});
-      })()`)
-    )
-    process.stdout.write(`5c-wave: ${id} ${waveRange}\n`)
-    // 形态探针（P6 环替代水体）：逐皮读「环显隐 / 水体显隐 / 弧长 dasharray /
-    // 弧色 / 半径」，不靠像素猜。弧长那一项是本轮的核心取证 ——
-    // 快照是单家 40%（wave40Snapshot），所以弧的 dasharray 必须是 40.xx。
-    const formProbe = String(
-      await exec(`(()=>{
-        const dot=document.querySelector('.petball-fallback');
-        if(!dot) return 'no-dot';
-        const ring=dot.querySelector('.fluid-ring');
-        const ringDisp=ring?getComputedStyle(ring).display:'?';
-        const slosh=dot.querySelector('.slosh');
-        const waterDisp=slosh?getComputedStyle(slosh).display:'(absent)';
-        const arc=dot.querySelector('.ring-arc');
-        const acs=arc?getComputedStyle(arc):null;
-        const cs=arc?getComputedStyle(arc):null;
-        const r=acs?acs.r:'?';
-        // r 是 CSS 几何属性；Chromium 报 px
-        const rNum=parseFloat(r);
+        const body=document.querySelector('.isl-body');
+        if(!body) return 'no-island';
         return JSON.stringify({
-          ringDisplay:ringDisp, waterDisplay:waterDisp,
-          arcR:r, arcSw:cs?cs.strokeWidth:'?', arcCap:cs?cs.strokeLinecap:'?',
-          arcDash:arc?arc.getAttribute('stroke-dasharray'):'?',
-          arcStroke:cs?cs.stroke:'?',
-          ticksDisplay:dot.querySelector('.ring-ticks')?getComputedStyle(dot.querySelector('.ring-ticks')).display:'(absent)',
-          segDisplay:dot.querySelector('.ring-seg')?getComputedStyle(dot.querySelector('.ring-seg')).display:'(absent)',
-          innerDisplay:dot.querySelector('.ring-inner')?getComputedStyle(dot.querySelector('.ring-inner')).display:'(absent)',
-          // B5 端点圆点探针：display（默认 none，ink 为 block）/ --arc-pct（0..100，与弧长同源）/
-          // end-cap 的 computed transform（matrix；用于验证角度换算真的随水位走）
-          // cx/cy 必须一起打：**transform 读不到径向定位**（纯旋转变换矩阵的 e/f 恒为 0），
-          // 圆点 cx 写成圆心 28px 时 transform 探针仍全绿，端点却被读数盖住（2026-10-07 5c-ball-ink）
-          capsDisplay:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).display:'(absent)',
-          capStartCx:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).cx:'(absent)',
-          capStartCy:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).cy:'(absent)',
-          capStartR:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).r:'(absent)',
-          capStartFill:dot.querySelector('.ring-cap-start')?getComputedStyle(dot.querySelector('.ring-cap-start')).fill:'(absent)',
-          arcPct:dot.style.getPropertyValue('--arc-pct'),
-          capEndTransform:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).transform:'(absent)',
-          capEndCx:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).cx:'(absent)',
-          capEndCy:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).cy:'(absent)',
-          capEndR:dot.querySelector('.ring-cap-end')?getComputedStyle(dot.querySelector('.ring-cap-end')).r:'(absent)',
-          pathLength:arc?arc.getAttribute('pathLength'):'?',
-          // 报障③ 取证：读数颜色必须随暗盘走 --ball-fg（lvl-warn/danger/muted 让位白字）。
-          // 报障① 取证：分段圆的 computed transform 必须是 rotate(-90)（与弧同起点 12 点）。
-          valueColor:dot.querySelector('.dot-value')?getComputedStyle(dot.querySelector('.dot-value')).color:'(absent)',
-          lvlClass:(dot.closest('.petball')||dot).className.match(/lvl-\w+/)?.[0]||'(none)',
-          segTransform:dot.querySelector('.ring-seg')?getComputedStyle(dot.querySelector('.ring-seg')).transform:'(absent)',
-          rNum
+          mode:body.getAttribute('data-island'),
+          combos:[...body.querySelectorAll('.isl-combo')].map(c=>c.getAttribute('data-supplier')+':'+c.getAttribute('data-kind')+'/'+c.getAttribute('data-lvl')),
+          strip:(()=>{const s=body.querySelector('.isl-strip'); const r=s?s.getBoundingClientRect():null; return r?Math.round(r.width)+'x'+Math.round(r.height):'?'})()
         });
       })()`)
-    )
-    process.stdout.write(`5c-form: ${id} ${formProbe}\n`)
-  }
-  // 高用量取证帧（10-06-ball-column-fixes 报障③）：上面的 5c 是 40% = lvl-ok，验不到
-  // 「lvl-warn/danger/muted 让位白字」那条覆写（ink 曾漏加，warn 档走页面级 --warn #b07d20
-  // 压在深墨盘上）。推 70% 强制 warn 档，对拍读数颜色。
-  await exec(`window.api.debugPush(${JSON.stringify(column70Snapshot())}, false)`)
-  for (const id of ['minimal', 'ink']) {
-    await exec(`window.api.setSkin('${id}')`)
-    await sleep(1100)
-    await shoot(`5c-ball-${id}-70`)
-    const warnProbe = String(
+    )}\n`
+  )
+  // ② 展开态：单击岛身 pop 出 2 列卡片（只读：窗口行 名 · % · 倒计时 + 余额金额）
+  const islTap = `(()=>{const b=document.querySelector('.isl-hit'); if(!b) return 'no-island'
+    const rc=b.getBoundingClientRect()
+    const o={clientX:rc.x+rc.width/2,clientY:rc.y+10,pointerId:7,bubbles:true,pointerType:'mouse',button:0,buttons:1}
+    b.dispatchEvent(new PointerEvent('pointerdown',o))
+    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
+    return 'sent'})()`
+  await exec(islTap)
+  await sleep(800)
+  process.stdout.write(
+    `5o-probe: ${String(
       await exec(`(()=>{
-        const dot=document.querySelector('.petball-fallback');
-        if(!dot) return 'no-dot';
+        const g=document.querySelector('.isl-grid'); if(!g) return 'no-grid';
         return JSON.stringify({
-          lvlClass:(dot.closest('.petball')||dot).className.match(/lvl-\\w+/)?.[0]||'(none)',
-          valueColor:dot.querySelector('.dot-value')?getComputedStyle(dot.querySelector('.dot-value')).color:'(absent)'
+          cells:[...g.querySelectorAll('.isl-cell')].map(c=>c.getAttribute('data-supplier')+':'+c.getAttribute('data-kind')),
+          wins:[...g.querySelectorAll('.isl-win')].map(w=>w.textContent).slice(0,3),
+          bigs:[...g.querySelectorAll('.isl-big')].map(b=>b.textContent)
         });
       })()`)
-    )
-    process.stdout.write(`5c-warn: ${id} ${warnProbe}\n`)
-  }
-  // 余额弧取证（10-06-ball-column-fixes 报障①b）：余额走 waterAnchors.accent，minimal 原本
-  // 未声明 --ball-accent → 回落页面级 --accent #111114（近黑），压在暗盘上对比度只有 1.03
-  // —— 用户报「直充的余额没有显示进度」。
-  {
-    const balJson = JSON.stringify([
-      { builtin: true, dataQuality: 'official', id: 'shot-bal', name: '余额', kind: 'balance', mark: 'deepseek', status: 'ok', source: '走查固件', dataAt: new Date().toISOString(), updatedAt: new Date().toISOString(), windows: [{ name: '账户余额', used: 1288.5, unit: 'cny' }] }
-    ])
-    await exec(`window.api.debugPush(${balJson}, false)`)
-    for (const id of ['minimal', 'ink']) {
-      await exec(`window.api.setSkin('${id}')`)
-      await sleep(1100)
-      await shoot(`5c-ball-${id}-bal`)
-      const balProbe = String(
-        await exec(`(()=>{
-          const arc=document.querySelector('.ring-arc');
-          if(!arc) return 'no-arc';
-          return JSON.stringify({
-            dataRing:document.querySelector('.petball-fallback')?.getAttribute('data-ring'),
-            arcStroke:getComputedStyle(arc).stroke,
-            arcDash:arc.getAttribute('stroke-dasharray')
-          });
-        })()`)
-      )
-      process.stdout.write(`5c-bal: ${id} ${balProbe}\n`)
-    }
-  }
-  await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
-  await sleep(900)
-  // 倒水冲顶取帧（去雨后只剩冲顶峰 pour-top：呈现层冻结，不动状态机；
-  // 此时候选供应商的切换计时照走，拍完 'off' 恢复。雨的 pour-mid 定帧随雨退役。）
-  await exec(`window.__bd_fluid_freeze?.('pour-top')`)
+    )}\n`
+  )
+  await shoot('5-island-open')
+  // 再点一次收起展开态
+  await exec(islTap)
   await sleep(600)
-  await shoot('5m-pour-top')
+  // 旧流体取帧钩子保留位（J4b：shots 经 __bd_fluid_freeze 取帧；岛无 morph，off 即复位语义）
   await exec(`window.__bd_fluid_freeze?.('off')`)
 
-  // ③ 贴边自动隐藏走查（R4-5 原地变柱）：贴边停留 → 球 morph 成屏边水柱（窗口不动）→ 悬停唤出
-  // ⚠ capturePage 拍的是窗口内容 —— 5g 证明"原地立柱渲染无损"（屏边 12px 温度计柱 + 柱内液位），
-  //   命中区即柱体的证据在 uitest 的 bounds/column 断言（dockHide/petWaterColumn），不在 PNG 里。
-  //   对着 5g 数像素说"只剩一条"就是 ballshot 教训的重演。解码验证见 check 报告。
-  // 真光标冻结：走查机上鼠标若停在水柱上，2500ms 里足够唤回一次，截图就错过隐藏态
+  // ③ 隐藏态走查（AC5）：贴边停留 → 岛缩成 mini-pill（窗口不动）→ 点击唤出
+  // ⚠ capturePage 拍的是窗口内容 —— 5g 证明"原位收缩渲染无损"（顶部窄条 + 等级点），
+  //   命中区即 pill 的证据在 uitest 的 dockHide/islandPill 断言，不在 PNG 里。
+  // 真光标冻结：走查机上鼠标若停在 pill 上，2500ms 里足够唤回一次，截图就错过隐藏态
   await exec('window.api.debugDockFreeze(true)')
-  await exec("window.api.debugDockEdge('left')")
+  await exec("window.api.debugDockEdge('top')")
   await sleep(2500) // 真实计时：1000ms 停留 + 300ms 隐藏动画
   await shoot('5g-dock-hidden')
+  process.stdout.write(
+    `5g-probe: ${String(
+      await exec(`(()=>{
+        const pill=document.querySelector('.isl-pill'); if(!pill) return 'no-pillar';
+        const r=pill.getBoundingClientRect();
+        return JSON.stringify({
+          mode:document.querySelector('.isl-body')?.getAttribute('data-island'),
+          pillW:Math.round(r.width), pillH:Math.round(r.height),
+          dots:[...pill.querySelectorAll('.isl-dot')].length
+        });
+      })()`)
+    )}\n`
+  )
   await exec('window.api.debugDockCursor(true)')
   await sleep(1500) // 真实计时：300ms 唤出停留 + 400ms morph 尾
   await shoot('5h-dock-revealed')
-  // 流体三帧：拉伸中 / 桥接中 / 水渍 ——
-  // __bd_fluid_freeze 把 goo 定在某一 morph 帧并暂停动画（呈现层冻结，不动状态机）。
-  // capturePage 拍的是窗口内容：这三张证明 morph 帧的形状渲染无损。
-  // 柱子与命中区同源的证据在 uitest 的 bounds 断言，不在 PNG 里。
-  await exec(`window.__bd_fluid_freeze?.('stretch')`)
-  await sleep(600)
-  await shoot('5i-fluid-stretch')
-  // 自描述探针（R3 整球吸入变形）：disc/bridge/disk 定帧 transform 打到日志，
-  // 拉丝与否看 matrix(sx)≠matrix(sy)，不靠像素猜（goo 开时颜色带漂移）。
-  // B4 第二轮加 disk（底盘已从 .petball-fallback 搬到 ::before）：它是"黑盘还在"的
-  // 直接证据位 —— stretch 帧必须是横向拉长的椭圆，不是完整圆。
-  process.stdout.write(
-    `5i-probe: ${String(
-      await exec(`(()=>{
-        const fb=document.querySelector('.petball-fallback');
-        const disc=document.querySelector('.fluid-disc');
-        const br=document.querySelector('.fluid-bridge');
-        return JSON.stringify({
-          disc:disc?getComputedStyle(disc).transform:'?',
-          bridge:br?getComputedStyle(br).transform:'?',
-          disk:fb?getComputedStyle(fb,'::before').transform:'?',
-          diskOp:fb?getComputedStyle(fb,'::before').opacity:'?'
-        });
-      })()`)
-    )}\n`
-  )
-  await exec(`window.__bd_fluid_freeze?.('bridge')`)
-  await sleep(600)
-  await shoot('5j-fluid-bridge')
-  await exec(`window.__bd_fluid_freeze?.('stain')`)
-  await sleep(600)
-  await shoot('5k-fluid-stain')
-  // B4 第二轮探针：底盘已从 .petball-fallback 搬到 ::before，必须确认它在 stain 帧
-  // 真的 scale(0) —— 冻结帧规则写对了但被更高特异度盖掉时，PNG 上球仍是完整的。
-  process.stdout.write(
-    `5k-probe: ${String(
-      await exec(`(()=>{
-        const fb=document.querySelector('.petball-fallback');
-        if(!fb) return 'no-fallback';
-        const cs=getComputedStyle(fb,'::before');
-        return JSON.stringify({
-          fluid:fb.getAttribute('data-fluid'), freeze:fb.getAttribute('data-freeze'),
-          diskTf:cs.transform, diskOp:cs.opacity, diskBg:cs.background.slice(0,40),
-          anim:cs.animationName,
-          disc:getComputedStyle(document.querySelector('.fluid-disc')).transform
-        });
-      })()`)
-    )}\n`
-  )
-  await exec(`window.__bd_fluid_freeze?.('off')`)
-  // 温度计定量帧（10-04-edge-sip-column）：单供应商单窗口 70%（单家无轮播），
-  // 贴边隐藏后柱高应为满管 70% —— AC 逐值对拍的实机点位。拍完恢复演示数据，
-  // 后续 dock 走查沿用原夹具。
-  await exec(`window.api.debugPush(${JSON.stringify(column70Snapshot())}, false)`)
-  await sleep(900) // 等读数补间收尾（COUNTUP 600ms，见 uitest pushSettle）
-  await exec('window.api.debugDockFreeze(true)')
-  await exec("window.api.debugDockEdge('left')")
-  await sleep(2500) // 真实计时：1000ms 停留 + 300ms 隐藏动画
-  // 自描述探针：把渲染态打到日志（fixture 是否存活、柱高、波浪数），截图解码时不再猜供应商
-  const columnProbe = String(
-    await exec(`(()=>{
-      const dot=document.querySelector('.petball-fallback');
-      if(!dot) return 'no-dot';
-      const fill=dot.querySelector('.fluid-column-fill');
-      const fr=fill?fill.getBoundingClientRect():null;
-      const fc=fill?getComputedStyle(fill):null;
-      const pill=dot.querySelector('.fluid-pill');
-      const pr=pill?pill.getBoundingClientRect():null;
-      const pc=pill?getComputedStyle(pill):null;
-      const goo=dot.querySelector('.petball-goo');
-      const gc=goo?getComputedStyle(goo):null;
-      const wv=dot.querySelector('.fluid-waves');
-      return JSON.stringify({fluid:dot.dataset.fluid,edge:dot.dataset.edge,
-        waves:dot.querySelectorAll('.fluid-wave').length,
-        wavesOpacity:wv?getComputedStyle(wv).opacity:'?',
-        fillH:fr?+fr.height.toFixed(1):-1,
-        fillW:fr?+fr.width.toFixed(1):-1,
-        fillBg:fc?.backgroundColor,fillOp:fc?.opacity,fillDisp:fc?.display,fillTf:fc?.transform,
-        pillW:pr?+pr.width.toFixed(1):-1,pillH:pr?+pr.height.toFixed(1):-1,
-        pillOp:pc?.opacity,pillTf:pc?.transform,
-        gooFilter:gc?.filter?.slice(0,40),
-        value:dot.querySelector('.dot-value')?.textContent ?? ''});
-    })()`)
-  )
-  process.stdout.write(`5n-probe: ${columnProbe}\n`)
-  await shoot('5n-column-70')
-  await exec('window.api.debugDockCursor(true)')
-  await sleep(1500)
   await exec('window.api.debugDockFreeze(false)')
   await exec(`window.api.debugPush(${JSON.stringify(demoSnapshot())}, false)`)
   await sleep(900)
-  await exec('window.api.debugDockFreeze(false)')
   await exec('window.api.expand()')
   await sleep(700)
 
   // 右键菜单走查：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活。
   // 菜单本身是原生窗口，capturePage 抓不到它 —— 这张证明菜单弹出前后渲染层无损。
+  // 先收起（菜单挂在岛上），拍完回卡片视图。
+  await exec(collapseBtn)
+  await settle(ISLAND_VIEW)
   await exec(`(()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
+    const b=document.querySelector('.isl-hit'); if(!b) return
     const rc=b.getBoundingClientRect()
-    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
+    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+10,bubbles:true}))
   })()`)
   await sleep(900)
-  await shoot('5e-ball-menu')
+  await shoot('5e-island-menu')
   await exec("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
   await sleep(500)
 

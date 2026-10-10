@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "IslandView 新组件 props/样式规范，token 用法与皮肤边界"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "无状态库约束，extras 落盘 ui:islandX 与 lifting 规则"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "拖动 pointer/ref-mirror 与 effect 清理规范"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "tsc + 断言脚本流程，loadTs 真源铁律"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "缺失值保持缺失（无数据画灰不编数），字面联合类型"}

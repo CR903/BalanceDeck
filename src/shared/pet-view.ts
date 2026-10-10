@@ -3,7 +3,8 @@
 //
 // 为什么放 shared：窗口尺寸曾与人物形态机位同源（pet3d/rig.ts），兜底尺寸一旦与
 // 主进程形态表漂移，首帧就会按错的画面算。人物形态已下线（10-03-remove-human），
-// 现在只剩一个尺寸 —— 仍放 shared，口径不变（主进程 overlay.ts 与渲染层同源）。
+// 10-10-dynamic-island 起收起态是灵动岛（ISLAND_VIEW）；BALL_VIEW 只剩旧分支与
+// 单测过渡引用 —— 仍放 shared，口径不变（主进程 overlay.ts 与渲染层同源）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -13,5 +14,18 @@
  * 窗口尺寸，SVG 的 `viewBox="0 0 56 56"` 也一直是这个数。收起态不建 3D 场景，
  * 所以窗口不再需要「把球体 + 留白装下」，方寸大小就是视觉大小。
  * 命中区按整块窗口上报，主进程再外扩 3px → 实际可点 62px。
+ *
+ * @deprecated 10-10-dynamic-island 起收起态改走 ISLAND_VIEW（顶部灵动岛）。
+ * 保留供旧分支 PetBall 与单测过渡引用一个版本，新代码一律用 ISLAND_VIEW。
  */
 export const BALL_VIEW = { width: 56, height: 56 }
+
+/**
+ * 收起态灵动岛窗口（10-10-dynamic-island，design 决策 1：固定尺寸，不跟随岛 resize）。
+ *
+ * 560 宽 = 岛收起 `fit-content` 上限（PRD：超长岛身 560 后横滑）+ 两侧辉光余量；
+ * 480 高 = 展开态 430×~350 卡片区 + 顶部岛位 + 輝光余量。transparent + 穿透轮询
+ * 复用既有 overlay.ts:619-672，渲染层按 setPetHitbox 上报岛/mini-pill rect。
+ * 动态 setBounds 会与拖拽坐标、贴边持久化纠缠，否决 —— 窗口只在收起/展开切换时改尺寸。
+ */
+export const ISLAND_VIEW = { width: 560, height: 480 }

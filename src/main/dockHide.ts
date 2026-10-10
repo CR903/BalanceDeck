@@ -226,7 +226,7 @@ export function createDockHide(deps: DockHideDeps): {
     enterHidden()
   }
 
-  /** 进入隐藏态：覆盖命中区为屏边水柱，通知渲染层，持久化 */
+  /** 进入隐藏态：覆盖命中区为顶部 mini-pill，通知渲染层，持久化 */
   function enterHidden(): void {
     const b = safeBounds()
     if (edge && b) {
@@ -520,7 +520,7 @@ export function createDockHide(deps: DockHideDeps): {
       }
       // 启动恢复：按当前 bounds 重判贴边（持久化坐标可能已随工作区变化被夹回别处）。
       // 只有仍在边沿才恢复隐藏 —— 显示器拔掉后窗口被夹回屏幕中间时若还按旧 edge 藏，
-      // 球是全可见的、命中区却只有水柱条（看得见点不着）。R6：不漂出可视区优先于记住隐藏态。
+      // 岛是全可见的、命中区却只有 mini-pill 条（看得见点不着）。R6：不漂出可视区优先于记住隐藏态。
       // （到这里 isActive 必为真：false 的情况上面已 return。）
       // bounds 读不到 → 按全可见启动（不动窗口，不藏）。
       const b = safeBounds()

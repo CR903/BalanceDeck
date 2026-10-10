@@ -4,7 +4,7 @@ import { CardView } from './CardView'
 import { DetailView } from './DetailView'
 import { SettingsView } from './SettingsView'
 import { presetConfig } from './VoiceReminderSection'
-import { PetBall } from './PetBall'
+import { IslandView } from './IslandView'
 import { renderTrayIcon } from './ProviderMark'
 import type { PetMenuModel } from '../../shared/types'
 import { providerSummary, qualitySuffix } from '../../shared/tray-text'
@@ -103,10 +103,10 @@ export default function App(): React.JSX.Element {
   const [hideBalance, setHideBalance] = useState(false)
 
 
-  // ─── 收起态（2D 小水球，唯一的形态）──────────────────────────────────────
+  // ─── 收起态（顶部灵动岛，10-10-dynamic-island）────────────────────────────
   // 人物形态已下线（10-03-remove-human）：不再有选人/改名/形态开关。
   // ui:pet 残留 '1' 的老用户由主进程 primePrefs 迁回 '0'，这里只做防御性归一
-  // （不读 morph 语义，窗口恒 56×56）。
+  // （窗口恒为灵动岛尺寸，收起态直连 IslandView，无形态开关）。
   /** 悬浮球是否总在最前（ui:alwaysOnTop，默认开） */
   const [alwaysTop, setAlwaysTop] = useState(true)
   /** 贴边自动隐藏（ui:dockHide，默认开；关掉即回现行行为） */
@@ -115,8 +115,8 @@ export default function App(): React.JSX.Element {
   const [dockHidden, setDockHidden] = useState(false)
   /**
    * 流体相位 + 贴边（主进程 dock:fluid 推，渲染层只切 CSS 类）。
-   * 相位不在四项内时按 edge-visible 画整球（preload 已复验，这里再守一次 ——
-   * 渲染层是信任边界之外，默认安全态必须是"看得见的整球"而不是水渍）。
+   * 相位不在四项内时按 edge-visible 画全可见岛（preload 已复验，这里再守一次 ——
+   * 渲染层是信任边界之外，默认安全态必须是"看得见的全可见岛"而不是隐藏痕迹）。
    */
   const [fluidPhase, setFluidPhase] = useState('edge-visible')
   const [fluidEdge, setFluidEdge] = useState<string | null>(null)
@@ -930,7 +930,7 @@ export default function App(): React.JSX.Element {
     const off2 = window.api.onCollapsed(setCollapsed)
     // 启动期拉一次收起态：主进程的 ui:collapsed 推送在 loadFile().then 就发出了，
     // 早于本 effect 的订阅（实测晚 73ms），只听推送必然丢首帧 —— 主进程已按收起态
-    // 56×56 建窗，这里却按默认 false 画 384×600 卡片，用户只看到卡片左上角一个图标
+    // 灵动岛尺寸建窗，这里却按默认 false 画 384×600 卡片，用户只看到卡片左上角一个图标
     // （表现为「启动了但看不到界面」）。invoke 无时序依赖，拿到后覆盖即可；
     // 若拉取返回前推送已到（不应发生，但顺序无害），后到的 invoke 值与之一致。
     void window.api.getCollapsed().then(setCollapsed)
@@ -1009,14 +1009,14 @@ export default function App(): React.JSX.Element {
       <div className="app" data-skin={skin}>
         {skinCss && <style>{skinCss}</style>}
         {collapsed ? (
-          <PetBall
+          <IslandView
+            snapshots={state.snapshots}
+            instanceInfo={instanceInfo}
             hideBalance={hideBalance}
             dockHidden={dockHidden}
             fluidPhase={fluidPhase}
             fluidEdge={fluidEdge}
             onExpand={doExpand}
-            onDragStart={(grab) => window.api.dragStart(grab)}
-            onDragEnd={() => window.api.dragEnd()}
             onMenu={petMenu}
             notice={ttsVisualText}
             alertText={alertText}

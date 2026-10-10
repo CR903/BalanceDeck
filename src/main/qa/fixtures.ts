@@ -84,9 +84,9 @@ export function wave40Snapshot(): unknown[] {
   ]
 }
 /**
- * 温度计定量夹具（10-04-edge-sip-column）：单供应商单窗口 70%。
- * 单家无轮播（count<=1 不推进，idx 恒定），贴边隐藏后柱高确定可解码
- * （满管 70% ≈ 39px/78px@2x —— AC 逐值对拍的实机点位）。
+ * 定量夹具（单供应商单窗口 70%）。
+ * 单家无轮播（count<=1 不推进，idx 恒定）。原 10-04 温度计柱逐值对拍点位，
+ * 水柱退役后不再做柱高解码，仅作单家场景的稳定数据源。
  */
 export function column70Snapshot(): unknown[] {
   const nowIso = new Date().toISOString()

@@ -1,8 +1,10 @@
 // shared/fluid.ts 行为测试（纯函数，node 直接跑）
 // 用法：node scripts/test-fluid.mjs
 //
-// 悬浮球流体隐藏：时序常量/液位映射/水渍几何/相位映射（吸入/汇聚/水渍三元素与
-// dock:fluid 通道的唯一口径。渲染层与主进程状态机共用同一实现，不各自硬编码）。
+// 隐藏相位与液位：时序常量/液位映射/mini-pill 命中区/相位映射（吸入/汇聚两段
+// morph 与 dock:fluid 通道的唯一口径。渲染层与主进程状态机共用同一实现，
+// 不各自硬编码；隐藏态几何归 shared/dock-hide.ts 的 mini-pill，不归这里 ——
+// 旧 waterColumn（屏边温度计水柱）已随水球退役，用例 3/4 改钉 pill）。
 
 import { loadTs } from './lib/load-ts.mjs'
 import { readFileSync } from 'node:fs'
@@ -23,8 +25,7 @@ const {
   FLUID_PHASES,
   isFluidPhase,
   fluidForPhase,
-  level,
-  waterColumn
+  level
 } = fluid
 
 let pass = 0
@@ -68,36 +69,34 @@ eq(level(undefined), 0, '缺失 → 0')
 eq(level(33.35), 0.334, '33.35 → 0.334（一位小数粒度：33.35*10=333.5→334）')
 ok(level(13.7) === level(13.7), '同样输入永远同样输出（CSS 高度不抖）')
 
-console.log('用例 3：水柱即命中区（R4-5 原地变柱：waterColumn 委托 peekHitbox）')
-eq(dockHide.COLUMN_W, 12, '柱宽 12px（屏边常驻看得见，命中区即柱体）')
-eq(waterColumn('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 12, height: 56, vertical: true }, '左：12 宽 × 56 高竖柱（屏边侧贴左）')
-eq(waterColumn('right', { width: 56, height: 56 }), { x: 44, y: 0, width: 12, height: 56, vertical: true }, '右：12 宽 × 56 高竖柱（屏边侧贴右）')
-eq(waterColumn('top', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 12, vertical: false }, '上：56 宽 × 12 高横槽（屏边侧贴顶）')
-eq(waterColumn('bottom', { width: 56, height: 56 }), { x: 0, y: 44, width: 56, height: 12, vertical: false }, '下：56 宽 × 12 高横槽（屏边侧贴底）')
-// 水柱与命中区逐位一致（看得见的柱子整根可点，不存在半态；实现上就是委托，不断了会红）
-for (const [e, name] of [['left', '左'], ['right', '右'], ['top', '上'], ['bottom', '下']]) {
-  const col = waterColumn(e, { width: 56, height: 56 })
-  const peek = peekHitbox(e, { width: 56, height: 56 })
-  ok(col && col.x === peek.x && col.y === peek.y && col.width === peek.width && col.height === peek.height, `${name}：水柱与 peekHitbox 同源（命中区即柱体）`)
-}
-eq(waterColumn('left', { width: NaN, height: 56 }), null, 'NaN 尺寸 → null')
-eq(waterColumn('left', { width: 0, height: 56 }), null, '零宽 → null')
-eq(waterColumn('bogus', { width: 56, height: 56 }), null, '非法边 → null')
+console.log('用例 3：隐藏命中区即 mini-pill（10-10-dynamic-island R6：peekHitbox 直出顶部 pill）')
+eq(dockHide.MINI_PILL_W, 132, 'pill 宽 132px（窄条 + 各家等级点放得下）')
+eq(dockHide.MINI_PILL_H, 26, 'pill 高 26px（细条不抢视觉）')
+eq(peekHitbox('top', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '岛窗 560×480：132×26 顶部居中（(560-132)/2=214）')
+eq(peekHitbox('left', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '岛只吸顶：左沿同样收成顶部 pill')
+eq(peekHitbox('right', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '右沿同样收成顶部 pill')
+eq(peekHitbox('bottom', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '下沿同样收成顶部 pill')
+// 窄窗夹紧（fail-open 的一部分）：窗口比 pill 窄时按窗口收，不凭空摆错位 pill
+eq(peekHitbox('top', { width: 100, height: 480 }), { x: 0, y: 0, width: 100, height: 26 }, '窄窗：宽按窗口夹紧（x=0）')
+eq(peekHitbox('top', { width: 560, height: 20 }), { x: 214, y: 0, width: 132, height: 20 }, '矮窗：高按窗口夹紧')
+eq(peekHitbox('left', { width: NaN, height: 480 }), null, 'NaN 尺寸 → null')
+eq(peekHitbox('left', { width: 0, height: 480 }), null, '零宽 → null')
+eq(peekHitbox('bogus', { width: 560, height: 480 }), null, '非法边 → null')
 
-console.log('用例 4：水柱几何守卫（坏输入回 null，不摆错位水柱）')
-eq(waterColumn('left', null), null, 'null 尺寸 → null')
-eq(waterColumn('up', { width: 56, height: 56 }), null, '非法边 → null（不是 undefined）')
+console.log('用例 4：pill 几何守卫（坏输入回 null，不摆错位 pill）')
+eq(peekHitbox('left', null), null, 'null 尺寸 → null')
+eq(peekHitbox('up', { width: 560, height: 480 }), null, '非法边 → null（不是 undefined）')
 
 console.log('用例 5：相位映射（DockPhase → FluidPhase，唯一口径）')
 eq(fluidForPhase('hiding'), 'absorbing', 'hiding → absorbing（morph 中）')
-eq(fluidForPhase('hidden'), 'hidden', 'hidden → hidden（水柱态）')
-eq(fluidForPhase('dwell-reveal'), 'hidden', 'dwell-reveal → hidden（还在柱上）')
+eq(fluidForPhase('hidden'), 'hidden', 'hidden → hidden（隐藏态）')
+eq(fluidForPhase('dwell-reveal'), 'hidden', 'dwell-reveal → hidden（唤出停留仍算隐藏）')
 eq(fluidForPhase('revealing'), 'revealing', 'revealing → revealing（morph 尾中）')
 eq(fluidForPhase('idle'), 'edge-visible', 'idle → edge-visible')
 eq(fluidForPhase('dwell-hide'), 'edge-visible', 'dwell-hide → edge-visible（morph 还没开始）')
 eq(fluidForPhase('edge-visible'), 'edge-visible', 'edge-visible → edge-visible')
-eq(fluidForPhase('dwell-rehide'), 'edge-visible', 'dwell-rehide → edge-visible（球在全可见位）')
-eq(fluidForPhase('bogus'), 'edge-visible', '未知相位 → edge-visible（默认画整球）')
+eq(fluidForPhase('dwell-rehide'), 'edge-visible', 'dwell-rehide → edge-visible（重藏等待时岛在全可见位）')
+eq(fluidForPhase('bogus'), 'edge-visible', '未知相位 → edge-visible（默认画全可见岛）')
 eq(JSON.stringify(FLUID_PHASES), JSON.stringify(['edge-visible', 'absorbing', 'hidden', 'revealing']), '相位全集四项')
 ok(isFluidPhase('absorbing') && !isFluidPhase('hiding') && !isFluidPhase(''), 'isFluidPhase 只认四相位')
 

@@ -1,29 +1,30 @@
 import { BrowserWindow, screen, app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { BALL_VIEW } from '../shared/pet-view'
+import { ISLAND_VIEW } from '../shared/pet-view'
 import { createDockHide, type DockPersisted } from './dockHide'
 import type { DockEdge } from '../shared/dock-hide'
 
-// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成 2D 小水球。
+// 常驻悬浮卡片：无边框、透明、置顶、不进任务栏，可收起成顶部灵动岛。
 // 位置持久化在 userData/state.json。
 //
-// 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view）：
-//   · 只有主体可见（纯 DOM 渲染），其余像素完全透明；
+// 收起态是「主体 + 一圈留白」的窗口（尺寸见 shared/pet-view 的 ISLAND_VIEW）：
+//   · 只有主体（岛 / mini-pill）可见（纯 DOM 渲染），其余像素完全透明；
 //   · 主体以外的区域鼠标穿透（光标轮询 + setIgnoreMouseEvents），桌面上点得到下面的窗口；
 //   · 用户拖动主体即拖动窗口（位置持久化）。
 //
-// 人物形态已下线（10-03-remove-human）：窗口恒 56×56，不再有形态分支。
+// 人物形态已下线（10-03-remove-human）；水球已退役（10-10-dynamic-island），
+// 收起态恒为灵动岛窗口，不再有形态分支。
 
 const EXPANDED = { width: 384, height: 600 }
-/** 收起态：2D 小水球（唯一的收起形态；56×56，全屏水体 + 环心一个数，无 WebGL） */
-const COLLAPSED_BALL = BALL_VIEW
+/** 收起态：顶部灵动岛（固定 560×480，岛收起 fit-content 上限 560 + 辉光余量） */
+const COLLAPSED_ISLAND = ISLAND_VIEW
 /** 是否总在最前（可关闭；关闭后不再悬浮于其他窗口之上） */
 let alwaysOnTop = true
 
-/** 收起态目标尺寸：恒为 2D 小水球（人物形态已下线，不再有形态分支） */
+/** 收起态目标尺寸：恒为灵动岛窗口（水球 56×56 已退役，不再有形态分支） */
 function collapsedTarget(): { width: number; height: number } {
-  return COLLAPSED_BALL
+  return COLLAPSED_ISLAND
 }
 
 /**
@@ -31,7 +32,7 @@ function collapsedTarget(): { width: number; height: number } {
  * 在 createOverlay 之前 await 一次，窗口就能按最终尺寸/层级直接创建，避免闪一下。
  *
  * 老用户迁移（10-03-remove-human）：`ui:pet === '1'`（曾开启个性人物）→ 写回 `'0'`。
- * 窗口本来就恒为 56×56（形态分支已删），这一写只是让磁盘上的旧偏好不再谎称人物形态，
+ * 窗口本来就恒为收起态尺寸（形态分支已删），这一写只是让磁盘上的旧偏好不再谎称人物形态，
  * 避免未来代码把残留值误读成形态。
  */
 export async function primePrefs(): Promise<void> {
@@ -78,7 +79,7 @@ export function petWindowState(): { alwaysOnTop: boolean } {
  * ⚠ 为什么必须有这个拉取入口，而不是只靠 `syncCollapsedState()` 推送：
  *   推送发生在 `win.loadFile().then(...)`，此时渲染层的 React 还没跑到
  *   `useEffect` 里的 `onCollapsed` 订阅 —— 实测主进程 t=…625 发、渲染层 t=…698 才订，
- *   首帧的 `ui:collapsed` 必丢。丢了之后主进程按 56×56 建窗（收起态），
+ *   首帧的 `ui:collapsed` 必丢。丢了之后主进程按灵动岛尺寸建窗（收起态），
  *   渲染层却按默认 `collapsed=false` 画 384×600 展开卡片，用户只看到卡片
  *   左上角一个图标 —— 表现为「应用启动了但看不到界面」。
  *   推送保留（运行中的变更仍走它），启动期改为拉取：invoke 天然没有时序依赖。
@@ -144,7 +145,7 @@ function safeSend(channel: string, payload: unknown): void {
  */
 const dock = createDockHide({
   getBounds: () =>
-    win?.getBounds() ?? { x: 0, y: 0, width: BALL_VIEW.width, height: BALL_VIEW.height },
+    win?.getBounds() ?? { x: 0, y: 0, width: ISLAND_VIEW.width, height: ISLAND_VIEW.height },
   setPosition: (x: number, y: number) => {
     // 744 崩溃的 choke 点：dockHide 的计时器链全部经这里动窗口。
     // undefined/NaN 不得进原生 setPosition（Electron 报 conversion failure
@@ -168,15 +169,15 @@ const dock = createDockHide({
   },
   getWorkArea: () => {
     const b = win?.getBounds()
-    const cx = (b?.x ?? 0) + (b?.width ?? BALL_VIEW.width) / 2
-    const cy = (b?.y ?? 0) + (b?.height ?? BALL_VIEW.height) / 2
+    const cx = (b?.x ?? 0) + (b?.width ?? ISLAND_VIEW.width) / 2
+    const cy = (b?.y ?? 0) + (b?.height ?? ISLAND_VIEW.height) / 2
     // 按窗口中心挑显示器：与 snapBackToWorkArea 同一口径
     return screen.getDisplayNearestPoint({ x: cx, y: cy }).workArea
   },
   isActive: () => {
     if (!win || !state.collapsed || !dockEnabled) return false
     const b = win.getBounds()
-    return b.width === BALL_VIEW.width && b.height === BALL_VIEW.height
+    return b.width === ISLAND_VIEW.width && b.height === ISLAND_VIEW.height
   },
   reducedMotion: () => reducedMotion,
   setPeekOverride: (rect) => {
@@ -226,8 +227,8 @@ export function dockTestToEdge(edge: DockEdge): { x: number; y: number } {
   // 上一边可能还藏着，直接读隐藏坐标判边会判出 null、可重复调用就断了
   dock.onDragStart()
   const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-  const w = BALL_VIEW.width
-  const h = BALL_VIEW.height
+  const w = ISLAND_VIEW.width
+  const h = ISLAND_VIEW.height
   const pos =
     edge === 'left'
       ? { x: wa.x, y: Math.round(wa.y + (wa.height - h) / 2) }
@@ -280,7 +281,7 @@ export function dockTapPeek(): void {
   dock.onTapPeek()
 }
 
-/** 收起态异步缩放到目标尺寸（恒 56×56） */
+/** 收起态异步缩放到目标尺寸（恒为灵动岛窗口） */
 function resizeCollapsed(): void {
   if (!win || !state.collapsed) return
   // 先复位隐藏态（R5 取消条件），再按目标尺寸摆
@@ -377,7 +378,7 @@ export function createOverlay(): BrowserWindow {
       // 隐藏/非聚焦窗口的 setTimeout 会做 intensive throttling（1 分钟以上的
       // 定时器被降到最低频率）。定时播报的间隔是 1 小时，被节流后就无法保证
       // 「到点播报」——而且这个失败是静默的：定时器仍会触发，只是可能晚很多，
-      // 界面上看不出任何异常。收起态小水球的数字动画走 rAF（切窗口时暂停重排），
+      // 界面上看不出任何异常。收起态的数字动画走 rAF（切窗口时暂停重排），
       // 语音提醒走的是 setTimeout 自重排，且触发后要发网络请求，时序不能被压。
       backgroundThrottling: false
     }

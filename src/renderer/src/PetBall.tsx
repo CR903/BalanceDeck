@@ -19,9 +19,13 @@ import { Icon } from './components'
 import { markColor, markDataUrl } from './ProviderMark'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 收起态：唯一的形态是 2D 小水球 —— 56×56 窗口、全屏水体、环心一个数；
+// 收起态旧分支：2D 小水球 —— 56×56 窗口、全屏水体、环心一个数；
 // 纯 DOM，不建 3D 场景、不占显存、不加载任何角色素材（首版 56×56 窗口，`d5a028e`；
 // 外圈用量环已于 10-04 退役，进度改由球内水位表达）。
+//
+// ⚠ 10-10-dynamic-island 起收起态走 IslandView（顶部灵动岛，App 直连，无开关）。
+//   本文件是旧分支，不再被 App 引用；水柱分支（fluid-pill / 柱顶波 / 液光流 /
+//   刻度 / 悬停 peek）已随 R4 删除，隐藏态命中区几何归 shared/dock-hide.ts 的 mini-pill。
 //
 // 人物形态已下线（10-03-remove-human）：pet3d 整目录、FIGURE_VIEW、形态分支、
 // 人物泡泡/动作上报全部删除。本文件只剩圆环 + 轮播 + 流体 + 确认气泡。
@@ -66,7 +70,8 @@ const CONFIRM_BUBBLE_H = 49
  * 三层错速（A 快层 2.2/28 / B 慢层 1.6/36 反向 / C 细纹 0.9/18），phase 互相错开半个周期。
  * 位移走 CSS translateX 循环（只位移、不逐帧重算 d），循环距离取波长的整数倍
  * （-28 / -36 / -36）保证首尾无缝；x 起止（-40..96）盖住最大位移 36。
- * 纯视图构造（SVG 形状），共享契约（液位/相位/水柱几何）归 shared/fluid.ts。
+ * 纯视图构造（SVG 形状），共享契约（液位/相位/隐藏命中区几何）归 shared/fluid.ts
+ * 与 shared/dock-hide.ts（mini-pill）。
  */
 function wavePoints(surfaceY: number, phase: number, A: number, L: number): string[] {
   const pts: string[] = []
@@ -121,17 +126,11 @@ function waveBand(surfaceY: number, phase: number, A = 2.2, L = 28, up = 3, down
   return `M ${top.join(' L ')} L ${bottom.join(' L ')} Z`
 }
 
-/**
- * 水柱顶的小波浪（固定形状，周期 4px，-4..12 盖住 4px 宽的柱面加两侧余量）。
- * 位移走 CSS（0 → -4px 循环，整数个周期，无缝）；横槽那条把同一张 svg 转 90°
- * （见 skins.css），不另画第二份路径。
- */
-const COLUMN_WAVE_D = `M -4 1.5 q 1 -1 2 0${' t 2 0'.repeat(8)}`
 
 /**
  * 环形进度的五个圆（V1 刻度圈 / V3 双环 / V5 分段环 / 轨道 / 进度弧）。
  *
- * 分工（唯一口径，两处消费：球本体与 peek 预览气泡共用本函数，不复制第二份）：
+ * 分工（唯一口径，球本体消费，不复制第二份）：
  *   · **JSX 只负责归一化空间** —— 每个 circle 带 `pathLength`，周长被折算成
  *     100（弧）/ 96（刻度圈，24 粒 × 4）。有了它 stroke-dasharray 的单位是
  *     「百分比」而不是像素，于是半径可以留在 CSS 令牌里（--ring-r 逐皮肤不同），
@@ -516,8 +515,6 @@ export function PetBall({
   const surfaceLine = useMemo(() => waveLine(surfaceY, 0, waves.a.A, waves.a.L), [surfaceY, waves])
   /** 泡沫带：与 A 同参数（见 waveBand 注释），B/C 冒头盖进泡沫里 */
   const foamBand = useMemo(() => waveBand(surfaceY, 0, waves.a.A, waves.a.L), [surfaceY, waves])
-  /** 水柱方向：左右边竖柱（液高从底起）、上下边横槽（液宽从左起），与 shared/fluid.waterColumn 同口径 */
-  const columnVertical = fluidEdgeAttr === 'left' || fluidEdgeAttr === 'right'
   /**
    * 水色锚点：当前皮肤的 --ok/--warn/--danger（.app 上读，见 water-color.ts）。
    * 换肤经 MutationObserver 重读 —— useState 存整套锚点对象，observer 只在 data-skin
@@ -579,8 +576,7 @@ export function PetBall({
   // 取帧钩子（--shots 用）：`window.__bd_fluid_freeze('stretch'|'bridge'|'stain')`
   // 把 goo 定在某一 morph 帧并暂停动画，`'pour-top'` 定在倒水冲顶时刻（整球外扩已删）
   // （10-04-pour-in-slosh，不依赖 data-pour 是否还在播 —— freeze 规则自带终态位移；
-  // 雨的 'pour-mid' 已随雨退役），
-  // `'peek'` 定在悬停预览（P4：强制显现 peek 气泡，像素对拍 hover 不可达的态）。
+  // 雨的 'pour-mid' 与悬停 peek 的 'peek' 已随水柱退役），
   // `'off'` 恢复 live。纯呈现层冻结 ——
   // 返回值是 void（结构化克隆安全），与 __bd_ball 的数据钩子分开。
   useEffect(() => {
@@ -588,7 +584,7 @@ export function PetBall({
     w.__bd_fluid_freeze = (stage: string) => {
       const goo = document.querySelector('.petball-fallback')
       if (!goo) return
-      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-top' || stage === 'peek')
+      if (stage === 'stretch' || stage === 'bridge' || stage === 'stain' || stage === 'pour-top')
         goo.setAttribute('data-freeze', stage)
       else goo.removeAttribute('data-freeze')
     }
@@ -946,42 +942,6 @@ export function PetBall({
               </div>
             )}
             <div className="fluid-bridge" />
-            {/* 贴边水柱（10-03-holo-sphere 水满 + 10-04-edge-sip-column 温度计）：
-                隐藏态的水渍 pill 改为水柱 —— 几何（竖柱/横槽、占满痕迹条）归
-                shared/fluid.waterColumn，这里只摆液位与波浪：柱内液高/液宽 = 同一 fluidLvl，
-                柱顶一条小波浪，水色跟 water（连续插值，CSS lvl 兜底；与球内水体同源同色）。
-                温度计三件套：液头弯月（fill ::before，随水色走）+ 管壁三格刻度（.fluid-ticks，
-                空槽也看得见）+ 管壁侧光（pill ::after）。液位 0 时只留空槽 + 不挂波浪，
-                不造假水位。absorbing 灌满/revealing 缩走都只动位移，不碰高度值
-                （高度是数据的，位移是演的 —— 见 skins.css column-rise）。 */}
-            <div className="fluid-pill">
-              <div
-                className="fluid-column-fill"
-                style={
-                  columnVertical
-                    ? { height: `${(fluidLvl * 100).toFixed(1)}%`, background: water ?? undefined }
-                    : { width: `${(fluidLvl * 100).toFixed(1)}%`, background: water ?? undefined }
-                }
-              >
-                {/* 柱顶小波浪：坐在液面上（fill 的顶部/前缘），液位 0 时 fill 高度
-                    为 0，波浪无处附着 —— 与「不造假水位」同一条件，不单独再判。
-                    hidden 态保持动画（柱内动荡，见 skins.css hidden 暂停名单）。 */}
-                {fluidLvl > 0 && (
-                  <>
-                    <span className="fluid-column-wave" aria-hidden="true">
-                      <svg viewBox="-4 0 16 3" preserveAspectRatio="none" aria-hidden="true">
-                        <path d={COLUMN_WAVE_D} className="fluid-column-wave-path" />
-                      </svg>
-                    </span>
-                    {/* 液内高光漂移（P3，原型 cshim 口径）：与柱顶波同条件挂载 ——
-                        空槽不挂波浪也不挂光，不造假水位（K8k1）；hidden 下保持动画。 */}
-                    <i className="fluid-shimmer" aria-hidden="true" />
-                  </>
-                )}
-              </div>
-              {/* 管壁刻度：纯装饰（aria-hidden），温度计读数感；空槽时也在（管子的刻度不依赖有没有水） */}
-              <i className="fluid-ticks" aria-hidden="true" />
-            </div>
           </div>
           {/* 环形进度（V1/V3/V5 环形态皮肤）：**替代**球内水体，同一数字只编码一次
               （用户拍板：环与水不共存 —— 两者同时在场等于同一个百分比被画两遍）。
@@ -1043,31 +1003,6 @@ export function PetBall({
             <span className="dot-winlabel" aria-hidden="true">
               {shortWindowLabel(active.name)}
             </span>
-          )}
-          {/* 悬停 peek（P4，原型 D 区口径）：hidden 下柱上停留冒完整波浪预览，
-              移开即散。纯视觉层（aria-hidden + CSS pointer-events:none），从不拦截点击 ——
-              单击仍是唤出（dockReveal），悬停永不唤出。波浪/水色/读数全部复用本次渲染的
-              waveA/water/shownText，不另起取数；落雨 3 滴固定位（原型 pk-drops 口径）。
-              与柱顶波/shimmer 同条件（fluidLvl > 0）：空槽不挂预览，不造假水位。
-              默认 opacity 0（5n 柱 shot 像素无影响）；--shots 经 data-freeze='peek' 强制显现。 */}
-          {fluidLvl > 0 && (
-            <div className="fluid-peek" aria-hidden="true">
-              <svg className="fluid-peek-waves" viewBox="0 0 56 56" aria-hidden="true">
-                <circle cx="28" cy="28" r="27" className="fluid-peek-bg" />
-                {/* 预览跟随本体形态（P6）：环形态皮预览环、水体皮预览波，两者同一条件
-                    由 CSS 的 --ring-display / --water-display 切换（不双份 DOM：
-                    预览要预览的就是本体那张脸）。环复用同一个 ringSvg —— 弧长、弧色、
-                    半径、线宽与本体逐值同源。 */}
-                <g className="fluid-peek-ring">{ringSvg(fluidLvl, water)}</g>
-                <g clipPath="url(#fluid-clip)">
-                  <path d={waveA} className="fluid-peek-wave" style={{ fill: water ?? undefined }} />
-                </g>
-              </svg>
-              <span className="fluid-peek-drop p1" aria-hidden="true" />
-              <span className="fluid-peek-drop p2" aria-hidden="true" />
-              <span className="fluid-peek-drop p3" aria-hidden="true" />
-              <span className="fluid-peek-value">{shownText}</span>
-            </div>
           )}
         </div>
       )}

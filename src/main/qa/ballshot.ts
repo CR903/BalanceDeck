@@ -1,8 +1,9 @@
-// --ballshot：只拍收起态 2D 小水球，十几秒出图。
+// --ballshot：只拍收起态灵动岛，十几秒出图。
 //
 // 人物形态已下线（10-03-remove-human）：BD_PET / BD_PET_ID / BD_PETS / BD_ONLY /
 // BD_ISOLATE / BD_TOGGLE / BD_DEBUG_RING / BD_SETTINGS 全部退役 —— 它们都读 3D 场景
 // （window.__bd_ball 的 petReady/dump/gesture），而收起态不再创建场景。
+// 水球已退役（10-10-dynamic-island）：拍的是顶部灵动岛（.isl-body），不再是 56×56 水球。
 // 传了这些变量只会打一行说明，不静默拍错图。
 //
 // 环境变量开关：BD_FAKE_DATA=0 不注入演示数据；BD_SKIP_COLLAPSE=1 不收起；
@@ -24,7 +25,7 @@ export async function runBallshot(): Promise<void> {
     })
     for (const k of RETIRED) {
       if (process.env[k] !== undefined) {
-        process.stdout.write(`⚠ ${k} 已随人物形态下线（10-03-remove-human），本次忽略，只拍 2D 小水球。\n`)
+        process.stdout.write(`⚠ ${k} 已随人物形态下线（10-03-remove-human），本次忽略，只拍灵动岛。\n`)
       }
     }
     await new Promise((r) => setTimeout(r, 9000))
@@ -54,20 +55,18 @@ export async function runBallshot(): Promise<void> {
       }
       process.stdout.write(`shot: ${name}\n`)
     }
-    await shot('ball', 3)
+    await shot('island', 3)
     process.stdout.write(
       'diag: ' +
         String(
           await win.webContents.executeJavaScript(
             `JSON.stringify({
                win: [window.innerWidth, window.innerHeight],
-               stage: (()=>{const s=document.querySelector('.petball-stage'); return s?[s.clientWidth,s.clientHeight]:null})(),
-               // 覆盖层实际占位（R8）：任一元素越出窗口就是被 .petball 的 overflow:hidden 切了
-               // 2D 小水球是 56×56 窗口里的唯一内容，也列进来核对它没被切
-               // .petball-confirm 是最容易越界的一个
-               overlay: [...document.querySelectorAll('.petball-fallback,.petball-bubble,.petball-confirm,.petball-badge,.petball-toast')]
+               island: (()=>{const b=document.querySelector('.isl-body'); if(!b) return null; const r=b.getBoundingClientRect(); return [b.getAttribute('data-island'),Math.round(r.width),Math.round(r.height)]})(),
+               // 覆盖层实际占位：任一元素越出窗口就是被 .isl-root 的 overflow 裁了
+               overlay: [...document.querySelectorAll('.isl-strip,.isl-pill,.isl-open,.isl-bubble,.isl-confirm')]
                  .map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ')[0],Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]}),
-               ball: window.__bd_ball?.() ?? null
+               isl: window.__bd_island?.() ?? null
              })`,
             true
           )
@@ -79,7 +78,7 @@ export async function runBallshot(): Promise<void> {
       for (const id of ['dark', 'minimal', 'candy', 'ink', 'aero']) {
         await setSkin(id)
         await new Promise((r) => setTimeout(r, 1400))
-        await shot(`ball-skin-${id}`)
+        await shot(`island-skin-${id}`)
       }
     }
     {

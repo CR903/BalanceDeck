@@ -1,20 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// 悬浮球贴边自动隐藏：纯函数（时序常量 + 液位映射 + 水柱几何 + 相位映射）。
+// 隐藏相位与液位映射：纯函数（时序常量 + 液位映射 + 相位映射）。
 //
 // 本模块是纯函数（不依赖 electron / DOM / React），因此主进程的状态机
-// （src/main/dockHide.ts）、渲染层（PetBall.tsx 的波浪/水柱定位）与单元测试
-// （scripts/test-fluid.mjs）共用同一实现。几何口径与 src/shared/dock-hide.ts
-// 同源（COLUMN_W 柱宽、56×56 球窗），边类型直接复用 DockEdge，不自立第二份。
+// （src/main/dockHide.ts）、渲染层与单元测试（scripts/test-fluid.mjs）共用同一实现。
+// 隐藏态命中区几何归 src/shared/dock-hide.ts（mini-pill），不归这里 ——
+// 旧 waterColumn（屏边温度计水柱）已随水球退役（10-10-dynamic-island R4）。
 //
-// 口径（PRD R5/R9 + design Fluid 节 + R4-5 原地变柱）：
+// 口径（PRD R5/R9 + design Fluid 节）：
 //   · 吸入总 ~530ms（拉伸 150 ease-out → 桥接合并 300 → pill 定形 + 微回弹 80）；
-//   · 汇聚反向 ~400ms；窗口不再滑出屏幕（原地 morph，位移步进退役）；
-//   · 液位 = percent（与 percent.ts 的一位小数归一化同粒度，无浮点抖动）；
-//   · 隐藏态 = 屏边 COLUMN_W（12px）温度计水柱，命中区即柱体。
+//   · 汇聚反向 ~400ms；窗口不再滑出屏幕（原地收缩，位移步进退役）；
+//   · 液位 = percent（与 percent.ts 的一位小数归一化同粒度，无浮点抖动）。
 // ═══════════════════════════════════════════════════════════════════════════════
-
-import type { DockEdge } from './dock-hide'
-import { peekHitbox } from './dock-hide'
 
 /** 吸入拉伸段：球体向贴边侧拉伸成液桥起手（150ms ease-out，PRD R5） */
 export const ABSORB_STRETCH_MS = 150
@@ -48,12 +44,12 @@ export function isFluidPhase(v: unknown): v is FluidPhase {
  * 主进程 DockPhase → 流体相位（唯一映射，dockHide.ts 与单测共用）。
  *
  *   hiding → absorbing（morph 进行中，窗口位移尚未开始）；
- *   hidden / dwell-reveal → hidden（水渍态，波浪暂停）；
+ *   hidden / dwell-reveal → hidden（隐藏态，mini-pill）；
  *   revealing → revealing（窗口已滑回，morph 进行中）；
  *   其余（idle / dwell-hide / edge-visible / dwell-rehide）→ edge-visible
- *   （球全可见：等待隐藏时 morph 还没开始，重藏等待时球也在全可见位置）。
+ *   （岛全可见：等待隐藏时 morph 还没开始，重藏等待时岛也在全可见位置）。
  *
- * 未知字符串回 edge-visible（渲染层默认画整球，不凭空变水渍）。
+ * 未知字符串回 edge-visible（渲染层默认画全可见岛，不凭空变隐藏痕迹）。
  */
 export function fluidForPhase(phase: string): FluidPhase {
   if (phase === 'hiding') return 'absorbing'
@@ -82,33 +78,4 @@ export function level(percent: unknown): number {
 export interface Size {
   width: number
   height: number
-}
-
-/**
- * 贴边水柱（R4-5 原地变柱：隐藏态窗口不动，原地立起屏边温度计柱）。
- *
- * 几何直接委托 dock-hide.ts 的 peekHitbox —— 柱子矩形与命中区是同一出处，
- * 看得见的柱子整根可点，不存在「柱子宽、能点的窄」的半态。
- * （左右边：COLUMN_W 宽 × 满高竖柱，贴边侧；上下边：满宽 × COLUMN_W 高横槽。）
- * 柱内液高/液宽 = 同一 fluidLevel(pct)，柱顶一条小波浪（渲染层）。
- *
- * 为什么另起一个函数而不是让渲染层直接调 peekHitbox：方向是视图才需要的
- * 信息（竖柱的液高从底起、横槽的液宽从左起，CSS 按 `vertical` 分两套摆），
- * 而「柱子与命中区同源」这句口径要有单测钉住 —— 钉在共用实现上，不钉在 CSS 声明上。
- *
- * 非法输入回 null：调用方回退到「不画柱子只留命中区」，不凭空摆一个错位水柱。
- */
-export interface WaterColumn {
-  x: number
-  y: number
-  width: number
-  height: number
-  /** true = 左右边的竖柱（液高从底起）；false = 上下边的横槽（液宽从左起） */
-  vertical: boolean
-}
-
-export function waterColumn(edge: DockEdge, size: Size): WaterColumn | null {
-  const box = peekHitbox(edge, size)
-  if (!box) return null
-  return { ...box, vertical: edge === 'left' || edge === 'right' }
 }

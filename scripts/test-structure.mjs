@@ -631,7 +631,7 @@ const PET_WINDOW_FULLBLEED = [
   // 这层**本来就没有阴影**（立体感全在 ::after 与 inset 上），列进来是补"名单不全"的
   // 机器门空洞：有人给环加 glow 用 outer shadow，这条立刻红。
   ['.petball.no3d .fluid-ring', '环形进度层：56×56 = 整块窗口，弧的立体感不许用 outer shadow'],
-  ['.petball.no3d .fluid-peek', '预览气泡：inset:0 = 整块窗口，阴影全 inset'],
+  // P4 悬停 peek 已随水柱退役（预览锚在柱上）：本名单不再收 peek，岛的那半见下。
   // ⚠ 曾经把 `.petball-debugring` 也列进来，理由写的是「按投影上报的外接框 = 整个窗口」——
   //   **那条理由是假的**（`PetBall.tsx:812` 写明它只可能是人物形态：ringBox 由 3D 场景的
   //   hitRect 填，球形态 w 恒为 0，所以它在 56×56 窗口里**根本不存在**）。人物形态下它也
@@ -661,6 +661,24 @@ ok(
   fbBefore != '' && fbLayers.length > 0,
   `D6 inset-3d 球盘的立体感由 inset 阴影提供，box-shadow 至少 1 层（实际 ${fbLayers.length} 层）`
 )
+
+// D6b · 灵动岛（10-10-dynamic-island）：岛窗口 560×480 远大于岛本体，窗口级裁方
+// 纪律不适用岛 —— 但岛自己的两条要钉：① .isl-body 规则在（删了岛样式即红）；
+// ② pill 窄条高度与 shared/dock-hide.MINI_PILL_H 同源（两处各写一个 26 必然漂移，
+// 与 I2 同一条纪律；DOM pill 宽是 fit-content，随家数变，只钉高）。
+{
+  const islandCss = read('src/renderer/src/island.css').replace(/\/\*[\s\S]*?\*\//g, '')
+  ok(islandCss.length > 0, 'D6b 前置：island.css 读得到（下面的断言不能空洞通过）')
+  ok(/\.isl-body\s*\{/.test(islandCss), 'D6b 岛主体规则在（删了岛样式即红）')
+  // stripTsComments 在文件后部定义，这里直接读原文 —— 注释里没有 `MINI_PILL_H = 数字`
+  // 形状的赋值语句，正则不会误命中注释。
+  const miniH = /MINI_PILL_H\s*=\s*(\d+)/.exec(read('src/shared/dock-hide.ts'))?.[1]
+  const pillH = /\.isl-pill\s*\{[^}]*height:\s*(\d+)px/.exec(islandCss)?.[1]
+  ok(
+    miniH != null && pillH != null && miniH === pillH,
+    `D6b pill 高 ${pillH || '?'}px 与 shared/dock-hide.MINI_PILL_H=${miniH || '?'} 同源（改一边即红）`
+  )
+}
 
 // ─── E. 语音播报链路的主进程前提（09-29-tts-smart-broadcast）────────────────
 //
@@ -1035,7 +1053,7 @@ eq2(
 //
 // 几何唯一来源是 shared/dock-hide.ts（主进程状态机与单测共用）；overlay.ts 只做
 // 转接（三个调用点：dragStop 尾 / dragStart 头 / 显示器重定位处）。
-// 隐藏态命中区覆盖为屏边水柱 —— 渲染层常规上报在隐藏态下不被采信（跨层契约）。
+// 隐藏态命中区覆盖为顶部 mini-pill —— 渲染层常规上报在隐藏态下不被采信（跨层契约）。
 console.log('\nI. 贴边自动隐藏的单一几何来源')
 
 const DOCK_SHARED = 'src/shared/dock-hide.ts'
@@ -1056,9 +1074,9 @@ ok(
   !/\belectron\b/.test(dockMainBody),
   'I1b 状态机不直接 import electron（窗口/屏幕经 overlay 注入，否则单测加载不了）'
 )
-// 阈值与柱宽的数值字面量只允许出现在几何模块一处（两处各写一个 8/12 必然漂移）。
-// fluid.ts 是几何的共同拥有者（水柱与命中区同源）：它可以**引用**，
-// 但不许自立第二个数 —— 下一条 I2c 单独钉住它，扫描时先排除。
+// 阈值类数值字面量只允许出现在几何模块一处（两处各写一个 8/12 必然漂移）。
+// fluid.ts 不拥有几何（水柱退役后它只剩时序/液位/相位）：引用也不许，
+// 自立第二个数更不许 —— 下一条 I2c 单独钉住它，扫描时先排除。
 const dockScanned = [
   ...sharedFiles.map((f) => `src/shared/${f}`),
   ...mainTs.map((f) => `src/main/${f}`)
@@ -1069,9 +1087,11 @@ const dupDock = dockScanned.filter((f) => {
 })
 eq2(dupDock, [], 'I2 EDGE_THRESHOLD / COLUMN_W 只在几何模块命名（别处硬编码 8/12 会漂移）')
 ok(
-  /from '\.\/dock-hide'/.test(fluidSharedBody) &&
-    !/(const|let)\s+(EDGE_THRESHOLD|COLUMN_W|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(fluidSharedBody),
-  'I2c 流体模块经 shared/dock-hide 取几何常量（引用不断、不自立第二个数）'
+  fluidSharedBody.length > 0 &&
+    !/(const|let)\s+(EDGE_THRESHOLD|COLUMN_W|HIDE_DWELL_MS|REVEAL_DWELL_MS|REHIDE_MS)\s*=/.test(fluidSharedBody) &&
+    !/export type (DockEdge|FluidEdge)/.test(fluidSharedBody) &&
+    /export type DockEdge/.test(dockSharedBody),
+  'I2c 边类型与几何常量唯一出处是 shared/dock-hide（fluid.ts 只剩时序/液位/相位，不自立边类型与第二个数；FluidEdge 已删）'
 )
 ok(
   !/\belectron\b|\bdocument\.|window\.|navigator\./.test(fluidSharedBody),
@@ -1189,12 +1209,17 @@ ok(
 )
 ok(/waveLine\(/.test(petBallWater), 'K2b 高光线经 waveLine 构造（与 A 层同参数，不是手写第二份路径）')
 ok(
-  /fluid-drift-c/.test(css) && /column-drift/.test(css),
-  'K2c 第三层位移 + 水柱波浪位移的关键帧都在（只挂类名不写关键帧 = 静止的假波浪）'
+  /fluid-drift-c/.test(css),
+  'K2c 第三层位移关键帧在（只挂类名不写关键帧 = 静止的假波浪）'
+)
+ok(
+  css.length > 0 && !/column-drift/.test(css),
+  'K2c2 水柱波浪位移 keyframe 已随水柱退役（回来即红；css 非空前置防空洞通过）'
 )
 // K2d · 位移距离必须是各自波长的整数倍（R1 后走变量：keyframes 只写 var，
 //     具体像素由 --wave-len-* 给 —— :root 默认 28/36/18 见 K9a，逐皮肤同步见 test-fluid 用例 9）。
-//     A=1×len-a / B=1×len-b（反向）/ C=2×len-c；柱顶小波浪周期 4px 走 -4（固定形状，不变量化）。
+//     A=1×len-a / B=1×len-b（反向）/ C=2×len-c；柱顶小波（column-drift，周期 4px
+//     走 -4）已随水柱退役（K2c2）。
 //     ⚠ 按块切片再取数：跨 `@keyframes` 边界贪过去会读到下一块的数，删掉整块照样绿。
 const kfBlock = (name) => {
   const start = css.indexOf(`@keyframes ${name}`)
@@ -1205,8 +1230,7 @@ const kfBlock = (name) => {
 for (const [name, expr] of [
   ['fluid-drift-a', 'calc(var(--wave-len-a) * -1)'],
   ['fluid-drift-b', 'calc(var(--wave-len-b) * -1)'],
-  ['fluid-drift-c', 'calc(var(--wave-len-c) * -2)'],
-  ['column-drift', 'translateX(-4px)']
+  ['fluid-drift-c', 'calc(var(--wave-len-c) * -2)']
 ]) {
   const block = kfBlock(name)
   ok(block != null && block.includes(expr), `K2d ${name} 位移经 ${expr}（波长整数倍，不断裂）`)
@@ -1234,17 +1258,21 @@ ok(
     ruleBody(css, '.petball.no3d.lvl-muted .fluid-wave') != null,
   'K3c lvl-warn/danger/muted 的水色覆写都在（删掉一级，那一级的水就恒绿）'
 )
-// K3d · 连续水色（10-04-water-color-by-usage）：三层波 fill 与柱内液 background
-// 走内联 water（waterColor(pct) 插值），K3b/K3c 的 CSS 留作兜底 —— 内联被删时
+// K3d · 连续水色（10-04-water-color-by-usage）：三层波 fill 走内联 water
+// （waterColor(pct) 插值），K3b/K3c 的 CSS 留作兜底 —— 内联被删时
 // 水退回三档而不是透明/无色（删内联不断裂的证明见 K3b/K3c 仍绿）。
+// 柱内液 background 已随水柱退役（K3d2）。
 ok(
   /from '\.\.\/\.\.\/shared\/water-color'/.test(petBallWater) && /waterColor\(pct/.test(petBallWater),
   'K3d PetBall 经 shared/water-color 的 waterColor(pct) 算水色（不手写第二份插值）'
 )
 ok(
-  /className="fluid-wave fluid-wave-a"[^>]*style=\{\{\s*fill:\s*water/.test(petBallWater) &&
-    /className="fluid-column-fill"[^]*background:\s*water/.test(petBallWater),
-  'K3d 三层波 fill + 柱内液 background 都绑内联 water（少绑一处，那处的水就恒三档）'
+  /className="fluid-wave fluid-wave-a"[^>]*style=\{\{\s*fill:\s*water/.test(petBallWater),
+  'K3d 三层波 fill 绑内联 water（少绑一处，那处的水就恒三档）'
+)
+ok(
+  petBallWater.length > 0 && !/fluid-column-fill/.test(petBallWater),
+  'K3d2 柱内液 background 已随水柱退役（回来即红；PetBall 非空前置防空洞通过）'
 )
 
 // K7 · 倒水入场（去雨后：slosh 荡漾 + pour-top 冲顶 + pour-flash 闪峰，无雨滴/水花/壁流）。
@@ -1309,139 +1337,59 @@ ok(
     !/@keyframes bridge-absorb\s*\{/.test(css),
   'K8b 液桥按边拉宽成流道（横/纵两套，旧单套 bridge-absorb 已删，不留第二套 morph）'
 )
+// K8c · 吸入灌柱已随水柱退役：column-rise 无残留（回来即红；css 非空前置防空洞通过）。
 ok(
-  /\[data-fluid='absorbing'\][^{]*\.fluid-column-fill[^}]*column-rise/.test(css),
-  'K8c 吸入时柱从空灌到满（位移演灌满，高度恒 = fluidLvl，见 K8f）'
+  css.length > 0 && !/column-rise/.test(css),
+  'K8c 柱灌满位移已随水柱退役（column-rise 无残留；回来即红）'
 )
-// K8d · hidden 保持柱顶波动荡：hidden 暂停名单里必须没有 column（有 = 柱子冻住，违背"里面也是水在动荡"）。
-// 负向断言的非空洞由 J3b/K5a 兜底（hidden 规则被整个删掉时它们先红）。
+// K8d · hidden 暂停名单无水柱残留（水柱退役：柱顶波/液光流已无处可停；名单本身
+// 仍停球内波，由 J3b/K5a 守 —— hidden 规则被整个删掉时它们先红，非空洞通过）。
 {
   const hi = css.indexOf("[data-fluid='hidden']")
-  const seg = css.slice(hi, hi + 600).split('paused')[0]
-  ok(hi >= 0 && !/fluid-column-wave/.test(seg), 'K8d hidden 只停球内波，柱顶波不在暂停名单里')
+  const seg = hi >= 0 ? css.slice(hi, hi + 600) : ''
+  ok(hi >= 0 && !/fluid-column-wave|fluid-shimmer|column-|fluid-peek/.test(seg), 'K8d hidden 暂停名单无水柱残留（column 波/光/位移/预览回来即红）')
 }
+// K8e · 温度计三件套已随水柱退役：管壁刻度 JSX + 液头弯月 / 管壁侧光 CSS 全无残留
+// （回来一项即红；双非空前置防空洞通过）。
 ok(
-  /\.doc-hidden[^{]*\.fluid-column-wave[^}]*paused/.test(css),
-  'K8d2 页面不可见时柱顶波仍暂停（省电：没人看的动画不烧，hidden 的"活着"只给看得见的屏）'
+  petBallWater.length > 0 && !/className="fluid-ticks"/.test(petBallWater),
+  'K8e 管壁刻度 JSX 已随水柱退役（回来即红）'
 )
 ok(
-  /className="fluid-ticks"/.test(petBallWater) &&
-    /column-fill:not\(:empty\)/.test(css) &&
-    /fluid-pill::after/.test(css),
-  'K8e 温度计三件套：管壁刻度 JSX + 液头弯月（空槽不画假液头）+ 管壁侧光 CSS'
+  css.length > 0 && !/fluid-ticks/.test(css) && !/column-fill:not\(:empty\)/.test(css) &&
+    !/fluid-pill::after/.test(css),
+  'K8e2 液头弯月 + 管壁侧光 + 刻度 CSS 已随水柱退役（回来即红）'
 )
-// K8m · P4 悬停 peek（原型 D 区口径）：柱上停留冒完整波浪预览气泡，不唤出。
-//   · 只在 hidden 下挂（球态 hover 不冒第二颗球）；
-//   · pointer-events:none（预览不拦截点击，单击仍是唤出，不误触）；
-//   · 显现延迟 250ms < REVEAL_DWELL_MS(300)（与唤出计时同源，预览先到，唤出仍靠点击）。
+// K8m · 悬停 peek 已随水柱退役（预览锚在柱上，无柱即无预览）：JSX / CSS 双无残留
+// （回来一项即红；双非空前置防空洞通过。显现门/跟随形态/取帧 peek 规则一并退役）。
 ok(
-  /className="fluid-peek"/.test(petBallWater) &&
-    /className="fluid-peek-value"/.test(petBallWater) &&
-    /className="fluid-peek-drop/.test(petBallWater),
-  'K8m1 peek 气泡 JSX 在（波浪 + 落雨 + 读数，不另起取数，都复用本次渲染的 waveA/water/shownText）'
-)
-{
-  // K8m1b · peek 与柱顶波/shimmer 同条件（fluidLvl > 0）：空槽 hover 不冒球，不造假水位。
-  // 断法与 K8k1b 同一配平模式（K7h 那套）：peek 的类名必须落在条件块内 ——
-  // 条件被删（最近的条件在 peek 之前根本不存在）或 peek 被搬出块（配平块不含 marker），都红。
-  const peekBlock = condBlock(petBallWater, 'className="fluid-peek"', 'fluidLvl > 0')
-  ok(
-    peekBlock != null && peekBlock.includes('className="fluid-peek"'),
-    'K8m1b peek 气泡包在 fluidLvl > 0 条件块内（无水挂预览即红；删条件即红）'
-  )
-  // K8m1c · peek 不另起取数：波形/水色/读数复用本次渲染的 waveA/water/shownText。
-  ok(
-    peekBlock != null &&
-      peekBlock.includes('d={waveA}') &&
-      peekBlock.includes('fill: water') &&
-      peekBlock.includes('{shownText}'),
-    'K8m1c peek 复用 waveA/water/shownText（d={waveA}、fill: water、{shownText}；另起取数即红）'
-  )
-}
-ok(
-  /:has\(\.petball-hit:hover\)[^{]*\.fluid-peek/.test(css) &&
-    /\[data-fluid='hidden'\][^{]*\.fluid-peek/.test(css) &&
-    /\.fluid-peek[^}]*pointer-events:\s*none/.test(css),
-  'K8m2 peek 经 hit-hover + hidden 双门显现（球态不冒；预览不吃指针）'
+  petBallWater.length > 0 && !/fluid-peek/.test(petBallWater),
+  'K8m1 peek 气泡 JSX 已随水柱退役（回来即红）'
 )
 ok(
-  /\.fluid-peek[^}]*transition-delay:\s*250ms/.test(css) &&
-    /data-freeze='peek'/.test(css) &&
-    /'peek'/.test(petBallCode),
-  'K8m3 peek 显现延迟 250ms（< REVEAL_DWELL_MS）+ 取帧 peek 态（--shots 像素对拍）+ freeze 钩子认 peek'
+  css.length > 0 && !/fluid-peek/.test(css),
+  'K8m2 peek CSS 已随水柱退役（显现门/跟随形态/取帧规则一并退役；回来即红）'
 )
-// K8m4 · 预览先到、唤出靠点击：peek 显现延迟必须 < REVEAL_DWELL_MS。
-// 跨模块算术门（CSS transition-delay vs shared/dock-hide.ts，与
-// test-alert-orchestration.mjs L33 同模式 —— 两处各写一个数必然漂移，
-// 单测把不等式钉住；改任一侧的数都要过这一关）。
-{
-  const dwellSrc = stripTsComments(read('src/shared/dock-hide.ts'))
-  const dwellMs = Number(/REVEAL_DWELL_MS\s*=\s*(\d+)/.exec(dwellSrc)?.[1])
-  const peekCss = decls(ruleBody(css, '.petball.no3d .fluid-peek'))
-  const delayMs = Number(/(\d+)\s*ms/.exec(peekCss['transition-delay'] || '')?.[1])
-  ok(
-    Number.isFinite(dwellMs) && dwellMs > 0,
-    `K8m4a 前置：读得到 REVEAL_DWELL_MS（实际 ${String(dwellMs)}）`
-  )
-  ok(
-    peekCss['transition-delay'] != null && Number.isFinite(delayMs),
-    `K8m4b 前置：读得到 peek transition-delay（实际 ${peekCss['transition-delay'] || '未找到'}）`
-  )
-  ok(
-    Number.isFinite(dwellMs) && Number.isFinite(delayMs) && delayMs < dwellMs,
-    `K8m4 peek 显现延迟 ${String(delayMs)}ms < REVEAL_DWELL_MS ${String(dwellMs)}ms（预览先到，唤出仍只靠点击）`
-  )
-}
 // K8d3 · P3 皮肤落地：hidden 下深色后浪（foam）也暂停 —— 球内四层（A/B/C/后浪）
 // 照停，柱顶波 + 液光流保持动画（K8d 只许柱顶活，球内全停）。
 ok(
   /\[data-fluid='hidden'\][^{]*\.fluid-foam[^}]*animation-play-state:\s*paused/.test(css),
   'K8d3 hidden 态暂停深色后浪（球内四层照停；柱顶波不在名单里，见 K8d）'
 )
-// K8j · P3 柱顶浪按天气走：柱顶小波的时长读 --wave-speed-a（逐皮肤各异，
-// 写死 1.6s 等于五皮同浪；位移仍是固定 -4px，见 K2d）。
+// K8j · 柱顶小波已随水柱退役（--wave-speed-a 仍被高光线/泡沫带消费，见 K9d）。
 ok(
-  /\.fluid-column-wave svg[^}]*var\(--wave-speed-a\)/.test(css),
-  'K8j 柱顶小波时长走 --wave-speed-a（振幅/速度逐皮肤不同）'
+  css.length > 0 && !/fluid-column-wave/.test(css),
+  'K8j 柱顶小波 CSS 已随水柱退役（回来即红；css 非空前置防空洞通过）'
 )
-// K8k · P3 液内高光漂移（原型 cshim 口径）：柱内液光流 JSX + CSS + 上下漂移关键帧
-// 都在；hidden 下保持动画（柱顶活的第二半），页面不可见/降级时停。
+// K8k · 液内高光漂移已随水柱退役：JSX / CSS / 关键帧全无残留
+// （--slosh-dur 仍被 pour-slosh 消费，见 K9i）。
 ok(
-  /className="fluid-shimmer"/.test(petBallWater),
-  'K8k1 液光流在 JSX 里（与柱顶波同条件挂载，空槽不造假光）'
-)
-// K8k1b · 液光流与柱顶波**同条件**挂载（fluidLvl > 0）：只断存在不断条件，
-// 把光搬出条件（空槽挂假光）照样绿 —— 标签与机制对不上的永真兜底（见 K7h 配平模式）。
-// 断法：从 marker 往回找最近的 `{fluidLvl > 0`，配平花括号取整块，波与光必须在同一块内。
-function condBlock(src, marker, cond) {
-  const mi = src.indexOf(marker)
-  if (mi < 0) return null
-  const open = src.lastIndexOf(`{${cond}`, mi)
-  if (open < 0) return null
-  let depth = 0
-  for (let j = open; j < src.length; j++) {
-    if (src[j] === '{') depth++
-    else if (src[j] === '}') {
-      depth--
-      if (depth === 0) return src.slice(open, j + 1)
-    }
-  }
-  return null
-}
-{
-  const waveBlock = condBlock(petBallWater, 'className="fluid-column-wave"', 'fluidLvl > 0')
-  ok(
-    waveBlock != null && waveBlock.includes('className="fluid-shimmer"'),
-    'K8k1b 液光流与柱顶波在同一 fluidLvl > 0 条件块内（光搬出条件即红；删条件即红）'
-  )
-}
-ok(
-  /\.fluid-shimmer[^}]*var\(--slosh-dur\)/.test(css) && /@keyframes column-shimmer/.test(css),
-  'K8k2 液光流 CSS 走 --slosh-dur（逐皮肤天气速度）+ column-shimmer 关键帧在'
+  petBallWater.length > 0 && !/fluid-shimmer/.test(petBallWater),
+  'K8k1 液光流 JSX 已随水柱退役（回来即红）'
 )
 ok(
-  /\(fluidLvl \* 100\)\.toFixed\(1\)/.test(petBallCode),
-  'K8f 柱内液高 = fluidLvl 逐值绑定（隐藏态水柱液高与球内液位同一出处，逐值对拍的结构侧）'
+  css.length > 0 && !/fluid-shimmer/.test(css) && !/column-shimmer/.test(css),
+  'K8k2 液光流 CSS + column-shimmer 关键帧已随水柱退役（回来即红）'
 )
 // K8o · 诚实水位不变量：surface ⟺ fill>0（10-06-column-zero-fill）
 //
@@ -1476,57 +1424,16 @@ ok(
     `K8p .fluid-ring 门控是 hasData（0% 是空环不是无环；实测: ${gateMatch ? gateMatch[0].replace(/\s+$/,'') : '未找到'}，应为 {hasData &&）`
   )
 }
-// K8n · 柱两端胶囊（10-06-ball-column-fixes B2）：竖柱 12×56 / 横槽 56×12 的短边
-// 都是 12，radius 6 = 短边一半即两端全圆；液头弯月是 12px 整圆（与柱同宽的温度计
-// 液头，原型 .col radius:12px 口径的折半）；柱顶泡沫波不得横穿弯月（对比色描线压
-// 在圆头上会把圆顶切成尖顶 —— 波退到液面主体上，圆头保持干净）。
-{
-  const pill = decls(ruleBody(css, '.petball.no3d .fluid-pill'))
-  const pillR = parseFloat(pill['border-radius'] || '')
-  const pillL = decls(ruleBody(css, ".petball.no3d .petball-fallback[data-edge='left'] .fluid-pill"))
-  const pillT = decls(ruleBody(css, ".petball.no3d .petball-fallback[data-edge='top'] .fluid-pill"))
-  const pillRok = ruleBody(css, ".petball.no3d .petball-fallback[data-edge='right'] .fluid-pill") != null
-  const pillBok = ruleBody(css, ".petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill") != null
-  ok(
-    pillR === 6 && parseFloat(pillL.width) === 12 && parseFloat(pillL.height) === 56 && pillRok,
-    `K8n1 竖柱胶囊：pill radius 6 = 短边 12 的一半（实际 radius ${pill['border-radius'] || '未找到'} / 左柱 ${pillL.width || '?'}×${pillL.height || '?'}；删任一圆角即红）`
-  )
-  ok(
-    pillR === 6 && parseFloat(pillT.width) === 56 && parseFloat(pillT.height) === 12 && pillBok,
-    `K8n1 横槽胶囊：同上（实际顶槽 ${pillT.width || '?'}×${pillT.height || '?'}；删任一圆角即红）`
-  )
-  const fillRadiusDecls = (ruleBody(css, '.petball.no3d .fluid-column-fill') || '').match(/border-radius\s*:/gi) || []
-  ok(
-    fillRadiusDecls.length === 0,
-    `K8n2 柱内液 fill 无 border-radius（B3：fill 是纯矩形，圆角效果来自容器 .fluid-pill overflow:hidden 裁切；实测 ${fillRadiusDecls.length} 处 border-radius，应 0）`
-  )
-  const dome = decls(ruleBody(css, '.petball.no3d .fluid-column-fill:not(:empty)::before'))
-  ok(
-    dome['border-radius'] === '50%',
-    `K8n3 液头弯月是整圆（实际 border-radius ${dome['border-radius'] || '未找到'}；:not(:empty) 空槽不画假液头）`
-  )
-  ok(
-    /\[data-edge='left'\][\s\S]*?fluid-column-fill:not\(:empty\)::before[\s\S]*?\{[^}]*height\s*:\s*12px/.test(css),
-    'K8n3 竖柱弯月 12px 整圆（与柱同宽；删掉即红）'
-  )
-  ok(
-    /\[data-edge='top'\][\s\S]*?fluid-column-fill:not\(:empty\)::before[\s\S]*?\{[^}]*width\s*:\s*12px/.test(css),
-    'K8n3 横槽弯月 12px 整圆（删掉即红）'
-  )
-  // 泡沫波退到弯月之下：竖柱波 viewport 顶在 fill 6px 处（弯月占 -6..6）且底锚定 fill
-  // 底（微液位时波被 viewport 裁掉，不飘进空槽）；横槽波退到弯月之后（right:6px）。
-  ok(
-    /\[data-edge='(left|right)'\][^{]*\.fluid-column-wave[^{]*\{[^}]*top\s*:\s*6px[^}]*bottom\s*:\s*0/.test(css),
-    'K8n4 竖柱柱顶波退到弯月之下（top:6px + bottom:0；波横穿圆头即红）'
-  )
-  ok(
-    /\[data-edge='(top|bottom)'\][^{]*\.fluid-column-wave[^{]*\{[^}]*right\s*:\s*6px/.test(css),
-    'K8n4 横槽柱顶波退到弯月之后（right:6px；波横穿圆头即红）'
-  )
-}
+// K8n · 柱胶囊几何（竖柱 12×56 / 横槽 56×12 / 弯月整圆 / 柱顶波退位）已随水柱退役 ——
+// 选择器级无残留由 K4 的 absence 名单覆盖（pill 本体 + 四边 + fill + 弯月 + 柱顶波逐条判），
+// 这里不再单列数值断言（数值已无载体，断数值等于断空气）。
+ok(
+  css.length > 0 && !/\.fluid-column-fill|\.fluid-column-wave/.test(css),
+  'K8n 柱内液 / 柱顶波选择器无残留（K4 名单的复核口；回来即红）'
+)
 ok(
   /\[data-fluid='hidden'\][^{]*\.fluid-waves[^}]*opacity:\s*0/.test(css),
-  'K8g 隐藏稳态球内水不可见（屏上只剩温度计柱，水位诚实）'
+  'K8g 隐藏稳态球内水不可见（drain 收尾 opacity 0 的衔接；旧分支 hidden 下无可见主体）'
 )
 ok(
   /\[data-fluid='hidden'\][^{]*\.petball-goo[^}]*filter:\s*none/.test(css),
@@ -1537,7 +1444,7 @@ ok(
     /\[data-fluid='hidden'\][^{]*\.dot-value[^}]*opacity:\s*0/.test(css) &&
     /\.dot-provider[^}]*opacity:\s*0\s*!important/.test(css) &&
     /\.petball-fallback\[data-fluid='hidden'\]::after[^}]*opacity:\s*0/.test(css),
-  'K10c 隐藏稳态藏底盘与读数（原地变柱只留水柱；旧滑出靠离屏遮丑，新口径必须显式藏；mark 内联 opacity 须 !important 盖；玻璃罩 ::after 同门 opacity 0，否则顶光残影=球幽灵）'
+  'K10c 隐藏稳态藏底盘与读数（旧分支 hidden 下无可见主体；旧滑出靠离屏遮丑，新口径必须显式藏；mark 内联 opacity 须 !important 盖；玻璃罩 ::after 同门 opacity 0，否则顶光残影=球幽灵）'
 )
 ok(
   /disc-absorb-h/.test(css) &&
@@ -1568,9 +1475,9 @@ for (const prop of [
   )
 }
 // K9b · B5 反转：ink 由水体皮改成环球皮，C 层不再需要 display:none（环形态整体不画水体）。
-// 保留门的语义：ink 与 aero 的波性格不同（--wave-* 令牌值不同），一眼可辨靠水效承担
-// 的是「柱顶浪」与「隐藏栏」，不是球内水。断言：ink 的 --wave-speed-a 与 :root 不同
-// （若回落到 :root 值，ink 的柱体性格就掉回 aero）。
+// 保留门的语义：ink 与 aero 的波性格不同（--wave-speed-a 值不同）—— 高光线与泡沫带
+// （surface/foam）仍读它；若回落到 :root 值，ink 的水效性格就掉回 aero。
+// （柱顶浪/隐藏栏已随水柱退役，不再是性格载体。）
 {
   const inkWaveA = tokenInScope('--wave-speed-a', 'ink')
   const rootWaveA = tokenInScope('--wave-speed-a', 'root')
@@ -1746,15 +1653,16 @@ for (const [feature, props] of [
 // 弧长绑 fluidLevel（唯一数据口径）：JSX 里 strokeDasharray 必须来自 ringDash(fluidLvl)。
 // 内联 dasharray 而不是 CSS 固定值 —— CSS 那条路做不到"每帧随读数变"。
 // 弧长必须来自 fluidLvl。ringSvg 是个纯函数（参数 lvl），所以这条门断的是
-// **两处调用点都传 fluidLvl** —— 传别的数（比如 pct 原值、surfaceY）就红。
+// **调用点传 fluidLvl** —— 传别的数（比如 pct 原值、surfaceY）就红。
+// （peek 预览环已随水柱退役，调用点只剩本体一处。）
 // 内联 dasharray 而不是 CSS 固定值：CSS 那条路做不到"每帧随读数变"。
 {
   // 只取**调用点**：`{ringSvg(` —— 函数签名 `ringSvg(lvl: number, …)` 不带花括号前缀
   const calls = (petBallWater.match(/\{ringSvg\(\s*([A-Za-z0-9_.]+)/g) || []).map((s) => s.match(/\(\s*([A-Za-z0-9_.]+)/)[1])
   const wired = /strokeDasharray=\{ringDash\(lvl\)\}/.test(petBallWater)
   ok(
-    calls.length >= 2 && calls.every((a) => a === 'fluidLvl') && wired,
-    `K11e 弧长 = ringDash(fluidLvl) 且两处调用点都传 fluidLvl（实得 ${calls.join(' / ') || '无'}；本体的环与 peek 预览的环同源）`
+    calls.length === 1 && calls[0] === 'fluidLvl' && wired,
+    `K11e 弧长 = ringDash(fluidLvl)，唯一调用点传 fluidLvl（实得 ${calls.join(' / ') || '无'}；第二处调用点回来即红）`
   )
 }
 ok(
@@ -1911,7 +1819,7 @@ function phaseRingRule(phase, anchor, bodyMust, where = 'top') {
     //
     // ⚠ 栈要扫到 `m.index`（本规则自己的头），**不能**扫到回退出来的 `head`：
     //   head 指向的是**上一条规则的那个 `}`**，把它排除在扫描外就等于少弹一次栈，
-    //   于是 `@keyframes pill-absorb {` 永远留在栈里 → 每条规则都被误判成
+    //   于是 `@keyframes disc-absorb-h {` 永远留在栈里 → 每条规则都被误判成
     //   「在 keyframes 内层」→ K11g 三条恒红（实测踩过，另一方向的假红）。
     const stack = []
     for (let i = 0; i <= m.index; i++) {
@@ -1947,11 +1855,11 @@ function phaseRingBody(phase, anchor, bodyMust, where = 'top') {
 }
 
 for (const [phase, bodyMust, why] of [
-  ['hidden', /scale\(0\)/, '环随 disc 收尽（hidden 稳态只剩柱，不留在屏边）'],
+  ['hidden', /scale\(0\)/, '环随 disc 收尽（hidden 稳态无残留，不留在屏边）'],
   ['revealing', /disc-reveal/, '环随 disc 回弹（disc-reveal 与 disc 同一关键帧）']
 ]) {
   const b = phaseRingBody(phase, /\.fluid-disc\b/, bodyMust)
-  ok(b != null, `K11g [data-fluid='${phase}'] 的水渍态名单含 .fluid-ring（${why}）`)
+  ok(b != null, `K11g [data-fluid='${phase}'] 的隐藏 morph 名单含 .fluid-ring（${why}）`)
 }
 ok(
   phaseRingBody('absorbing', /\.fluid-disc\b/, /disc-absorb-h/) != null &&
@@ -1992,6 +1900,7 @@ ok(
 // 环不吃 goo 滤镜：goo 容器只融合形状，2px 的弧经 stdDeviation=4 会被 blur 吃掉
 // （与雨/读数同一取证结论：5l「DOM 全对但像素无色」）。断法同 K7h：goo 开标签与
 // fluid-ring 开标签之间的 <div / </div 必须配平（配平 = 环在 goo 闭标签之后）。
+// （peek 预览环已随水柱退役，不再参与配平。）
 {
   const gooOpen = petBallWater.indexOf('className="petball-goo"')
   const ringOpen = petBallWater.indexOf('className="fluid-ring"')
@@ -2009,12 +1918,7 @@ ok(
   /\.slosh\s*\{[^}]*display:\s*var\(--water-display/.test(css),
   'K11i 球内水体的显隐走 --water-display（环形态皮整体退场）'
 )
-// peek 跟随本体形态：预览不能与本体不同形（P4 的口径是"预览完整形态"）。
-ok(
-  /\.fluid-peek-ring\s*\{[^}]*display:\s*var\(--ring-display/.test(css) &&
-    /\.fluid-peek-wave[^{]*\{[^}]*display:\s*var\(--water-display/.test(css),
-  'K11j peek 预览跟随本体形态（环皮预览环、水体皮预览波；两者都是 display 不是 opacity）'
-)
+// peek 预览环/预览波的跟随形态规则已随水柱退役（K8m2 的 !/fluid-peek/ 覆盖）。
 // K11m · reduced-motion 的 animation:none 必须真的压过 morph 段（2026-10-06 check P6 M1）
 //
 // **实测过的缺陷**：降级段写 `.petball.no3d .fluid-ring { animation: none }` = (0,3,0)，
@@ -2240,7 +2144,7 @@ for (const target of ['fluid-disc', 'fluid-ring']) {
   )
 }
 // K10d · morph 底盘参演（10-06-ball-column-fixes B3）：吸入 530ms 只演
-// disc/bridge/ring/pill，--ball-bg 底盘本体不在名单 → "环飞走、黑盘原地淡掉"。
+// disc/bridge/ring（水柱 pill 已退役），--ball-bg 底盘本体不在名单 → "环飞走、黑盘原地淡掉"。
 // 修法：底盘（.petball-fallback 背景 + ::after 玻璃罩）进吸入/汇聚时间线，与 disc
 // 同步；时序常量仍归 shared/fluid.ts（ABSORB_TOTAL_MS=530 / REVEAL_MS=400），
 // CSS 只写与 disc 形态规则相同的字面量，不另起；hidden 稳态规则不动（K10c 照守）。
@@ -2560,43 +2464,30 @@ for (const feature of ['caps']) {
   )
 }
 
-// K4 · 水柱几何（R4-5 原地变柱）：CSS 的四条边规则与 shared/fluid.waterColumn 同形
-//     （竖柱 12×56 / 横槽 56×12；12 = shared/dock-hide.COLUMN_W，56 = shared/pet-view.BALL_VIEW），
-//     且贴边侧（左沿柱在左，不在右 —— 与旧滑出 peek 侧反号）。
-//     纯函数那半边的数由 scripts/test-fluid.mjs 用例 3 钉死，这里钉 CSS 这半边 ——
-//     两边各写一套数是「看着有柱子但点不中」的成因（与命中区 peekHitbox 脱钩）。
-for (const [edge, want] of [
-  ['left', '12px/56px'],
-  ['right', '12px/56px'],
-  ['top', '56px/12px'],
-  ['bottom', '56px/12px']
+// K4 · 水柱几何已随水球退役（R4）：CSS 四边规则 / 柱内液 / 柱顶波全无残留 ——
+// 逐条判，回来一条即红（css 非空前置防空洞通过）。
+// 命中区几何的唯一口径是 shared/dock-hide.peekHitbox（mini-pill，test-dock-hide 钉），
+// 不再有 CSS 与纯函数各写一套数的脱钩口（旧 K4 守的正是那个脱钩）。
+for (const sel of [
+  '.petball.no3d .fluid-pill',
+  ".petball.no3d .petball-fallback[data-edge='left'] .fluid-pill",
+  ".petball.no3d .petball-fallback[data-edge='right'] .fluid-pill",
+  ".petball.no3d .petball-fallback[data-edge='top'] .fluid-pill",
+  ".petball.no3d .petball-fallback[data-edge='bottom'] .fluid-pill",
+  '.petball.no3d .fluid-column-fill',
+  '.petball.no3d .fluid-column-fill:not(:empty)::before',
+  '.petball.no3d .fluid-column-wave'
 ]) {
-  const body = decls(ruleBody(css, `.petball.no3d .petball-fallback[data-edge='${edge}'] .fluid-pill`))
-  const got = `${body.width || '?'}/${body.height || '?'}`
-  ok(body.width != null && got === want, `K4 水柱 ${edge} 边 ${got}（应为 ${want}，与 waterColumn 同形）`)
+  ok(css.length > 0 && ruleBody(css, sel) == null, `K4 水柱规则已退役（${sel} 回来即红）`)
 }
-// K4d · 柱在屏边侧（R4-5 方向回归网）：左沿 left:0（不是 right:0），右沿 right:0，
-// 上沿 top:0，下沿 bottom:0 —— 摆错边等于柱子悬空在窗中。
-for (const [edge, prop] of [['left', 'left'], ['right', 'right'], ['top', 'top'], ['bottom', 'bottom']]) {
-  const body = decls(ruleBody(css, `.petball.no3d .petball-fallback[data-edge='${edge}'] .fluid-pill`))
-  ok(body != null && String(body[prop] || '') === '0', `K4d ${edge} 沿柱贴 ${prop}:0（屏边侧）`)
-}
-// 柱内液与柱顶波浪的 DOM+CSS 都在（缺一个，柱子就是空槽/静槽）。
-ok(/fluid-column-fill/.test(petBallWater) && /fluid-column-wave/.test(petBallWater), 'K4b 柱内液 + 柱顶波浪在 JSX 里')
+// K4d · 柱贴边侧规则一并退役（左沿 left:0 之类，随本体同进退；见上名单）。
+// 柱内液与柱顶波浪的 DOM+CSS 都不在（缺一个，柱子就是空槽/静槽 —— 现在是整根不在）。
+ok(petBallWater.length > 0 && !/fluid-column-fill|fluid-column-wave/.test(petBallWater), 'K4b 柱内液 + 柱顶波浪 JSX 已随水柱退役（回来即红）')
 ok(
-  ruleBody(css, '.petball.no3d .fluid-column-fill') != null &&
-    ruleBody(css, '.petball.no3d .fluid-column-wave svg') != null,
-  'K4c 柱内液 + 柱顶波浪的 CSS 规则都在'
+  css.length > 0 && !/\.fluid-column-fill|\.fluid-column-wave/.test(css),
+  'K4c 柱内液 + 柱顶波浪 CSS 已随水柱退役（回来即红）'
 )
-// K4e · 2026-10-06 B3：fill 不带 border-radius，圆角效果来自容器 overflow:hidden 裁切。
-{
-  const pillR = decls(ruleBody(css, '.petball.no3d .fluid-pill'))['border-radius']
-  const fillR = decls(ruleBody(css, '.petball.no3d .fluid-column-fill'))['border-radius']
-  ok(
-    pillR === '6px' && fillR == null,
-    `K4e 柱内液纯矩形 + 容器圆角裁切（pill ${pillR || '缺'}/fill ${fillR || '无（正确）'}；fill 一旦带 radius 即双重圆角=尖耳朵回归）`
-  )
-}
+// K4e · fill 的纯矩形纪律随载体同退役（容器裁切口径见 K4 名单的无残留）。
 
 // K5 · 三处暂停都在（hidden 相位 / 页面不可见 / reduced-motion），不是注释。
 ok(

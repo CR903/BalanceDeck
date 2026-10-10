@@ -9,7 +9,8 @@ import { loadTs } from './lib/load-ts.mjs'
 const shared = await loadTs('src/shared/dock-hide.ts')
 const {
   EDGE_THRESHOLD,
-  COLUMN_W,
+  MINI_PILL_W,
+  MINI_PILL_H,
   HIDE_DWELL_MS,
   REVEAL_DWELL_MS,
   REHIDE_MS,
@@ -53,9 +54,10 @@ async function waitPhase(d, want, maxMs = 5000) {
 const WA = { x: 0, y: 25, width: 1440, height: 875 } // 主屏工作区（菜单栏 25px）
 const B = (x, y, w = 56, h = 56) => ({ x, y, width: w, height: h })
 
-console.log('用例 1：常量口径（PRD R1–R5 + R4-5 原地变柱）')
+console.log('用例 1：常量口径（PRD R1–R5 + 10-10-dynamic-island R6 mini-pill）')
 eq(EDGE_THRESHOLD, 8, '贴边阈值 8px')
-eq(COLUMN_W, 12, '温度计柱宽 12px（命中区即柱体）')
+eq(MINI_PILL_W, 132, 'mini-pill 宽 132px（窄条 + 各家等级点）')
+eq(MINI_PILL_H, 26, 'mini-pill 高 26px（细条）')
 eq(HIDE_DWELL_MS, 1000, '隐藏停留 1000ms')
 eq(REVEAL_DWELL_MS, 300, '唤出停留 300ms')
 eq(REHIDE_MS, 1500, '离开重藏 1500ms')
@@ -93,11 +95,12 @@ eq(hiddenBounds(B(1384, 400), 'right'), { x: 1384, y: 400, width: 56, height: 56
 eq(hiddenBounds(B(700, 25), 'top'), { x: 700, y: 25, width: 56, height: 56 }, '上：原地')
 eq(hiddenBounds(B(700, 844), 'bottom'), { x: 700, y: 844, width: 56, height: 56 }, '下：原地')
 
-console.log('用例 6：水柱命中区（窗口局部坐标，屏边侧 12px 全条）')
-eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 12, height: 56 }, '左：柱在窗口左侧')
-eq(peekHitbox('right', { width: 56, height: 56 }), { x: 44, y: 0, width: 12, height: 56 }, '右：柱在窗口右侧')
-eq(peekHitbox('top', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 12 }, '上：柱在窗口顶部')
-eq(peekHitbox('bottom', { width: 56, height: 56 }), { x: 0, y: 44, width: 56, height: 12 }, '下：柱在窗口底部')
+console.log('用例 6：mini-pill 命中区（窗口局部坐标，顶部居中；岛只吸顶，四边同形）')
+eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '左：窄窗夹紧为 56×26 顶条')
+eq(peekHitbox('right', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '右：同上（不再镜像，水柱已退役）')
+eq(peekHitbox('top', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '上：顶条')
+eq(peekHitbox('bottom', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '下：同样收成顶部 pill')
+eq(peekHitbox('top', { width: 560, height: 480 }), { x: 214, y: 0, width: 132, height: 26 }, '岛窗：132×26 顶部居中')
 
 console.log('用例 7：动画曲线')
 eq(easeOutCubic(0), 0, 't=0 → 0')
@@ -141,7 +144,7 @@ console.log('用例 8：贴边 dragStop → 隐藏（水柱覆盖 + 持久化，
   eq(d.hidden(), true, 'hidden() 为真')
   eq(d.edge(), 'left', '记住贴的是左邊')
   const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 0, y: 0, width: 12, height: 56 }, '命中区覆盖为左贴边水柱')
+  eq(lastPeek, { x: 0, y: 0, width: 56, height: 26 }, '命中区覆盖为顶部 mini-pill（窄窗夹紧）')
   eq(w.calls.hiddenChange, [true], '通知渲染层 hidden=true')
   eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'left', hidden: true }, '持久化 {edge, hidden}')
   eq(w.boundsOf().x, 0, '窗口原地不动（R4-5 无滑出）')
@@ -378,13 +381,12 @@ console.log('用例 23：上沿同样隐藏（R4-5：无位移 → 无菜单栏�
   eq(await waitPhase(d, 'hidden'), 'hidden', '计时到 → hidden')
   eq(w.boundsOf().y, 25, '窗口原地（无处可夹）')
   const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 0, y: 0, width: 56, height: 12 }, '命中区覆盖为上沿水柱')
+  eq(lastPeek, { x: 0, y: 0, width: 56, height: 26 }, '命中区覆盖为顶部 mini-pill')
   eq(w.calls.persist[w.calls.persist.length - 1], { edge: 'top', hidden: true }, '持久化 hidden=true')
 }
 
-console.log('用例 24：右沿隐藏的水柱在右侧（方向回归网：与 --dx 翻转同源）')
-// 主进程只管命中矩形，方向由 peekHitbox 的边分支决定 —— 右沿柱在右，与左沿镜像。
-// （渲染层 --dx 翻转是另一半，CSS 侧 K 门钉住；这里钉主进程这一半。）
+console.log('用例 24：右沿隐藏同样收成顶部 pill（水柱镜像已退役，四边同形）')
+// 主进程只管命中矩形，形状由 peekHitbox 的 pill 分支决定 —— 四边一致。
 {
   const w = fakeWorld({ bounds: B(1384, 400) })
   const d = createDockHide(w.api)
@@ -393,7 +395,7 @@ console.log('用例 24：右沿隐藏的水柱在右侧（方向回归网：与 
   await sleep(90)
   eq(d.phase(), 'hidden', '右沿照常隐藏')
   const lastPeek = w.calls.peek[w.calls.peek.length - 1]
-  eq(lastPeek, { x: 44, y: 0, width: 12, height: 56 }, '命中区覆盖为右贴边水柱')
+  eq(lastPeek, { x: 0, y: 0, width: 56, height: 26 }, '命中区覆盖为顶部 mini-pill（不再是右侧柱）')
   eq(w.boundsOf().x, 1384, '窗口原地')
 }
 
@@ -450,7 +452,7 @@ console.log('用例 27：非法几何永不产生 undefined（744 崩溃回归 �
   eq(peekHitbox('left', { width: 0, height: 56 }), null, '零宽尺寸 → null')
   // 有效输入不受影响（正常路别被守卫改坏）
   eq(hiddenBounds(B(0, 400), 'left'), { x: 0, y: 400, width: 56, height: 56 }, '有效边原地返回')
-  eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 12, height: 56 }, '有效边仍精确')
+  eq(peekHitbox('left', { width: 56, height: 56 }), { x: 0, y: 0, width: 56, height: 26 }, '有效边仍精确（顶部 pill，窄窗夹紧）')
   // fuzz：任何边 × 任何 docked → null 或有限矩形，永不出现 undefined
   const edges = ['left', 'right', 'top', 'bottom', 'up', '', null, undefined, 0]
   const dockeds = [B(0, 400), B(NaN, 400), undefined, null]

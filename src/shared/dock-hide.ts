@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// 悬浮球贴边自动隐藏：几何纯函数（主进程、单测共用同一实现）。
+// 顶部灵动岛的贴边自动隐藏：几何纯函数（主进程、单测共用同一实现）。
 //
 // 本模块是纯函数（不依赖 electron / DOM / React），因此主进程的状态机
 // （src/main/dockHide.ts）与单元测试（scripts/test-dock-hide.mjs）共用同一实现。
@@ -9,16 +9,21 @@
 //   · 贴边基准是显示器的 workArea（非全屏 bounds），与 snapBackToWorkArea 一致；
 //   · 隐藏偏移每次按当前 workArea 重算，显示器变化不漂移；
 //   · 坐标仍存贴边全可见位置，state.json 只多记 {edge, hidden}。
+//
+// 10-10-dynamic-island：可见态是顶部灵动岛（全供应商），隐藏态是 A 式 mini-pill
+// （窄条 + 各家等级点，顶部原位收缩，不贴边）。旧 12px 温度计水柱（COLUMN_W）
+// 随水球退役，命中区即 pill 体。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** 贴边判定阈值：窗口边与工作区边距离 ≤ 8px 算贴边（PRD R1/R4） */
 export const EDGE_THRESHOLD = 8
 /**
- * 温度计柱宽（R4-5）：隐藏态窗口原地立起的水柱宽度 = 命中区宽度。
- * 柱子在哪、哪可点 —— peekHitbox 与渲染层水柱同形（fluid.waterColumn 委托本函数，
- * 不各自硬编码 12）。旧 PEEK（4px 滑出痕迹）随滑出机制一并退役。
+ * 隐藏态 mini-pill 尺寸（10-10-dynamic-island R6：A 式窄条 + 各家等级点）。
+ * 132 宽放得下 8 家等级点（每点 ~10px + 间距），26 高是细条（不抢视觉）；
+ * 窗口比它窄时按窗口夹紧（fail-open 的一部分，见 peekHitbox）。
  */
-export const COLUMN_W = 12
+export const MINI_PILL_W = 132
+export const MINI_PILL_H = 26
 /** 贴边停留多久才隐藏（PRD R1，防误触） */
 export const HIDE_DWELL_MS = 1000
 /** 痕迹区停留多久才滑出（PRD R3，防路过抖动） */
@@ -89,8 +94,8 @@ export function detectEdge(bounds: Rect, wa: WorkArea): DockEdge | null {
 }
 
 /**
- * 隐藏位置（R4-5 原地变柱）：窗口不再滑出屏幕，原地不动 —— 返回 docked 本身。
- * "隐藏"的是球形态（渲染层 morph 成屏边水柱），不是窗口位置。
+ * 隐藏位置（原地收缩）：窗口不再滑出屏幕，原地不动 —— 返回 docked 本身。
+ * "隐藏"的是岛形态（渲染层收缩成顶部 mini-pill），不是窗口位置。
  *
  * 保留函数（调用方/单测入口不变）：docked 非法仍回 null，调用方走"不动 + idle"。
  * （undefined 进 setPosition 会直接崩主进程，见 10-03-dock-autohide 744 崩溃。）
@@ -102,9 +107,13 @@ export function hiddenBounds(docked: Rect, edge: DockEdge): Rect | null {
 }
 
 /**
- * 隐藏态的命中区覆盖（窗口局部坐标，DIP）= 屏边水柱矩形（COLUMN_W 全高/全宽条，
- * 贴边侧；与渲染层 .fluid-pill 同形，见 K4）。
+ * 隐藏态的命中区覆盖（窗口局部坐标，DIP）= 顶部 mini-pill 矩形（与渲染层
+ * .isl-pill 同形，居中吸顶；窗口比 pill 窄时按窗口夹紧）。
  * 主进程以它为准，不采信渲染层常规上报（跨层契约）。
+ *
+ * 岛只吸顶：四边统一收成顶部 pill（edge 仍校验，非法边回 null）。
+ * 窗口 560×480 下 pill 为 132×26 居中；旧 56×56 窗口下夹紧为 56×26 顶条
+ * （过渡期兼容，窗口尺寸切到 ISLAND_VIEW 后自然消失）。
  *
  * 非法输入（非法边 / 非有限非正尺寸）回 null —— 调用方跳过覆盖、
  * 保持整窗可点（fail-open：绝不造出"看得见点不着"的半态）。
@@ -114,18 +123,9 @@ export function peekHitbox(edge: DockEdge, size: { width: number; height: number
   const h = size?.height
   if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return null
   if (edge !== 'left' && edge !== 'right' && edge !== 'top' && edge !== 'bottom') return null
-  switch (edge) {
-    case 'left':
-      return { x: 0, y: 0, width: COLUMN_W, height: h }
-    case 'right':
-      return { x: w - COLUMN_W, y: 0, width: COLUMN_W, height: h }
-    case 'top':
-      return { x: 0, y: 0, width: w, height: COLUMN_W }
-    case 'bottom':
-      return { x: 0, y: h - COLUMN_W, width: w, height: COLUMN_W }
-    default:
-      return null
-  }
+  const pw = Math.min(MINI_PILL_W, w)
+  const ph = Math.min(MINI_PILL_H, h)
+  return { x: Math.round((w - pw) / 2), y: 0, width: pw, height: ph }
 }
 
 /** easeOutCubic：隐藏/唤出动画共用（PRD R5） */

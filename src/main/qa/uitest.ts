@@ -11,11 +11,11 @@ import { app, screen } from 'electron'
 import { join } from 'path'
 import { consumeDragFired } from '../ipc'
 import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
-import { BALL_VIEW } from '../../shared/pet-view'
-// 隐藏态几何口径与主进程同一常数（改 COLUMN_W 时这里跟着变，不各自硬编码 12）
-import { COLUMN_W } from '../../shared/dock-hide'
+import { ISLAND_VIEW } from '../../shared/pet-view'
+// 隐藏态几何口径与主进程同一常数（mini-pill 尺寸改时这里跟着变，不各自硬编码）
+import { MINI_PILL_W, MINI_PILL_H } from '../../shared/dock-hide'
 import { refreshNow } from '../scheduler'
-import { parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
+import { defaultWaterAnchors, parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
 
 export async function runUiTest(
@@ -46,19 +46,57 @@ export async function runUiTest(
     }
   }
   const bounds = (): Electron.Rectangle => win.getBounds()
-  /** 收起态窗口很小（圆环 56×56），主体就在正中：点击 = 点命中层中心 */
-  const ballCenterJs = `(()=>{
-    const c=document.querySelector('.petball'); if(!c) return null
+  /** 收起态窗口很大（灵动岛 560×480），主体在顶部：点击 = 点命中层中心 */
+  const islandCenterJs = `(()=>{
+    const c=document.querySelector('.isl-body'); if(!c) return null
     const rc=c.getBoundingClientRect()
     return { x: rc.x + rc.width/2, y: rc.y + rc.height/2 }
   })()`
-  const dotClickJs = (dx = 0, dy = 0): string => `(()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return 'no-dot'
+  /** 单击岛身：位移 <6px = 切换展开/收起（IslandView finishPress 口径；以岛为准定位） */
+  const islClickJs = (dx = 0, dy = 0): string => `(()=>{
+    const b=document.querySelector('.isl-body'); if(!b) return 'no-island'
     const rc=b.getBoundingClientRect()
     const cx=rc.x+rc.width/2, cy=rc.y+rc.height/2
     const o={clientX:cx+${dx},clientY:cy+${dy},pointerId:7,bubbles:true,pointerType:'mouse',button:0,buttons:1}
-    b.dispatchEvent(new PointerEvent('pointerdown',o))
-    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
+    const h=document.querySelector('.isl-hit'); if(!h) return 'no-hit'
+    h.dispatchEvent(new PointerEvent('pointerdown',o))
+    h.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
+    return 'sent'
+  })()`
+  /** 双击岛身：回到卡片视图（onDoubleClick → onExpand） */
+  const islDblclickJs = (): string => `(()=>{
+    const b=document.querySelector('.isl-hit'); if(!b) return 'no-island'
+    b.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))
+    return 'sent'
+  })()`
+  /** 岛身拖动：起点落在岛内部（命中分区 body）→ 改 posX + 落盘，不切换展开 */
+  const islDragJs = (dx: number): string => `(async ()=>{
+    const b=document.querySelector('.isl-body'); if(!b) return 'no-island'
+    const rc=b.getBoundingClientRect()
+    const cx=rc.x+rc.width/2, cy=rc.y+rc.height/2
+    const h=document.querySelector('.isl-hit'); if(!h) return 'no-hit'
+    const o={clientX:cx,clientY:cy,pointerId:9,bubbles:true,pointerType:'mouse',button:0,buttons:1}
+    h.dispatchEvent(new PointerEvent('pointerdown',o))
+    for(let i=1;i<=4;i++){
+      h.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:cx+${dx}*i/4}))
+      await new Promise(res=>setTimeout(res,40))
+    }
+    h.dispatchEvent(new PointerEvent('pointerup',{...o,clientX:cx+${dx},buttons:0}))
+    return 'sent'
+  })()`
+  /** 边缘拖动：起点落在岛边缘 rim 内（命中分区 edge）→ 主进程窗口拖拽，posX 不动 */
+  const islEdgeDragJs = (dx: number): string => `(async ()=>{
+    const b=document.querySelector('.isl-body'); if(!b) return 'no-island'
+    const rc=b.getBoundingClientRect()
+    const cx=rc.x+3, cy=rc.y+rc.height/2
+    const h=document.querySelector('.isl-hit'); if(!h) return 'no-hit'
+    const o={clientX:cx,clientY:cy,pointerId:11,bubbles:true,pointerType:'mouse',button:0,buttons:1}
+    h.dispatchEvent(new PointerEvent('pointerdown',o))
+    for(let i=1;i<=4;i++){
+      h.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:cx+${dx}*i/4}))
+      await new Promise(res=>setTimeout(res,40))
+    }
+    h.dispatchEvent(new PointerEvent('pointerup',{...o,clientX:cx+${dx},buttons:0}))
     return 'sent'
   })()`
 
@@ -145,116 +183,61 @@ export async function runUiTest(
     await sleep(500)
   }
 
-  type BallProbe = {
-    err: string
-    ring: string | null
-    /** .fluid-wave 的数量（套餐且算得出比例 → 3 层，否则 0 —— 与 showWaves 同源） */
-    waves: number
-    /** 液面高光线在（与波浪同生同灭：有液位才有高光） */
-    surface: boolean
-    /** A 层路径 d 的起点 Y（= viewBox 里的液面高度，55 - level×54） */
-    surfaceY: number | null
-    /** 主波浪的计算 fill（与 lvl 令牌逐位比，不读死颜色） */
-    waterFill: string | null
-    /** .petball 的 lvl-* 类（水色与读数颜色的共同来源） */
-    lvl: string
-    /** 退役环的残留节点数（必须恒为 0：轨道/填充弧的 CSS 与 JSX 已一并删除） */
-    ringNodes: number
-    /** 新环轨道在（`.ring-track`）—— 与 waves/surface 分开的另一个开关：
-     *  数据已知就有轨道（0% 是空环），水位 > 0 才挂水体（10-06-column-zero-fill） */
-    ringTrack: boolean
-    value: string | null
-    winLabel: string | null
-    title: string
-    label: string | null
-    idx: number
-    winIdx: number
-    winCount: number
-  }
-  const badProbe = (err: string): BallProbe => ({
-    err,
-    ring: null,
-    waves: -1,
-    surface: false,
-    surfaceY: null,
-    waterFill: null,
-    lvl: '',
-    ringNodes: -1,
-    ringTrack: false,
-    value: null,
-    winLabel: null,
-    title: '',
-    label: null,
-    idx: -1,
-    winIdx: -1,
-    winCount: -1
-  })
   /**
-   * 一次 exec 把球上的证据取全：环的三层 DOM、环心读数、短标签、tooltip（=当前供应商）、
-   * 以及 `__bd_ball` 的索引观测点。`err` 非空时所有断言都要连它一起报 —— 否则
-   * 「探针挂了」和「行为正确」都长成默认值，会变成永真的兜底。
+   * 灵动岛探针：一次 exec 取全收起态证据 —— 岛形态（collapsed/open/hidden）、
+   * 顶栏位置 posX、家数、各家 kind/lvl、pill/展开卡在位。`err` 非空时所有断言
+   * 都要连它一起报（「探针挂了」和「行为正确」不能长成同一个默认值）。
    */
-  const ballProbe = async (): Promise<BallProbe> => {
+  type IslandCombo = { id: string; kind: string; lvl: string }
+  type IslandProbe = {
+    err: string
+    mode: string
+    open: boolean
+    posX: number
+    count: number
+    combos: IslandCombo[]
+    pill: boolean
+    expanded: boolean
+    title: string
+  }
+  const badIsland = (err: string): IslandProbe => ({
+    err,
+    mode: '?',
+    open: false,
+    posX: -1,
+    count: -1,
+    combos: [],
+    pill: false,
+    expanded: false,
+    title: ''
+  })
+  const islandProbe = async (): Promise<IslandProbe> => {
     const raw = await exec(`(()=>{
-      const dot=document.querySelector('.petball-fallback')
-      const hit=document.querySelector('.petball-hit')
-      const b=window.__bd_ball?.()
-      const waves=dot?[...dot.querySelectorAll('.fluid-wave')]:[]
-      const surf=dot?dot.querySelector('.fluid-surface'):null
-      const d0=waves[0]?waves[0].getAttribute('d'):null
-      // A 层路径 d 形如 "M -40 12.34 L ..." —— 起点 Y 就是液面高度（surfaceY）
-      let sy=null
-      if(d0){const m=d0.match(/^M -40 (-?[\\d.]+)/); if(m) sy=parseFloat(m[1])}
-      const lvl=(document.querySelector('.petball')?.className.match(/lvl-([a-z]+)/)||[])[1]||''
-      const wl=dot?dot.querySelector('.dot-winlabel'):null
-      const dv=dot?dot.querySelector('.dot-value'):null
-      const lb=document.querySelector('.petball-label')
+      const body=document.querySelector('.isl-body')
+      const hit=document.querySelector('.isl-hit')
+      const b=window.__bd_island?.()
+      const combos=[...document.querySelectorAll('.isl-combo')].map(c=>({
+        id:c.getAttribute('data-supplier')||'',
+        kind:c.getAttribute('data-kind')||'',
+        lvl:c.getAttribute('data-lvl')||''
+      }))
       return JSON.stringify({
-        ring: dot?dot.getAttribute('data-ring'):null,
-        waves: waves.length,
-        surface: !!surf,
-        surfaceY: sy,
-        waterFill: waves[0]?getComputedStyle(waves[0]).fill:null,
-        lvl,
-        ringNodes: dot?dot.querySelectorAll('[class*="dot-ring"]').length:-1,
-        ringTrack: dot?!!dot.querySelector('.ring-track'):false,
-        value: dv?dv.textContent:null,
-        winLabel: wl?wl.textContent:null,
-        title: hit?hit.title:'',
-        label: lb?lb.textContent:null,
-        idx: b&&typeof b.idx==='number'?b.idx:-1,
-        winIdx: b&&typeof b.winIdx==='number'?b.winIdx:-1,
-        winCount: b&&typeof b.winCount==='number'?b.winCount:-1
+        mode: body?body.getAttribute('data-island'):'?',
+        open: b&&typeof b.open==='boolean'?b.open:false,
+        posX: b&&typeof b.posX==='number'?b.posX:-1,
+        count: b&&typeof b.count==='number'?b.count:-1,
+        combos, pill: !!document.querySelector('.isl-pill'),
+        expanded: !!document.querySelector('.isl-open'),
+        title: hit?hit.title:''
       })
     })()`)
-    if (typeof raw !== 'string') return badProbe('exec-failed')
+    if (typeof raw !== 'string') return badIsland('exec-failed')
     try {
-      const p = JSON.parse(raw) as BallProbe
+      const p = JSON.parse(raw) as IslandProbe
       return { ...p, err: '' }
     } catch {
-      return badProbe(`parse:${raw.slice(0, 60)}`)
+      return badIsland(`parse:${raw.slice(0, 60)}`)
     }
-  }
-
-  /** 合成一次滚轮：React 的 onWheel 是普通事件监听，`dispatchEvent` 会真的走到（`:active` 那种 UA 合成的才不行） */
-  const wheelJs = (dx: number, dy: number): string =>
-    `(()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
-      b.dispatchEvent(new WheelEvent('wheel',{deltaX:${dx},deltaY:${dy},bubbles:true}))
-      return 'ok'})()`
-  /** 走一步（>250ms 冷却，且 >150ms 断流线，两步不会被粘成一个手势） */
-  const wheelStep = async (dx: number, dy: number): Promise<void> => {
-    await exec(wheelJs(dx, dy))
-    await sleep(320)
-  }
-  /** 把窗口索引推到 target（单窗口供应商是空操作，循环到 maxSteps 就停） */
-  const setWindowTo = async (target: number, maxSteps: number): Promise<number> => {
-    for (let i = 0; i <= maxSteps; i++) {
-      const p = await ballProbe()
-      if (p.winIdx === target) return p.winIdx
-      if (i === maxSteps) break
-      await wheelStep(0, 100)
-    }
-    return (await ballProbe()).winIdx
   }
 
   /**
@@ -290,7 +273,7 @@ export async function runUiTest(
       patchedOk = false
     }
     try {
-      await exec(`(()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
+      await exec(`(()=>{const b=document.querySelector('.isl-hit'); if(!b) return 'no-hit'
         const rc=b.getBoundingClientRect()
         b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
         return 'ok'})()`)
@@ -391,84 +374,126 @@ export async function runUiTest(
   await exec(footerClick('收起'))
   await sleep(900)
   const b1 = bounds()
-  r.collapse = b1.width === BALL_VIEW.width && b1.height === BALL_VIEW.height ? 'ok' : `fail:${b1.width}x${b1.height}`
-  r.dotDom = (await exec("!!document.querySelector('.petball') && !!document.querySelector('.petball-hit')"))
+  r.collapse = b1.width === ISLAND_VIEW.width && b1.height === ISLAND_VIEW.height ? 'ok' : `fail:${b1.width}x${b1.height}`
+  r.dotDom = (await exec("!!document.querySelector('.isl-body') && !!document.querySelector('.isl-hit')"))
     ? 'ok'
     : 'fail'
-  // 诊断串：球的读数在 2D 小水球的环心（.dot-value）
+  // 诊断串：岛上各家 kind/lvl（收起态平铺，无名称无轮询）
   r.ballValue = String(
     await exec(
-      "document.querySelector('.petball-fallback .dot-value')?.textContent ?? document.querySelector('.petball-value')?.textContent ?? ''"
+      "JSON.stringify([...document.querySelectorAll('.isl-combo')].map(c=>c.getAttribute('data-supplier')+':'+c.getAttribute('data-kind')+'/'+c.getAttribute('data-lvl')))"
     )
   )
 
-  // 拖拽：>8px 判拖拽，不展开；窗口位置变化；随后圆点仍在
-  const before = bounds()
-  // 抓取点用真实光标与窗口位置换算：合成事件不会真的移动鼠标，这样窗口不会被甩走
-  const cur = screen.getCursorScreenPoint()
-  const grabX = cur.x - before.x
-  const grabY = cur.y - before.y
-  await exec(`(async()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
-    const rc=b.getBoundingClientRect()
-    const o={clientX:rc.x+${grabX},clientY:rc.y+${grabY},pointerId:8,bubbles:true,pointerType:'mouse',button:0,buttons:1}
-    b.dispatchEvent(new PointerEvent('pointerdown',o))
-    for(let i=1;i<=6;i++){
-      b.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:o.clientX+i*9,clientY:o.clientY}))
-      await new Promise(res=>setTimeout(res,40))
-    }
-    b.dispatchEvent(new PointerEvent('pointerup',{...o,buttons:0}))
-  })()`)
-  await sleep(900)
+  // 岛身拖动：>6px 判拖动（改 posX + 落盘，不切换展开）；窗口固定不动
+  const islDrag0 = await islandProbe()
+  await exec(islDragJs(60))
+  await sleep(700)
+  const islDrag1 = await islandProbe()
   const after = bounds()
-  r.dragNoExpand = (await exec("!!document.querySelector('.petball')")) ? 'ok' : 'fail:expanded'
-  r.dragMoved = after.x !== before.x || after.y !== before.y ? 'ok' : 'no-real-cursor-move'
-  r.dragFired = consumeDragFired() ? 'ok' : 'fail'
+  r.dragNoExpand = !islDrag1.expanded && !islDrag1.open ? 'ok' : 'fail:expanded-on-drag'
+  r.dragMoved =
+    islDrag1.err || islDrag0.err
+      ? `fail:probe=${islDrag0.err || islDrag1.err}`
+      : Math.abs(islDrag1.posX - islDrag0.posX) > 0.01
+        ? 'ok'
+        : `fail:posX=${islDrag0.posX}->${islDrag1.posX}`
+  // 分区其一：岛身拖只调 posX，不启动主进程窗口拖拽
+  r.dragBodyNoWinDrag = !consumeDragFired() ? 'ok' : 'fail:main-drag-fired（岛身拖动不应启动主进程窗口拖拽）'
+  r.dragWindowFixed =
+    after.width === ISLAND_VIEW.width && after.height === ISLAND_VIEW.height ? 'ok' : `fail:${after.width}x${after.height}`
+  // 位置落盘（AC4）：extras ui:islandX 与组件 posX 一致
+  const savedX = (await exec("window.api.getExtras(['ui:islandX']).then(e=>e['ui:islandX'])")) as string
+  r.islandPosSaved =
+    islDrag1.err
+      ? `fail:probe=${islDrag1.err}`
+      : Math.abs(Number(savedX) - islDrag1.posX) < 0.005
+        ? 'ok'
+        : `fail:extras=${savedX} posX=${islDrag1.posX}`
+  // 分区其二：边缘拖启动主进程窗口拖拽（R7 分区），posX 不动
+  const islEdge0 = await islandProbe()
+  await exec(islEdgeDragJs(60))
+  await sleep(700)
+  const islEdge1 = await islandProbe()
+  r.dragEdgeWinDrag = consumeDragFired() ? 'ok' : 'fail:edge-drag-no-main-drag（边缘拖动应移动窗口）'
+  r.dragEdgeNoPosX =
+    islEdge1.err || islEdge0.err
+      ? `fail:probe=${islEdge1.err || islEdge0.err}`
+      : Math.abs(islEdge1.posX - islEdge0.posX) < 0.005
+        ? 'ok'
+        : `fail:posX=${islEdge0.posX}->${islEdge1.posX}（边缘拖不应改岛内位置）`
 
-  // 圆点点击 → 展开（bug1 回归，放在拖拽之后验证拖拽不卡死点击）
-  await exec(dotClickJs())
+  // 单击岛身 → 展开（AC3/R3：弹簧 pop 出明细卡；窗口仍是岛尺寸，不是卡片视图）
+  await exec(islClickJs())
+  await sleep(700)
+  const isl2 = await islandProbe()
+  r.dotClickExpand =
+    isl2.err
+      ? `fail:probe=${isl2.err}`
+      : isl2.expanded && isl2.open
+        ? 'ok'
+        : `fail:mode=${isl2.mode} expanded=${isl2.expanded}`
+  r.cardBack = 'skipped:island-open-is-not-card'
+  // 展开态内容：plan 家窗口行（名 · % · 重置倒计时）+ balance 家金额（AC3）
+  r.islandOpenContent = String(
+    await exec(`(()=>{
+      const grid=document.querySelector('.isl-grid'); if(!grid) return 'fail:no-grid'
+      const wins=[...grid.querySelectorAll('.isl-win')].map(w=>w.textContent)
+      const bigs=[...grid.querySelectorAll('.isl-big')].map(b=>b.textContent)
+      const cells=[...grid.querySelectorAll('.isl-cell')].map(c=>c.getAttribute('data-supplier')+':'+c.getAttribute('data-kind'))
+      return JSON.stringify({cells, wins: wins.slice(0,3), bigs})
+    })()`)
+  )
+
+  // 再点一次岛身（空白处除外）→ 收起；随后仍在岛上
+  await exec(islClickJs())
+  await sleep(600)
+  const isl3 = await islandProbe()
+  r.reClickExpand = isl3.err ? `fail:probe=${isl3.err}` : !isl3.expanded && !isl3.open ? 'ok' : `fail:mode=${isl3.mode}`
+
+  // 双击 → 回到卡片视图（单击展开岛的对应面：面板可达性回归）
+  await exec(islDblclickJs())
   await sleep(900)
   const b2 = bounds()
-  r.dotClickExpand = b2.width > 300 ? 'ok' : `fail:${b2.width}x${b2.height}`
-  r.cardBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
-
-  // 拖拽后再点击仍能展开（假死回归）
-  await exec(dotClickJs())
-  await sleep(900)
-  r.reClickExpand = bounds().width > 300 ? 'ok' : 'fail'
-
-  // 漂移回归：多轮开合后，收起态的球必须回到同一位置（旧版每轮右移 328px 直至出屏）
+  r.dotClickExpand2 = b2.width > 300 ? 'ok' : `fail:${b2.width}x${b2.height}`
+  r.cardBack2 = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
+  // 回到岛上，后续岛断言以它为基准
   await exec(footerClick('收起'))
   await sleep(700)
-  const ballA = bounds()
+
+  // 漂移回归：多轮展开/收起后，岛位置（posX）必须回到同一值（旧版每轮右移 328px 直至出屏）
+  const islDriftA = await islandProbe()
   for (let i = 0; i < 2; i++) {
-    await exec(dotClickJs())
-    await sleep(700)
-    await exec(footerClick('收起'))
-    await sleep(700)
+    await exec(islClickJs())
+    await sleep(500)
+    await exec(islClickJs())
+    await sleep(500)
   }
-  const ballB = bounds()
+  const islDriftB = await islandProbe()
   r.noDrift =
-    ballA.x === ballB.x && ballA.y === ballB.y
-      ? 'ok'
-      : `fail:(${ballA.x},${ballA.y})->(${ballB.x},${ballB.y})`
-  await exec(dotClickJs())
+    islDriftA.err || islDriftB.err
+      ? `fail:probe=${islDriftA.err || islDriftB.err}`
+      : Math.abs(islDriftA.posX - islDriftB.posX) < 0.005 && islDriftB.mode === 'collapsed'
+        ? 'ok'
+        : `fail:posX=${islDriftA.posX}->${islDriftB.posX} mode=${islDriftB.mode}`
+  await exec('window.api.expand()')
   await sleep(800)
   r.logoBadge = (await exec("!!document.querySelector('.brand-badge img')")) ? 'ok' : 'fail:no-img'
   r.gridAfterRefresh = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
 
-  // 刷新压力（标题栏 ⟳ 与底部主按钮两个入口）+ 收起再展开（假死回归）
+  // 刷新压力（标题栏 ⟳ 与底部主按钮两个入口）+ 收起回岛（窗口固定为岛尺寸）
   r.titleRefreshBtn = (await exec("!!document.querySelector('button[title=立即刷新]')")) ? 'ok' : 'fail:no-titlebar-refresh'
   await exec("document.querySelector('button[title=立即刷新]')?.click()")
   await exec('window.api.refreshNow(); window.api.refreshNow()')
   await sleep(2500)
   await exec(footerClick('收起'))
   await sleep(700)
-  // 尺寸取常量而不是字面量：这里曾写死 200（球形态窗口宽），改成 2D 小水球的 56 之后
-  // 它会一直红 —— 而红的原因在断言里，看不出是断言过时了。
+  // 尺寸取常量而不是字面量：断言过时只会红在数字上，看不出是断言的问题 —— 所以读共享常量。
   r.refreshThenCollapse =
-    bounds().width === BALL_VIEW.width ? 'ok' : `fail:${bounds().width}!=${BALL_VIEW.width}`
-  await exec(dotClickJs())
+    bounds().width === ISLAND_VIEW.width && bounds().height === ISLAND_VIEW.height
+      ? 'ok'
+      : `fail:${bounds().width}x${bounds().height}!=${ISLAND_VIEW.width}x${ISLAND_VIEW.height}`
+  await exec(islDblclickJs())
   await sleep(900)
   r.refreshThenExpand = bounds().width > 300 ? 'ok' : 'fail'
 
@@ -938,11 +963,11 @@ export async function runUiTest(
     })()`)
   )
 
-  // ─── 收起态：唯一的形态是 2D 小水球（人物形态已下线，10-03-remove-human；用量环已于 10-04 退役）───
+  // ── 收起态：唯一的形态是顶部灵动岛（10-10-dynamic-island；旧 2D 小水球已退役）───
   //
   // ui:pet 残留 '1' 的老偏好由主进程 primePrefs 在启动时迁回 '0'；启动期行为在
   // uitest 运行时测不到，这里只断言形态死键：偏好值不再决定任何形态 —— 写 '1'
-  // 也变不出人物，窗口恒 56×56、无 canvas、无人物 DOM。
+  // 也变不出人物，窗口恒岛尺寸（ISLAND_VIEW）、无 canvas、无人物 DOM。
   // 面板不再常驻宠物卡（用户要求）：确认已移除
   r.petCardRemoved = (await exec("!!document.querySelector('.pet-card')")) ? 'fail:still-there' : 'ok'
 
@@ -992,21 +1017,21 @@ export async function runUiTest(
   await exec("window.api.setExtras({\"ui:pet\":\"1\"})")
   await gotoView('collapse')
   r.petUiPetDead =
-    bounds().width === BALL_VIEW.width &&
-    bounds().height === BALL_VIEW.height &&
+    bounds().width === ISLAND_VIEW.width &&
+    bounds().height === ISLAND_VIEW.height &&
     (await exec("!!document.querySelector('.pet3d-canvas')")) !== true &&
-    (await exec("!!document.querySelector('.petball-fallback')")) === true
+    (await exec("!!document.querySelector('.isl-body')")) === true
       ? 'ok'
       : `fail:${bounds().width}x${bounds().height}`
   // 复位：把探测写的值还原（primePrefs 也会在下次启动时做同样的迁移）
   await exec("window.api.setExtras({\"ui:pet\":\"0\"})")
   r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
 
-  // ── 小水球形态：窗口恒 56×56，纯 2D（无 canvas，有 fallback 水球），无人物 DOM ──
-  r.petBallWindow = bounds().width === BALL_VIEW.width && bounds().height === BALL_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
-  // 小水球是**纯 2D**：没有 canvas（不创建 WebGL 上下文），有 .petball-fallback 那枚 2D 小水球。
+  // ── 灵动岛形态：窗口恒 560×480（ISLAND_VIEW），纯 2D（无 canvas，有岛 DOM），无人物 DOM ──
+  r.petBallWindow = bounds().width === ISLAND_VIEW.width && bounds().height === ISLAND_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
+  // 灵动岛是**纯 2D**：没有 canvas（不创建 WebGL 上下文），有 .isl-body 那座岛。
   const ballCanvas = await exec("!!document.querySelector('.pet3d-canvas')")
-  const ballDot = await exec("!!document.querySelector('.petball-fallback')")
+  const ballDot = await exec("!!document.querySelector('.isl-body')")
   r.petBall3d =
     !ballCanvas && ballDot ? 'ok' : `fail:canvas=${!!ballCanvas},dot=${!!ballDot}`
   // 人物 DOM（胶囊 / 调试环 / 改名框）一条都不许剩：JSX 已删，留一条 DOM 级护栏
@@ -1017,9 +1042,9 @@ export async function runUiTest(
   )
   r.petNoFigureDom = figureDom === 0 ? 'ok' : `fail:${figureDom}`
   // 无通知、无预警时不该有泡泡（泡泡只承载 notice / 确认气泡，两者此时都为空）
-  r.petBallNoBubble = !(await exec("!!document.querySelector('.petball-bubble')"))
+  r.petBallNoBubble = !(await exec("!!document.querySelector('.isl-bubble') || !!document.querySelector('.isl-confirm')"))
     ? 'ok'
-    : `fail:bubble=${await exec("document.querySelector('.petball-bubble')?.innerText || ''")}`
+    : `fail:bubble=${await exec("document.querySelector('.isl-bubble')?.innerText || document.querySelector('.isl-confirm-text')?.innerText || ''")}`
   // 置顶开关（默认开；关掉后主进程不再置顶；再开回来）
   const topDefault = (await exec('window.api.debugPetState()')) as { alwaysOnTop: boolean } | null
   r.petTopDefault = topDefault?.alwaysOnTop === true ? 'ok' : 'fail:default-off'
@@ -1032,7 +1057,7 @@ export async function runUiTest(
   const watch = petIgnoreState()
   const hb = petHitboxDebug()
   r.petPierce = watch.roaming && hb && hb.width > 20 ? 'ok' : `fail:roaming=${watch.roaming},hb=${JSON.stringify(hb)}`
-  r.petCmdOk = watch.collapsed === true && bounds().width === BALL_VIEW.width ? 'ok' : `fail:${bounds().width}`
+  r.petCmdOk = watch.collapsed === true && bounds().width === ISLAND_VIEW.width ? 'ok' : `fail:${bounds().width}`
   // 收起态必须关掉原生窗口阴影（否则 macOS 会按窗口矩形投一层方框阴影）
   r.petNoWindowShadow = watch.shadow === false ? 'ok' : 'fail:has-shadow'
   // 诊断快照（纯记录，无断言读它）：穿透状态 + 命中框尺寸
@@ -1043,133 +1068,113 @@ export async function runUiTest(
 
   // 右键菜单关掉之后不许残留"按下"状态（"宠物黏住光标乱跑"的回归）
   r.petNoStickyDrag = consumeDragFired() ? 'fail:drag-started' : 'ok'
-  r.petStillCollapsed = bounds().width === BALL_VIEW.width ? 'ok' : `fail:${bounds().width}`
+  r.petStillCollapsed = bounds().width === ISLAND_VIEW.width ? 'ok' : `fail:${bounds().width}`
 
   // 右键菜单：原生菜单打开（Esc 关掉），期间不崩、渲染层仍存活
   await exec(`(()=>{
-    const b=document.querySelector('.petball-hit'); if(!b) return
+    const b=document.querySelector('.isl-hit'); if(!b) return
     const rc=b.getBoundingClientRect()
-    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
+    b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+10,bubbles:true}))
   })()`)
   await sleep(900)
   r.petMenuOpened = win.isDestroyed() ? 'fail:destroyed' : 'ok'
   await exec(`(()=>{ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})) })()`)
   await sleep(600)
 
-  // 球心水体 + 读数（10-03-holo-sphere 水满 pivot：外圈进度环已退役，
-  // 进度唯一载体是球内全屏水）：
-  //   · plan + 百分比读数 —— 三层波浪 + 高光线 + 真实水色（lvl 令牌逐位比）+ 液面位置；
-  //   · plan + 金额读数（算不出比例）—— 无波浪（绝不画 0% 的假水位），只有素盘 + 金额；
-  //   · balance —— 满水（R4-6，钱足=满杯）+ accent 水色 + 液面到顶；
-  //   · 退役环的节点一个不许剩（[class*="dot-ring"] 恒为 0）。
+  // ── 灵动岛收起内容（AC2：启用家数一排显示；plan 嵌套环 + logo，balance 金额）───
   //
-  // kind 由 PetBall 的 data-ring 提供（与 showWaves 同一个表达式）。断言**必须**先分 kind：
-  // 本机数据里球常落在 5H = 0% 的窗口上，「液面 > 0」对它天然不成立，而余额供应商
-  // 连水都没有 —— 混成一条布尔只会得到永真的兜底（或每次都红的假警报）。
-  const ringDom = String(
+  // 夹具自己推（真实数据随机器而变）：3 plan（多窗 70/41、单窗 42、高用量 91）
+  // + 1 balance（FIX_BAL）。断言先分 kind（plan/balance/无数据各走各的呈现，
+  // 混成一条布尔只会得到永真的兜底），再验环色与金额。
+  const FIX_ISLAND4 = [
+    planFix('fix-i1', 'Fix I1', [fw('5 小时', 70), fw('本周', 41)]),
+    planFix('fix-i2', 'Fix I2', [fw('本月', 42)]),
+    planFix('fix-i3', 'Fix I3', [fw('5 小时', 91)]),
+    ...FIX_BAL
+  ]
+  await pushFix(FIX_ISLAND4)
+  const islA = await islandProbe()
+  const islDom = String(
     await exec(`(()=>{
-      const dot=document.querySelector('.petball-fallback')
-      if(!dot) return 'fail:no-dot'
-      const waves=[...dot.querySelectorAll('.fluid-wave')]
-      const surf=dot.querySelector('.fluid-surface')
-      const value=dot.querySelector('.dot-value')
-      const d0=waves[0]?waves[0].getAttribute('d'):null
-      let sy=null
-      if(d0){const m=d0.match(/^M -40 (-?[\d.]+)/); if(m) sy=parseFloat(m[1])}
+      const combos=[...document.querySelectorAll('.isl-combo')].map(c=>({
+        id:c.getAttribute('data-supplier'), kind:c.getAttribute('data-kind'), lvl:c.getAttribute('data-lvl'),
+        rings: c.querySelectorAll('.isl-rings circle').length,
+        strokes: [...c.querySelectorAll('.isl-rings circle')].map(x=>getComputedStyle(x).stroke),
+        amount: c.querySelector('.isl-amount')?.textContent ?? null
+      }))
+      const isl=document.querySelector('.isl-strip')
+      const r=isl?isl.getBoundingClientRect():null
+      return JSON.stringify({combos, w: r?Math.round(r.width):-1})
+    })()`)
+  )
+  let islWhy = ''
+  try {
+    const d = JSON.parse(islDom) as {
+      combos: { id: string; kind: string; lvl: string; rings: number; strokes: string[]; amount: string | null }[]
+      w: number
+    }
+    if (islA.err) islWhy = `fail:probe=${islA.err}`
+    else if (d.combos.length !== 4) islWhy = `fail:count=${d.combos.length}（启用 4 家应一排 4 个）`
+    else if (d.combos.filter((c) => c.kind === 'plan').length !== 3) islWhy = `fail:plan=${JSON.stringify(d.combos)}`
+    else if (d.combos.filter((c) => c.kind === 'balance').length !== 1) islWhy = `fail:balance=${JSON.stringify(d.combos)}`
+    else if (d.combos.find((c) => c.id === 'fix-i3')?.lvl !== 'danger') islWhy = `fail:i3-lvl=${d.combos.find((c) => c.id === 'fix-i3')?.lvl}（91% 应 danger）`
+    else if (!(d.combos.find((c) => c.kind === 'balance')?.amount ?? '').includes('¥')) {
+      islWhy = `fail:bal-amount=${d.combos.find((c) => c.kind === 'balance')?.amount}（余额家应显示金额而非环）`
+    } else if (!(d.w > 0 && d.w <= 560)) islWhy = `fail:island-w=${d.w}（岛宽自适应，上限 560）`
+    else {
+      // 环色与渲染层同源（shared/water-color，不手写第二份公式）：i1 两窗 70/41
+      const i1 = d.combos.find((c) => c.id === 'fix-i1')
+      const anchors = defaultWaterAnchors()
+      const want = [70, 41].map((pct) => waterColor(pct, anchors).replace(/\s+/g, ''))
+      const got = (i1?.strokes ?? []).slice(1, 3).map((s) => (s || '').replace(/\s+/g, ''))
+      if (i1?.rings !== 3) islWhy = `fail:i1-rings=${i1?.rings}（底圈 + 2 窗）`
+      else if (got.join('|') !== want.join('|')) islWhy = `fail:ring-color got=${got.join('|')} want=${want.join('|')}`
+    }
+  } catch {
+    islWhy = `fail:probe=${islDom.slice(0, 80)}`
+  }
+  r.petBallCenterValue = islWhy || 'ok'
+  r.petBallRingDiag = islDom
+  // 禁用某家后该家消失（AC2 后半：子集推送 → 岛上只剩子集；注册表 enabled 口径见 IslandView ordered）
+  await pushFix([FIX_ISLAND4[0], FIX_ISLAND4[3]])
+  await sleep(400)
+  const islB = await islandProbe()
+  r.islandDisable =
+    islB.err
+      ? `fail:probe=${islB.err}`
+      : islB.count === 2 && islB.combos.every((c) => c.id === 'fix-i1' || c.id === 'fix-bal')
+        ? 'ok'
+        : `fail:count=${islB.count} combos=${JSON.stringify(islB.combos.map((c) => c.id))}`
+  // 无比例不断言假数（AC2 诚实表达：灰环 + 无金额环；中心不编 0%）
+  await pushFix(FIX_NOLIMIT)
+  await sleep(400)
+  const islC = String(
+    await exec(`(()=>{
+      const c=document.querySelector('.isl-combo[data-supplier="fix-nolimit"]')
+      if(!c) return 'fail:no-combo'
       return JSON.stringify({
-        ring: dot.getAttribute('data-ring') || '',
-        waves: waves.length,
-        surface: !!surf,
-        surfaceY: sy,
-        fill: waves[0]?getComputedStyle(waves[0]).fill:'',
-        lvl: (document.querySelector('.petball')?.className.match(/lvl-([a-z]+)/)||[])[1]||'',
-        ringNodes: dot.querySelectorAll('[class*="dot-ring"]').length,
-        ringTrack: !!dot.querySelector('.ring-track'),
-        value: value ? value.textContent : ''
+        kind: c.getAttribute('data-kind'),
+        strokes: [...c.querySelectorAll('.isl-rings circle')].map(x=>getComputedStyle(x).stroke)
       })
     })()`)
   )
-  let ringKind = ''
-  let waveCount = -1
-  let hasSurface = false
-  let waterFill = ''
-  let waterLvl = ''
-  let ringNodes = -1
-  let ringValue = ''
-  let ringSurfaceY: number | null = null
-  let ringTrack = false
+  let noPctWhy = ''
   try {
-    const d = JSON.parse(ringDom) as { ring: string; waves: number; surface: boolean; surfaceY: number | null; fill: string; lvl: string; ringNodes: number; ringTrack: boolean; value: string }
-    ringKind = d.ring
-    waveCount = d.waves
-    hasSurface = d.surface
-    waterFill = d.fill
-    waterLvl = d.lvl
-    ringNodes = d.ringNodes
-    ringValue = d.value
-    ringSurfaceY = typeof d.surfaceY === 'number' ? d.surfaceY : null
-    ringTrack = !!d.ringTrack
+    const d = JSON.parse(islC) as { kind: string; strokes: string[] }
+    const grays = d.strokes.slice(1).every((s) => s.replace(/\s+/g, '') === 'rgb(99,99,102)')
+    if (d.kind !== 'plan') noPctWhy = `fail:kind=${d.kind}`
+    else if (!grays) noPctWhy = `fail:strokes=${d.strokes.join('|')}（算不出比例必须全灰环，不编数字色）`
   } catch {
-    // ringDom 是 fail:... —— 下面统一报出去
+    noPctWhy = `fail:probe=${islC.slice(0, 80)}`
   }
-  const realWater = (v: string): boolean => v !== '' && v !== 'none' && v !== 'rgba(0, 0, 0, 0)'
-  const pctLike = /^-?\d+(\.\d+)?%$/.test(ringValue)
-  // 余额满水（R4-6）：三层波 + 高光 + 液面到顶三件套先同步判，水色 accent 异步另判
-  // （waterAccentWhy 要读 computed，不能进三元表达式）
-  let ringWhy = ringDom.startsWith('fail:')
-    ? ringDom
-    : ringNodes !== 0
-      ? `fail:ringNodes=${ringNodes}（退役环还有残留节点）`
-      : !ringValue
-        ? `fail:value='${ringValue}'`
-        : ringKind === 'plan'
-          ? pctLike
-            ? ringValue === '0%'
-              // 零用量（pct=0）：不画假水位（fluidLvl=0 → 无波、无高光），
-              // 但空环（.ring-track）仍在 —— 环是环形态皮唯一的进度载体，
-              // 0% 与"算不出比例"必须读得开（10-06-column-zero-fill 回归）。
-              // 10-06-column-zero-fill：诚实水位要求 surface ⟺ fill>0
-              ? !ringTrack
-                ? 'fail:zero-pct-no-ring'
-                : waveCount !== 0
-                  ? `fail:zero-pct-waves=${waveCount}`
-                  : hasSurface
-                    ? 'fail:zero-pct-surface'
-                    : ''
-              // 有比例且非零：三层波 + 高光 + 真实水色三件套，缺一件都算红
-              : waveCount !== 3
-                ? `fail:plan-waves=${waveCount}`
-                : !hasSurface
-                  ? 'fail:plan-no-surface'
-                  : !realWater(waterFill)
-                    ? `fail:plan-fill=${waterFill}`
-                    : !waterLvl
-                      ? 'fail:plan-no-lvl'
-                      : ''
-            // 算不出比例：绝不画假水位 —— 无波浪、无高光（AC3.3 的水满版）
-            : waveCount !== 0
-              ? `fail:no-pct-waves=${waveCount}`
-              : hasSurface
-                ? 'fail:no-pct-surface'
-                : ''
-          : ringKind === 'balance'
-            ? waveCount !== 3
-              ? `fail:balance-waves=${waveCount}（余额满水三层）`
-              : !hasSurface
-                ? 'fail:balance-no-surface（余额满水高光）'
-                : !surfaceNear(ringSurfaceY, 100)
-                  ? `fail:balance-surfaceY=${ringSurfaceY}（余额满水液面应到顶）`
-                  : ''
-            : `fail:ring='${ringKind}'`
-  if (!ringWhy && ringKind === 'balance') ringWhy = await waterAccentWhy(waterFill)
-  r.petBallCenterValue = ringWhy || 'ok'
-  r.petBallRingDiag = ringDom
-  // 命中区（W7）：球形态的拖拽/点击靠 .petball-hit 的矩形，必须贴合 56×56 的环。
-  // 之前没有任何断言守着它 —— 命中区一旦退回整窗（213×293）就是隐形的可点击区，
-  // 用户会发现自己「点空处也算点到了宠物」。
+  r.islandNoPct = noPctWhy || 'ok'
+  // 收尾：把真实数据拉回来（refreshNow 重采集；后面 grp/dock 段依赖真实注册表与快照）
+  await exec('window.api.refreshNow()')
+  await sleep(2500)
+  // 命中区：岛上报的矩形必须落在岛窗口内（W7 同款纪律：退回整窗就是隐形可点击区）
   const hitRect = String(await exec(`(()=>{
-      const h=document.querySelector('.petball-hit')
-      if(!h) return 'fail:no-hit'
+      const h=document.querySelector('.isl-body')
+      if(!h) return 'fail:no-island'
       const b=h.getBoundingClientRect()
       return JSON.stringify({w:Math.round(b.width),h:Math.round(b.height)})
     })()`))
@@ -1179,8 +1184,7 @@ export async function runUiTest(
       : (() => {
           try {
             const b = JSON.parse(hitRect) as { w: number; h: number }
-            // 允许 2px 抖动：主进程按投影上报，浮点取整会差一两个像素
-            return Math.abs(b.w - BALL_VIEW.width) <= 2 && Math.abs(b.h - BALL_VIEW.height) <= 2
+            return b.w > 0 && b.w <= ISLAND_VIEW.width && b.h > 0 && b.h <= ISLAND_VIEW.height
               ? 'ok'
               : `fail:${b.w}x${b.h}`
           } catch {
@@ -1191,8 +1195,8 @@ export async function runUiTest(
   // ─── 09-27-dot-ring-scroll：球上断言 ────────────────────────────────────────
   //
   // 纪律：每条都必须能被「先弄坏一次」弄红 —— 所以断言一律自带前置条件（探针报错、
-  // data-ring 不对、winCount 不够、句柄缺 idx 都算红），不写恒绿兜底。夹具按
-  // 三窗套餐 → 单窗套餐 → 余额 → 双供应商 的顺序推满，每步之间互不干扰。
+  //  kind 不对、家数不够都算红），不写恒绿兜底。夹具按多窗套餐 → 余额的顺序推，
+  // 每步之间互不干扰。
   //
   // 右键菜单那一半只在这里截得到：菜单标签是主进程现拼的，渲染层读不到。
   const menuLabels = await runPetMenu()
@@ -1219,499 +1223,39 @@ export async function runUiTest(
     return 'fail:timeout'
   }
 
-  const titleName = (t: string): string => t.split(' · ')[0] // tooltip 首段 = 供应商名
-  const dotValue = async (): Promise<string> =>
-    String(await exec("document.querySelector('.petball-fallback .dot-value')?.textContent ?? ''"))
-  /** 目标液面（与 PetBall 同式：clip 圆 r=27 → 顶 1 / 底 55，液位一位小数）：d 起点 Y 必须落在它 ±0.6 内 */
-  function surfaceFor(pct: number): number {
-    const c = Math.min(100, Math.max(0, pct))
-    return 55 - (Math.round(c * 10) / 1000) * 54
-  }
-  function surfaceNear(sy: number | null, pct: number): boolean {
-    return typeof sy === 'number' && Number.isFinite(sy) && Math.abs(sy - surfaceFor(pct)) <= 0.6
-  }
-  /**
-   * 余额水色 = accent 实色期望（R4-6：与渲染层同一实现算期望，不手写第二份公式；
-   *   accent 读自 .app computed，不读死颜色值，换肤不用改）。
-   * function 声明（非 const 箭头）：1128 行的 ringWhy 余额分支先用，后声明 ——
-   * const 会撞 TDZ，function 提升无此问题。
-   */
-  async function waterAccentWhy(fill: string | null): Promise<string> {
-    const raw = String(
-      await exec(
-        `(()=>{const a=document.querySelector('.app');if(!a)return '';return getComputedStyle(a).getPropertyValue('--accent')})()`
-      )
-    ).trim()
-    if (!raw) return 'fail:accent-empty'
-    const c = parseCssColor(raw)
-    if (!c) return `fail:accent-parse=${raw.slice(0, 40)}`
-    const want = rgbStr(c)
-    const got = (fill || '').replace(/\s+/g, '')
-    return got === want.replace(/\s+/g, '') ? '' : `fail:accent fill=${fill} want=${want}(--accent=${raw.trim()})`
-  }
-  const waterColorWhy = async (p: BallProbe, pct: number): Promise<string> => {
-    if (p.waves !== 3 || !p.surface) return `fail:precondition waves=${p.waves} surface=${p.surface}`
-    if (!p.lvl) return 'fail:no-lvl'
-    const raw = String(
-      await exec(
-        `(()=>{const b=document.querySelector('.petball');if(!b)return '';const cs=getComputedStyle(b);return JSON.stringify({'--ok':cs.getPropertyValue('--ok'),'--warn':cs.getPropertyValue('--warn'),'--danger':cs.getPropertyValue('--danger')})})()`
-      )
-    )
-    let anchors = null as ReturnType<typeof resolveWaterAnchors>
-    try {
-      const t = JSON.parse(raw) as Record<string, string>
-      anchors = resolveWaterAnchors((n) => t[n] ?? '')
-    } catch {
-      anchors = null
-    }
-    if (!anchors) return `fail:anchors=${raw.slice(0, 60)}`
-    const want = waterColor(pct, anchors)
-    const got = (p.waterFill || '').replace(/\s+/g, '')
-    return got === want.replace(/\s+/g, '')
-      ? ''
-      : `fail:pct=${pct} fill=${p.waterFill} want=${want}`
-  }
-  /** 推夹具 + 等读数补间收尾：push 也会让 target 变化（走 600ms 动画），直接读会拿到中间态 */
-  const pushSettle = async (snaps: unknown[]): Promise<void> => {
-    await pushFix(snaps)
-    await sleep(600)
-  }
-  /** 走一步并等动画落定（320ms 冷却 + 500ms 补间 > COUNTUP_MS=600） */
-  const wheelSettled = async (dx: number, dy: number): Promise<void> => {
-    await wheelStep(dx, dy)
-    await sleep(500)
-  }
-
-  // ── 场景一：三窗口套餐 10% / 20% / 30%（短标签 5H / W / M）─────────────────
-  await pushSettle(FIX_PLAN3)
-  const g0 = await ballProbe()
-  let ringOnWhy = '' // petRingAlwaysOn：套餐必有水 + 三层波 + 液面对 + 水色对
-  let winCycleWhy = '' // petWindowCycle 的多窗口半边（单窗口那半在场景二合报）
-  let winLabelWhy = '' // petWinLabel 的多窗口半边
-  if (g0.err) {
-    ringOnWhy = winCycleWhy = winLabelWhy = `fail:probe=${g0.err}`
-  } else {
-    // 水三层（有无 / 层数 / 液面），缺一层都算红
-    if (g0.ring !== 'plan') ringOnWhy = `fail:ring=${g0.ring}`
-    else if (g0.waves !== 3) ringOnWhy = `fail:no-water waves=${g0.waves}`
-    else if (!g0.surface) ringOnWhy = 'fail:no-surface'
-    else if (!surfaceNear(g0.surfaceY, 10)) ringOnWhy = `fail:surfaceY=${g0.surfaceY} want=${surfaceFor(10)}`
-    else if (g0.ringNodes !== 0) ringOnWhy = `fail:ringNodes=${g0.ringNodes}`
-    if (g0.winCount !== 3) winCycleWhy = `fail:winCount=${g0.winCount}`
-    else if (g0.winIdx !== 0) winCycleWhy = `fail:winIdx0=${g0.winIdx}`
-    else if (g0.value !== FIX_PLAN3_VALS[0]) winCycleWhy = `fail:v0=${g0.value}`
-    else if (!surfaceNear(g0.surfaceY, 10)) winCycleWhy = `fail:surface0=${g0.surfaceY}`
-    if (g0.winLabel !== FIX_PLAN3_LBL[0]) winLabelWhy = `fail:lbl0=${g0.winLabel}`
-  }
-  r.petRingAlwaysOn = ringOnWhy || 'ok'
-  // 水色与 lvl 同步（颜色不是唯一通道，但水色错了就是等级错了；10% → lvl-ok → --ok）
-  r.petWaterLevel = ringOnWhy ? ringOnWhy : (await waterColorWhy(g0, 10)) || 'ok'
-  // AC3.1/AC3.2：短标签必须落在百分比**正下方**（同一列），既不压数字也不贴盘缘、且不溢出 56×56。
-  // 这里量的是**几何**，不是 CSS 声明 —— 声明由 scripts/test-structure.mjs 的 D4/D5 守。
-  // 两条声明各自的判据都能被改坏（见 implement.md），但它们都**证明不了**「真的在下方」：
-  // 那只有真实布局能给。所以这里补一条读 getBoundingClientRect 的。
-  //
-  // 阈值从几何算：整组 = 13(数字) + 1(gap) + 8(标签) = 22px，56 盘里竖直居中 → 数字底 ~31.5、
-  // 标签顶 ~32.5，间隙 ≈1px，容差取 5px（够松，别把正常的字体度量差异当回归）。
-  const wlGeo = String(await exec(`(()=>{
-    const dot=document.querySelector('.petball-fallback'); if(!dot) return 'fail:no-dot'
-    const dv=dot.querySelector('.dot-value'); const wl=dot.querySelector('.dot-winlabel')
-    if(!dv) return 'fail:no-value'; if(!wl) return 'fail:no-label'
-    const a=dv.getBoundingClientRect(), b=wl.getBoundingClientRect(), d=dot.getBoundingClientRect()
-    // 水盘的几何：56×56 盘，圆心 (28,28)，水体 r=27。
-    // 换算到**未缩放**的盘坐标系（按 d.width 归一），这样按压态的 scale 不会污染判据。
-    const k=56/d.width
-    const bx=(b.left-d.left)*k, by=(b.top-d.top)*k, bw=b.width*k, bh=b.height*k
-    const corners=[[bx,by],[bx+bw,by],[bx,by+bh],[bx+bw,by+bh]]
-      .map(([x,y])=>+Math.hypot(x-28,y-28).toFixed(2))
-    const inBox = bx>=0 && by>=0 && bx+bw<=56 && by+bh<=56
-    return JSON.stringify({gap:+(b.top-a.bottom).toFixed(2), corners, inBox, text:wl.textContent})
-  })()`))
-  let wlBelowWhy = ''
-  if (wlGeo.startsWith('fail:')) {
-    wlBelowWhy = wlGeo
-  } else {
-    const g = JSON.parse(wlGeo) as { gap: number; corners: number[]; inBox: boolean; text: string }
-    // ① 数字在上、标签在下：标签顶不低于数字底，且间隙在 5px 内（=「正下方」而非「另开一坨」）
-    if (g.gap < -0.5 || g.gap > 5) wlBelowWhy = `fail:gap=${g.gap}（标签须紧贴数字下方）`
-    // ② 不贴盘缘：四角到盘心的最大距离必须小于 24.5（水体 r=27，留一圈高光盘缘可读）
-    else if (Math.max(...g.corners) >= 24.5) wlBelowWhy = `fail:press-edge=${Math.max(...g.corners)}`
-    // ③ 不溢出 56×56（AC3.2）
-    else if (!g.inBox) wlBelowWhy = 'fail:overflow-56'
-    // ④ 取值仍来自 shortWindowLabel()，随窗口切换同步变化（AC3.4 —— 位置对了但值错了也是回归）
-    else if (g.text !== FIX_PLAN3_LBL[0]) wlBelowWhy = `fail:text=${g.text} want=${FIX_PLAN3_LBL[0]}`
-  }
-  r.petWinLabelBelow = wlBelowWhy || 'ok'
-  await wheelSettled(0, 100)
-  const g1 = await ballProbe()
-  if (!winCycleWhy) {
-    if (g1.err) winCycleWhy = `fail:probe=${g1.err}`
-    else if (g1.winIdx !== 1) winCycleWhy = `fail:winIdx1=${g1.winIdx}`
-    else if (g1.value !== FIX_PLAN3_VALS[1]) winCycleWhy = `fail:v1=${g1.value}`
-    else if (!surfaceNear(g1.surfaceY, 20)) winCycleWhy = `fail:surface1=${g1.surfaceY}`
-  }
-  if (!winLabelWhy && g1.winLabel !== FIX_PLAN3_LBL[1]) winLabelWhy = `fail:lbl1=${g1.winLabel}`
-  await wheelSettled(0, 100)
-  const g2 = await ballProbe()
-  if (!winCycleWhy) {
-    if (g2.err) winCycleWhy = `fail:probe=${g2.err}`
-    else if (g2.winIdx !== 2) winCycleWhy = `fail:winIdx2=${g2.winIdx}`
-    else if (g2.value !== FIX_PLAN3_VALS[2]) winCycleWhy = `fail:v2=${g2.value}`
-    else if (!surfaceNear(g2.surfaceY, 30)) winCycleWhy = `fail:surface2=${g2.surfaceY}`
-  }
-  if (!winLabelWhy && g2.winLabel !== FIX_PLAN3_LBL[2]) winLabelWhy = `fail:lbl2=${g2.winLabel}`
-  // AC5.1：30% → 10% 回绕，渲染期镜像把显示值归零 → 8 次采样必须截到严格落在 (0,10)
-  // 的中间态；「直接落定」时采到的全是 0% / 10%，这条就红。
-  await exec(wheelJs(0, 100))
-  const mids: string[] = []
-  let midOk = false
-  for (let i = 0; i < 8; i++) {
-    await sleep(45)
-    const v = await dotValue()
-    mids.push(v)
-    const n = parseFloat(v)
-    if (Number.isFinite(n) && n > 0 && n < 10) midOk = true
-  }
-  r.petCountUp = midOk ? 'ok' : `fail:samples=${mids.join('/')}`
-  // AC5.2：动画收尾必须精确落目标值（easeOut 尾帧插值会留尾差）
-  await sleep(700)
-  const g3 = await ballProbe()
-  r.petCountUpExact = g3.err
-    ? `fail:probe=${g3.err}`
-    : g3.value === FIX_PLAN3_VALS[0]
-      ? 'ok'
-      : `fail:${g3.value} want=${FIX_PLAN3_VALS[0]}`
-  // AC4.4 惯性两段：① 一个手势里连发 30 个 deltaY:40 只准跳 1 格；
-  // ② 断流后的残量必须清掉 —— 否则残量会让下一次 10px 轻扫立刻过阈值（静默误切一格）。
-  const i0 = await ballProbe()
-  const tightOk = String(
-    await exec(`(()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
-      for(let i=0;i<30;i++) b.dispatchEvent(new WheelEvent('wheel',{deltaX:0,deltaY:40,bubbles:true}))
-      return 'ok'})()`)
-  )
-  const i1 = await ballProbe()
-  let inertiaWhy =
-    tightOk !== 'ok'
-      ? `fail:dispatch=${tightOk}`
-      : i0.err || i1.err
-        ? `fail:probe=${i0.err || i1.err}`
-        : i0.winCount <= 1
-          ? `fail:winCount=${i0.winCount}`
-          : i1.winIdx !== (i0.winIdx + 1) % i0.winCount
-            ? `fail:tight ${i0.winIdx}->${i1.winIdx}`
-            : ''
-  await sleep(300) // 让上一手势断流（>GESTURE_GAP），进残量那一段
-  const pacedOk = String(
-    await exec(`(async()=>{const b=document.querySelector('.petball-hit'); if(!b) return 'no-hit'
-      for(let i=0;i<6;i++){b.dispatchEvent(new WheelEvent('wheel',{deltaX:0,deltaY:100,bubbles:true})); await new Promise(r=>setTimeout(r,40))}
-      return 'ok'})()`)
-  )
-  const i2 = await ballProbe()
-  if (!inertiaWhy) {
-    inertiaWhy =
-      pacedOk !== 'ok'
-        ? `fail:dispatch=${pacedOk}`
-        : i2.err
-          ? `fail:probe=${i2.err}`
-          : i2.winIdx !== (i1.winIdx + 1) % i1.winCount
-            ? `fail:paced ${i1.winIdx}->${i2.winIdx}`
-            : ''
-  }
-  await sleep(800) // 手势早已断流：残量若没清，下面这 10px 会直接过阈值
-  await exec(wheelJs(0, 10))
-  const i3 = await ballProbe()
-  if (!inertiaWhy) {
-    inertiaWhy = i3.err ? `fail:probe=${i3.err}` : i3.winIdx !== i2.winIdx ? `fail:residual ${i2.winIdx}->${i3.winIdx}` : ''
-  }
-  r.petWheelInertia = inertiaWhy || 'ok'
-
-  // ── 场景二：单窗口套餐 —— 切了等于没切（AC3.4），且不出现短标签（AC3.6）──────
-  await pushSettle(FIX_PLAN1)
-  const h0 = await ballProbe()
-  const h1Val = '13.7%' // fmtPercent(13.7)
-  let singleWhy = ''
-  let singleLabelWhy = ''
-  if (h0.err) {
-    singleWhy = singleLabelWhy = `fail:probe=${h0.err}`
-  } else {
-    if (h0.winCount !== 1) singleWhy = `fail:winCount=${h0.winCount}`
-    else if (h0.value !== h1Val) singleWhy = `fail:value=${h0.value}`
-    if (h0.winLabel !== null) singleLabelWhy = `fail:lbl0=${h0.winLabel}`
-  }
-  await wheelSettled(0, 100)
-  await wheelSettled(0, 100)
-  const h1 = await ballProbe()
-  if (!singleWhy) {
-    if (h1.err) singleWhy = `fail:probe=${h1.err}`
-    else if (h1.winIdx !== 0) singleWhy = `fail:winIdx=${h1.winIdx}`
-    else if (h1.value !== h1Val) singleWhy = `fail:value=${h1.value}`
-  }
-  if (!singleLabelWhy && h1.winLabel !== null) singleLabelWhy = `fail:lbl1=${h1.winLabel}`
-  // 多窗口半边 + 单窗口半边合成一条（拆开 14 条就对不上了）
-  r.petWindowCycle = winCycleWhy || singleWhy || 'ok'
-  r.petWinLabel = winLabelWhy || singleLabelWhy || 'ok'
-
-  // ── 场景三：充值余额 —— 满水 + 金额 + accent 水色（R4-6；AC2.1 已更新）；隐藏余额时不出现数字（AC5.3）──
-  await pushSettle(FIX_BAL)
-  const balDom = String(
-    await exec(`(()=>{const d=document.querySelector('.petball-fallback'); if(!d) return 'fail:no-dot'
-      const waves=[...d.querySelectorAll('.fluid-wave')]
-      const d0=waves[0]?waves[0].getAttribute('d'):null
-      let sy=null
-      if(d0){const m=d0.match(/^M -40 (-?[\\d.]+)/); if(m) sy=parseFloat(m[1])}
-      return JSON.stringify({ring:d.getAttribute('data-ring')||'',
-        waves:waves.length,
-        surface:!!d.querySelector('.fluid-surface'),
-        surfaceY: sy,
-        fill: waves[0]?getComputedStyle(waves[0]).fill:'',
-        ringNodes:d.querySelectorAll('[class*="dot-ring"]').length})})()`)
-  )
-  let balWhy = ''
-  try {
-    const b = JSON.parse(balDom) as { ring: string; waves: number; surface: boolean; surfaceY: number | null; fill: string; ringNodes: number }
-    if (b.ring !== 'balance') balWhy = `fail:ring=${b.ring}` // 前置条件：真的是余额供应商
-    else if (b.ringNodes !== 0) balWhy = `fail:ringNodes=${b.ringNodes}`
-    else if (b.waves !== 3) balWhy = `fail:waves=${b.waves}（余额满水三层）`
-    else if (!b.surface) balWhy = 'fail:surface（余额满水高光）'
-    else if (typeof b.surfaceY !== 'number' || Math.abs(b.surfaceY - surfaceFor(100)) > 0.6) {
-      balWhy = `fail:surfaceY=${b.surfaceY}（余额满水液面应到顶）`
-    } else balWhy = await waterAccentWhy(b.fill)
-  } catch {
-    balWhy = `fail:probe=${balDom}`
-  }
-  r.petNoRingOnBalance = balWhy || 'ok'
-  const hideOn = await setHide(true)
+  // ── 隐藏余额（岛版）：右键菜单切 → 余额 combo 金额变 •••• ────────────────
+  // 打码只管读数（balanceText 构造时即 lit，不经过任何动画链路）
+  await pushFix(FIX_BAL)
+  const islBalHide = async (): Promise<string> =>
+    String(await exec(`document.querySelector('.isl-combo[data-kind="balance"] .isl-amount')?.textContent ?? ''`))
+  const hideOn2 = await setHide(true)
   await sleep(500)
-  const hv1 = await dotValue()
+  const hv1 = await islBalHide()
   await sleep(400)
-  const hv2 = await dotValue()
-  const hideBack = await setHide(hideWasOn)
+  const hv2 = await islBalHide()
+  const hideBack2 = await setHide(hideWasOn)
   r.petHideBalanceNoAnim =
-    hideOn !== 'ok'
-      ? `fail:${hideOn}`
+    hideOn2 !== 'ok'
+      ? `fail:${hideOn2}`
       : hv1 !== '••••' || hv2 !== '••••'
         ? `fail:${hv1}/${hv2}`
-        : hideBack !== 'ok'
-          ? `fail:restore=${hideBack}`
+        : hideBack2 !== 'ok'
+          ? `fail:restore=${hideBack2}`
           : 'ok'
-
-  // ── 场景四：双供应商 —— 换人唯一入口、手动后轮播暂停、恢复后窗口归零 ─────────
-  await pushSettle(FIX_AB)
-  const a0 = await ballProbe()
-  let holdWhy = ''
-  let advWhy = ''
-  let provWhy = ''
-  if (a0.err) {
-    holdWhy = advWhy = provWhy = `fail:probe=${a0.err}`
-  } else if (a0.winCount <= 1) {
-    holdWhy = advWhy = provWhy = `fail:precondition winCount=${a0.winCount}`
-  } else if ((await setWindowTo(1, 5)) !== 1) {
-    holdWhy = advWhy = provWhy = 'fail:setwin'
-  } else {
-    await wheelSettled(100, 0) // 手动换人 = 唯一入口（窗口同帧归零）+ 启动 8 秒暂停
-    const m0 = await ballProbe()
-    if (m0.err || m0.idx < 0) {
-      holdWhy = advWhy = provWhy = `fail:probe=${m0.err || 'no-handle'}`
-    } else {
-      // ① AC4.3：换人后 7 秒内 idx 不许推进（14 × 500ms 采样）
-      for (let i = 1; i <= 14; i++) {
-        await sleep(500)
-        const idx = Number(await exec('window.__bd_ball?.()?.idx ?? -1'))
-        if (idx !== m0.idx) {
-          holdWhy = `fail:idx ${m0.idx}->${idx} @${(i * 0.5).toFixed(1)}s`
-          break
-        }
-      }
-      // ② R4：暂停结束后轮播**先在同一家里把窗口走完**，走完才换人。
-      //
-      //    这条**替换**掉了旧的 petCarouselResetsWindow（已作废，见下方 r 赋值处的注释）。
-      //    观测方式：500ms 一采，把 winIdx 的**去重序列**记下来；换人那一帧记 -1。
-      //    24 次 × 500ms = 12s 观测窗，按「走完 1 个窗口（6s）+ 换人（再 6s）」足够覆盖。
-      const seq: number[] = []
-      let adv: BallProbe | null = null
-      for (let i = 0; i < 24 && !adv && !advWhy; i++) {
-        await sleep(500)
-        const p = await ballProbe()
-        if (p.err) {
-          advWhy = `fail:probe=${p.err}`
-          break
-        }
-        if (p.idx === m0.idx) {
-          if (!seq.length || seq[seq.length - 1] !== p.winIdx) seq.push(p.winIdx)
-        } else {
-          adv = p
-          seq.push(-1) // 换人那一帧
-        }
-      }
-      if (!advWhy && !adv) {
-        advWhy = `fail:no-advance-in-12s seq=[${seq}]`
-      } else if (adv) {
-        await sleep(700) // 等换人后的读数补间落定再取值
-        const fin = await ballProbe()
-        const nm = titleName(fin.title)
-        // **核心判据**：换人*之前*必须见过窗口往后走过（seq 里出现过 >0 的值）。
-        // 只守「换人时窗口回 0」是不够的 —— 旧的「每 6s 直接 advanceProvider」
-        // 同样满足那一条，而那正是 R4 要改掉的病（用户看到的「快速切供应商但从不切时限」）。
-        const walked = seq.some((w) => w > 0)
-        advWhy = fin.err
-          ? `fail:probe=${fin.err}`
-          : !walked
-            ? `fail:no-window-walk seq=[${seq}]`
-            : fin.winIdx !== 0
-              ? `fail:winIdx=${fin.winIdx} seq=[${seq}]`
-              : FIX_AB_FIRST[nm] !== fin.value
-                ? `fail:${nm}=${fin.value} want=${FIX_AB_FIRST[nm]} seq=[${seq}]`
-                : ''
-      }
-      // ③ 左右滚 = 换人：窗口必须归零、读数落到新供应商的 windows[0]（标题变 = 真换了人）
-      const c0 = await ballProbe()
-      const n0 = titleName(c0.title)
-      if (c0.err) provWhy = `fail:probe=${c0.err}`
-      else if ((await setWindowTo(1, 5)) !== 1) provWhy = 'fail:setwin'
-      else {
-        await wheelSettled(100, 0)
-        const c1 = await ballProbe()
-        const n1 = titleName(c1.title)
-        provWhy = c1.err
-          ? `fail:probe=${c1.err}`
-          : n1 === n0
-            ? `fail:same=${n1}`
-            : c1.winIdx !== 0
-              ? `fail:winIdx=${c1.winIdx}`
-              : FIX_AB_FIRST[n1] !== c1.value
-                ? `fail:${n1}=${c1.value} want=${FIX_AB_FIRST[n1]}`
-                : ''
-      }
-    }
-  }
-  r.petWheelHold = holdWhy || 'ok'
-  // ⚠ petCarouselResetsWindow **已被 09-28-dot-frame-label-carousel 作废**（不是重命名）。
-  //
-  // 它守的是「自动轮播推进后窗口回到 0」。R4 之后，多窗口供应商的自动轮播**正确行为
-  // 就是窗口往后走**，该断言会把正确实现判成红的 —— 留着就是一条**会误报的假护栏**，
-  // 比没有护栏更坏（它会让人以为 R4 改错了）。
-  //
-  // 换上的 petCarouselOrder 守的是**完整序列**（先走完窗口 → 再换人 → 换人时窗口回 0），
-  // 而不只是换人那半边。仅守「换人时回 0」是不够的：旧的每 6s 直接 advanceProvider
-  // 同样满足那一条。
-  r.petCarouselOrder = advWhy || 'ok'
-  r.petProviderCycle = provWhy || 'ok'
-
-  // ── 场景四之二：petCarouselRhythm —— 专打 design §4.2 的「effect 重跑把节奏冻死」 ──
-  //
-  // 为什么要单独一条：petCarouselOrder 证明的是**一次**「走窗口→换人」；
-  // 这条证明的是**节拍连续** —— 走完窗口之后下一个 tick 仍在 6s 附近再推进一步，
-  // 而不是被某个 effect 重跑把 lastAdvance 归零、之后每一步都重新等满 6s。
-  //
-  // 判据不是「6s」（那受 ±1s tick 粒度与机器负载影响，太紧会变成常红的 flake），
-  // 而是**单调不倒退 + 不再无限等**：三次观测（0 → 至少 1 步 → 再至少 1 步）必须在
-  // 有限窗口内真的推进。冻结的实现（把 winIdx / s 塞进 deps）会一直停在 seq=[0]。
-  //
-  // 为什么要「不碰 holdUntil」：8s 的手动暂停（AC4.3）与 6s 的自动节奏同量级，
-  // 夹在一起观测会把暂停误读成冻结。走窗口这条路**不设 hold**，所以这里显式清掉它。
-  await pushSettle(FIX_AB)
-  const rh0 = await ballProbe()
-  let rhythmWhy = ''
-  if (rh0.err) {
-    rhythmWhy = `fail:probe=${rh0.err}`
-  } else if (rh0.winCount <= 1) {
-    rhythmWhy = `fail:precondition winCount=${rh0.winCount}`
-  } else {
-    // 起点：把窗口推到 0（setWindowTo 只发滚轮，会顺带起 8s 暂停 —— 见下面的说明）
-    await setWindowTo(0, 5)
-    const rBase = await ballProbe()
-    // 收「(idx, winIdx) 去重序列」，要求至少 3 个**互不相同**的状态。
-    // 为什么不逐对比较：换人后 winIdx 会归 0，与起点的 (0,0) 撞车，逐对比较会
-    // 在第一次换人处误判成「没推进」。去重序列天然处理这种回绕。
-    //
-    // 3 个不同状态 = 连着真的推进了 2 次（6s + 6s）。冻结的实现只会停在 1 个状态。
-    const seen: string[] = []
-    for (let i = 0; i < 72 && seen.length < 3; i++) {
-      await sleep(500)
-      const p = await ballProbe()
-      if (p.err) {
-        rhythmWhy = `fail:probe=${p.err}`
-        break
-      }
-      const st = `${p.idx}/${p.winIdx}`
-      if (!seen.includes(st)) seen.push(st)
-    }
-    if (rhythmWhy) {
-      /* 探针挂了 */
-    } else if (seen.length < 3) {
-      rhythmWhy =
-        `fail:stalled base=${rBase.idx}/${rBase.winIdx} seen=[${seen}]` +
-        `（36s 内只出现 ${seen.length} 个状态：球走完一步就再也不动了 —— effect 重跑把 lastAdvance 归零了）`
-    }
-  }
-  r.petCarouselRhythm = rhythmWhy || 'ok'
-
-  // ── 场景五：套餐窗口算不出比例（AC3.3）—— 「无比例不画水」的唯一证明 ──────
-  // 上面几个夹具的 plan 全都带 percent，所以「无比例的窗口仍是素盘」若不单推一个
-  // 这样的窗口，就只能指望真实数据恰好出现它时被 petBallCenterValue 顺带查到 ——
-  // 那是运气，不是护栏（AC3.3 此前正是这种未被断言覆盖的状态，check 复核补上）。
-  // 结果并进 petRingAlwaysOn（同一句「套餐水位诚实」的另一半），断言条目数不变。
-  await pushSettle(FIX_NOLIMIT)
-  const np0 = await ballProbe()
-  let noPctWhy = ''
-  if (np0.err) noPctWhy = `fail:probe=${np0.err}`
-  else if (np0.ring !== 'plan') noPctWhy = `fail:ring=${np0.ring}`
-  else if (np0.winCount !== 1) noPctWhy = `fail:winCount=${np0.winCount}`
-  else if (np0.waves !== 0) noPctWhy = `fail:waves=${np0.waves}（算不出比例绝不挂水，更不许画 0% 的假水位）`
-  else if (np0.surface) noPctWhy = 'fail:surface-without-pct'
-  else if (np0.ringNodes !== 0) noPctWhy = `fail:ringNodes=${np0.ringNodes}`
-  else if (np0.value !== '¥1.3k') noPctWhy = `fail:value=${np0.value}` // 中心是金额，不是 0%
-  else if (np0.winLabel !== null) noPctWhy = `fail:lbl=${np0.winLabel}` // 单窗口不该出现短标签
-  if (!ringOnWhy && noPctWhy) ringOnWhy = noPctWhy
-  r.petRingAlwaysOn = ringOnWhy || 'ok' // 复写：场景一写过一次，这里补上 AC3.3 那一半
-
-  // ── 场景六：零用量窗口 —— 「pct=0 是空环，不是无环」的唯一证明 ──────────────
-  // 场景五验的是「算不出比例 → 素盘 + 金额，连轨道都不画」。这里验它的镜像：比例
-  // **算得出且等于 0** → 轨道仍在（0% 是诚实空环）、弧长 0、不挂水。
-  // 两个开关必须分开：轨道挂「数据已知」、水体挂「液位 > 0」。合成一个 showWaves 时
-  // 0% 会把整圈环一起从 DOM 拆掉 —— 4 款环形态皮（dark/minimal/candy/ink）上环是唯一
-  // 的进度载体，球退化成素盘 + 0% 文字，跟场景五的 nodata 态读起来一模一样。
-  // 结果同样并进 petRingAlwaysOn（同一句「套餐水位诚实」的第三半），断言条目数不变。
-  await pushSettle(FIX_ZERO)
-  const z0 = await ballProbe()
-  let zeroWhy = ''
-  if (z0.err) zeroWhy = `fail:probe=${z0.err}`
-  else if (z0.ring !== 'plan') zeroWhy = `fail:ring=${z0.ring}`
-  else if (z0.value !== '0%') zeroWhy = `fail:value=${z0.value}` // 是 0%，不是金额、不是 —
-  else if (!z0.ringTrack)
-    zeroWhy = 'fail:zero-pct-no-ring（pct=0 是空环不是无环：环形态皮唯一的进度载体不能跟水位一起拆）'
-  else if (z0.waves !== 0) zeroWhy = `fail:waves=${z0.waves}（fluidLvl=0 不挂假水位）`
-  else if (z0.surface) zeroWhy = 'fail:zero-pct-surface'
-  if (!ringOnWhy && zeroWhy) ringOnWhy = zeroWhy
-  r.petRingAlwaysOn = ringOnWhy || 'ok' // 再复写一次：补上「0% 空环」这一半
-  // 收尾：隐藏余额已在场景三还原；采集频率拉回默认（setExtras 会 reconfigure → 立刻补一轮真实数据）
+  // 收尾：采集频率拉回默认（setExtras 会 reconfigure → 立刻补一轮真实数据）
   await exec("window.api.setExtras({refreshInterval:'60'})")
 
-  // ── petBallSkinSurface：5 个内置皮肤 + 一个**不存在的**皮肤下，球盘都有实心底色 ────
-  //
-  // AC1.5 的核心：外部皮肤（ext:*）没写 `--ball-bg` 时靠顶层 `:root` 兜底。
-  // 删掉 :root 那条，这些皮肤会**全部**塌成 transparent —— 一个没有底的球比浅色的球更糟。
-  // `ext:__no-such-skin__` 那一档是这条断言真正的目标：它模拟「皮肤作者没提供这个令牌」，
-  // 只有 :root 兜底能让它不塌。
-  //
-  // 判据不是「值等于某个具体色」（那是把设计取值钉死），而是**可解析 + 不透明**：球必须
-  // 是一个物体。切皮肤直接改 .app 的 data-skin（App.tsx 就是这么落的），改完**立刻**读
-  // getComputedStyle —— 样式重算在读计算值时同步发生，不存在读到旧值的竞态；读完复原。
-  //
-  // ⚠ **覆盖范围要说清楚**（实测发现的，别误以为它什么都管）：本条验的是**当前系统主题下**
-  // 的兜底链。uitest 跑在什么主题上，这条就只覆盖那一半：`prefers-color-scheme` 是媒体查询，
-  // 渲染层改不了，所以「删掉顶层 :root 那份、浅色系统下 ext 皮肤会不会塌」在这台机器上
-  // **测不出来**（实测：只删顶层 :root 时本条仍绿，因为暗色 media 块里那份还在兜着）。
-  // 那一半由结构门 D3 静态覆盖 —— 它区分顶层与 @media 内层，与机器主题无关。
-  // 实测红集：删掉**全部** --ball-bg 定义 → 恰好 {petBallSkinSurface}。
+  // 岛体是渐变背景（computed background-color 恒 transparent），判据读
+  // backgroundImage ≠ none —— 渐变丢了（background 被人改成纯色 transparent）
+  // 即红；具体色值不钉（换皮/调色不改测试）。
   const surfRaw = String(await exec(`(()=>{
-    const app=document.querySelector('.app'); const dot=document.querySelector('.petball-fallback')
-    if(!app) return 'fail:no-app'; if(!dot) return 'fail:no-dot'
+    const app=document.querySelector('.app'); const isl=document.querySelector('.isl-strip') || document.querySelector('.isl-open')
+    if(!app) return 'fail:no-app'; if(!isl) return 'fail:no-island'
     const before=app.getAttribute('data-skin')
     const out={}
     for(const s of ['aero','dark','minimal','candy','ink','ext:__no-such-skin__']){
       app.setAttribute('data-skin', s)
-      out[s]=getComputedStyle(dot).backgroundColor
+      out[s]=getComputedStyle(isl).backgroundImage
     }
     if(before===null) app.removeAttribute('data-skin'); else app.setAttribute('data-skin', before)
     return JSON.stringify(out)
@@ -1722,21 +1266,9 @@ export async function runUiTest(
     skinWhy = surfRaw
   } else {
     const surf = JSON.parse(surfRaw) as Record<string, string>
-    // rgba(r,g,b,a) 的 a 必须 > 0；transparent / rgba(0,0,0,0) 都算塌陷
-    const alphaOf = (c: string): number => {
-      const m = /rgba?\(([^)]+)\)/.exec(c)
-      if (!m) return -1
-      const parts = m[1].split(',').map((x) => parseFloat(x))
-      return parts.length >= 4 ? parts[3] : 1
-    }
-    const bad = SKIN_KEYS.filter((k) => !surf[k] || alphaOf(surf[k]) <= 0)
+    const bad = SKIN_KEYS.filter((k) => !surf[k] || surf[k] === 'none')
     if (bad.length) {
-      skinWhy = `fail:transparent=${bad.join(',')} got=${JSON.stringify(surf)}`
-    } else {
-      // 5 个内置皮肤必须**逐个不同** —— 全部同色说明只剩 :root 一处取值在生效
-      // （浅色的 aero / minimal / ink 尤其要能彼此区分：它们正是「白底上读不出物体」的重灾区）
-      const built = SKIN_KEYS.slice(0, 5).map((k) => surf[k])
-      if (new Set(built).size < 5) skinWhy = `fail:not-per-skin=${JSON.stringify(surf)}`
+      skinWhy = `fail:no-bg=${bad.join(',')} got=${JSON.stringify(surf)}`
     }
   }
   r.petBallSkinSurface = skinWhy || 'ok'
@@ -1744,7 +1276,7 @@ export async function runUiTest(
   // 泡泡的回归护栏挪到了形态翻转处（见 petBallOff 紧后面那条），不在这里查：
   // 收尾时泡泡那 4.2s 存活期早就过了，那时候查是**永真**的 —— 实测只差一行 IPC 的
   // 耗时就会从「抓得到」翻成「抓不到」。此处留着记录，免得后来的人又把它挪回来。
-  await exec(dotClickJs())
+  await exec(islDblclickJs())
   await sleep(1000)
   r.petBallExpand = bounds().width > 300 ? 'ok' : `fail:${bounds().width}`
 
@@ -2282,9 +1814,9 @@ export async function runUiTest(
   await sleep(800)
   const dockB0 = bounds()
   r.dockShape =
-    dockB0.width === BALL_VIEW.width && dockB0.height === BALL_VIEW.height
+    dockB0.width === ISLAND_VIEW.width && dockB0.height === ISLAND_VIEW.height
       ? 'ok'
-      : `fail:${dockB0.width}x${dockB0.height}（仅收起态球形态参与）`
+      : `fail:${dockB0.width}x${dockB0.height}（仅收起态岛形态参与）`
   // 开关默认开（extras 缺失键给 ''，判 !== '0'；与主进程 primePrefs 同口径）
   r.dockDefaultOn =
     ((await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']!=='0')")) as boolean) === true
@@ -2337,7 +1869,7 @@ export async function runUiTest(
     return placed && placed.docked ? { x: placed.docked.x, y: placed.docked.y } : { x: 0, y: 0 }
   }
 
-  // 摆左沿 → 隐藏（R4-5 原地变柱：窗口不动，球 morph 成屏边水柱）。
+  // 摆左沿 → 隐藏（R6 原地收缩：窗口不动，岛缩成顶部 mini-pill）。
   // 段内真光标已冻结，两次机会只防 dwell 本身的时序抖动。
   let dockedX = 0
   let dockedY = 0
@@ -2393,39 +1925,33 @@ export async function runUiTest(
       ? 'ok'
       : `fail:hidden=${hid} edge=${dsHide.edge} x=${bHide.x} want=${wantHideX}`
   r.dockPeekSize =
-    bHide.width === BALL_VIEW.width && bHide.height === BALL_VIEW.height ? 'ok' : `fail:${bHide.width}x${bHide.height}`
+    bHide.width === ISLAND_VIEW.width && bHide.height === ISLAND_VIEW.height ? 'ok' : `fail:${bHide.width}x${bHide.height}`
 
   // ── 流体相位（10-03-dock-autohide 步 6/7）：dock:fluid 状态序列 ──────────
   //
-  // 主副两路必须同源：主进程 debug:dock-state 的 fluid 与 DOM 的 data-fluid/data-edge
-  // 在落定态一致；水满波浪与液位同生同灭（"有比例才有水" —— 余额/无比例时绝不画假水位）。
-  // 定的是**落定态**（hidden / edge-visible），不定 morph 中间帧 —— 中间帧只活
-  // 530/400ms，轮询断言它等于用 flake 换覆盖；中间帧的形状由 --shots 三张走查图看。
-  const fluidDom = async (): Promise<{ fluid: string; edge: string; waves: number; surface: boolean; surfaceY: number | null; ring: string }> => {
+  // 主副两路必须同源：主进程 debug:dock-state 的 fluid 与岛 DOM 的 data-fluid/data-edge
+  // 在落定态一致。定的是**落定态**（hidden / edge-visible），不定 morph 中间帧 ——
+  // 中间帧只活 530/400ms，轮询断言它等于用 flake 换覆盖；中间帧的形状由 --shots 走查图看。
+  const fluidDom = async (): Promise<{ fluid: string; edge: string; pill: boolean; island: boolean }> => {
     const raw = String(
       await exec(`(()=>{
-        const d=document.querySelector('.petball-fallback')
-        if(!d) return JSON.stringify({fluid:'?',edge:'?',waves:-1,surface:false,surfaceY:null,ring:'?'})
-        const waves=[...d.querySelectorAll('.fluid-wave')]
-        const dd=waves[0]?waves[0].getAttribute('d'):null
-        let sy=null
-        if(dd){const m=dd.match(/^M -40 (-?[\\d.]+)/); if(m) sy=parseFloat(m[1])}
+        const d=document.querySelector('.isl-body')
+        if(!d) return JSON.stringify({fluid:'?',edge:'?',pill:false,island:false})
         return JSON.stringify({fluid:d.dataset.fluid||'?',edge:d.dataset.edge||'?',
-          waves:waves.length,
-          surface:!!d.querySelector('.fluid-surface'),surfaceY:sy,ring:d.getAttribute('data-ring')||''})
+          pill:!!d.querySelector('.isl-pill'),island:!!d.querySelector('.isl-strip')})
       })()`)
     )
     try {
-      return JSON.parse(raw) as { fluid: string; edge: string; waves: number; surface: boolean; surfaceY: number | null; ring: string }
+      return JSON.parse(raw) as { fluid: string; edge: string; pill: boolean; island: boolean }
     } catch {
-      return { fluid: '?', edge: '?', waves: -1, surface: false, surfaceY: null, ring: '?' }
+      return { fluid: '?', edge: '?', pill: false, island: false }
     }
   }
-  // goo 滤镜定义在（形态回退不断言效果，只断言"定义在、区裁对" —— 合成走查看 shots）
+  // 岛体定义在（只断言"定义在" —— 合成走查看 shots）
   r.dockFluidGoo = String(
-    await exec(`(()=>{const f=document.querySelector('#petball-goo'); if(!f) return 'fail:no-filter';
-      return f.getAttribute('width')==='56'&&f.getAttribute('height')==='56'
-        ? 'ok' : 'fail:region='+f.getAttribute('width')+'x'+f.getAttribute('height')})()`)
+    await exec(`(()=>{const f=document.querySelector('.isl-strip')||document.querySelector('.isl-pill'); if(!f) return 'fail:no-island';
+      const bg=getComputedStyle(f).backgroundImage
+      return bg&&bg!=='none' ? 'ok' : 'fail:bg='+bg})()`)
   )
   // 隐藏落定：主副同相位 + 贴边一致（仍在 hidden 态内，路过测试之前）
   await dockWait("window.api.debugDockState().then(s=>s.fluid==='hidden')", 'fluid-hidden')
@@ -2433,89 +1959,61 @@ export async function runUiTest(
   const dsFluidHide = await dockState()
   const domHide = await fluidDom()
   r.dockFluidHidden =
-    dsFluidHide.fluid === 'hidden' && domHide.fluid === 'hidden' && domHide.edge === 'left'
+    dsFluidHide.fluid === 'hidden' && domHide.fluid === 'hidden' && domHide.pill && !domHide.island
       ? 'ok'
-      : `fail:main=${dsFluidHide.fluid} dom=${domHide.fluid}/${domHide.edge}`
-  // 液位与百分比同生同灭：波浪数恒为 0 或 3（三层），且"有波浪 ⟺ 有液面"。
-  // 判据不依赖具体数据（真实快照随机器而变）：plan+有液面 → 3 层波浪 + 高光 + 液面在盘内；
-  // balance（R4-6 满水）→ 3 层波浪 + 高光 + 液面到顶；无液面（nodata/error/算不出）→ 0 层。
-  // 液面位置由 petWaterLevel 按夹具逐值钉，这里只验"在盘内"。
-  const wavesInDisc = (w: number, sy: unknown): boolean =>
-    w === 3 && typeof sy === 'number' && sy >= 1 && sy <= 55
-  const wavesOk =
-    domHide.waves === -1
-      ? `fail:probe`
-      : domHide.ring === 'plan'
-        ? (domHide.surface
-            ? wavesInDisc(domHide.waves, domHide.surfaceY)
-              ? 'ok'
-              : `fail:ring=plan surfaceY=${domHide.surfaceY} waves=${domHide.waves}`
-            : domHide.waves === 0
-              ? 'ok'
-              : `fail:ring=plan surface=false waves=${domHide.waves}`)
-        : domHide.ring === 'balance'
-          ? (domHide.surface && wavesInDisc(domHide.waves, domHide.surfaceY)
-              ? 'ok'
-              : `fail:ring=balance surfaceY=${domHide.surfaceY} waves=${domHide.waves} surface=${domHide.surface}`)
-          : domHide.waves === 0 && !domHide.surface
-            ? 'ok'
-            : `fail:ring=${domHide.ring} waves=${domHide.waves} surface=${domHide.surface}`
-  r.dockFluidLevel = wavesOk
+      : `fail:main=${dsFluidHide.fluid} dom=${domHide.fluid}/${domHide.edge} pill=${domHide.pill}`
+  // 隐藏态只剩 pill（AC5）：岛条收起、无展开卡；可见态反之。
+  r.dockFluidLevel =
+    domHide.pill && !domHide.island
+      ? 'ok'
+      : `fail:pill=${domHide.pill} island=${domHide.island}（隐藏稳态只留 mini-pill）`
 
-  // ── 贴边水柱（10-03-holo-sphere 水满 R5）：隐藏态的水渍 pill 改为水柱 ──────
+  // ── 隐藏态 mini-pill（AC5）：窄条 + 各家等级点，原位吸顶 ──────────────────
   //
-  // 仍在 hidden 落定态内（左沿）：屏边 12px 水柱 + 柱内液高 = 同一液位 +
-  // 柱顶小波浪 + 水色同源。判据不依赖具体数据（真实快照随机器而变），先分 kind：
-  // plan+有液面 → 柱内液 > 0 + 波浪在；balance（R4-6 满水）→ 满柱 + 波浪在 + accent 色；
-  // 无液面（nodata/error/算不出）→ 空槽（不造假水位）。
-  // 痕迹点击唤出走既有 dockReveal 那条不断（命中区即柱体，见 shared/fluid.waterColumn）。
-  const columnDom = String(
+  // 仍在 hidden 落定态内：pill 在 + 等级点数 = 岛上家数 + 命中区即 pill 体
+  // （与 shared/dock-hide.peekHitbox 同形，由主进程覆盖）。
+  // 痕迹点击唤出走既有 dockReveal 那条不断（命中区即 pill，见 dock-hide.ts）。
+  const pillDom = String(
     await exec(`(()=>{
-      const pill=document.querySelector('.petball-fallback .fluid-pill')
+      const pill=document.querySelector('.isl-pill')
       if(!pill) return 'fail:no-pillar'
-      const fillEl=pill.querySelector('.fluid-column-fill')
-      const wv=pill.querySelector('.fluid-column-wave')
+      const dots=[...pill.querySelectorAll('.isl-dot')]
       const r=pill.getBoundingClientRect()
-      const fr=fillEl?fillEl.getBoundingClientRect():null
-      const dot=document.querySelector('.petball-fallback')
+      const body=document.querySelector('.isl-body')
       return JSON.stringify({
-        edge: dot?dot.dataset.edge||'?':'?',
+        mode: body?body.getAttribute('data-island'):'?',
         pillW: Math.round(r.width), pillH: Math.round(r.height),
-        fillH: fr?+fr.height.toFixed(1):-1,
-        fillW: fr?+fr.width.toFixed(1):-1,
-        wave: !!wv,
-        fillColor: fillEl?getComputedStyle(fillEl).backgroundColor:'',
-        ring: dot?dot.getAttribute('data-ring')||'':'',
-        surface: !!dot?.querySelector('.fluid-surface')
+        dots: dots.length,
+        lvls: dots.map(d=>d.getAttribute('class'))
       })
     })()`)
   )
-  let columnWhy = ''
-  if (columnDom.startsWith('fail:')) {
-    columnWhy = columnDom
+  let pillWhy = ''
+  if (pillDom.startsWith('fail:')) {
+    pillWhy = pillDom
   } else {
     try {
-      const c = JSON.parse(columnDom) as { edge: string; pillW: number; pillH: number; fillH: number; fillW: number; wave: boolean; fillColor: string; ring: string; surface: boolean }
-      // 前置：左沿 12px 屏边柱（与 waterColumn/peekHitbox 同形；K4 在静态侧钉死四边）
-      if (c.edge !== 'left') columnWhy = `fail:edge=${c.edge}`
-      else if (c.pillW !== COLUMN_W || c.pillH !== 56) columnWhy = `fail:pillar=${c.pillW}x${c.pillH}（应为 ${COLUMN_W}x56 屏边柱）`
-      else if (c.surface) {
-        // 有液面（surface=true）：柱内液 + 柱顶波 + 真实水色三件套；余额水色另判 accent。
-        // 10-06-column-zero-fill：前置条件从 (plan&&surface)||balance 收窄为 surface，
-        // 因为 balance 在 status!=ok 时 showWaves=false → 无 surface → 不该走 fill>0 分支
-        // （否则会在无液面时假报 fillH>0），而该走下方"无液面必须空槽"分支。
-        if (!(c.fillH > 0)) columnWhy = `fail:empty-fill=${c.fillH}（有液面却空柱）`
-        else if (!c.wave) columnWhy = 'fail:no-wave（有液面却无柱顶波浪）'
-        else if (!c.fillColor || c.fillColor === 'rgba(0, 0, 0, 0)') columnWhy = `fail:fillColor=${c.fillColor}`
-        else if (c.ring === 'balance') columnWhy = await waterAccentWhy(c.fillColor)
-      } else if (!(c.fillH === 0 && !c.wave)) {
-        columnWhy = `fail:fake-level ring=${c.ring} surface=${c.surface} fillH=${c.fillH}（无液面必须空槽）`
+      const c = JSON.parse(pillDom) as { mode: string; pillW: number; pillH: number; dots: number; lvls: string[] }
+      // 前置：pill 窄条（高 26 = MINI_PILL_H；宽 ≤ 200，A 式窄条）
+      if (c.mode !== 'hidden') pillWhy = `fail:mode=${c.mode}`
+      else if (c.pillH !== MINI_PILL_H) pillWhy = `fail:pillH=${c.pillH}（应为 ${MINI_PILL_H}）`
+      else if (!(c.pillW > 0 && c.pillW <= 200)) pillWhy = `fail:pillW=${c.pillW}（A 式窄条）`
+      else if (c.dots < 1) pillWhy = `fail:dots=${c.dots}（各家等级点至少 1 个）`
+      else if (!c.lvls.every((l) => /lvl-(ok|warn|danger|muted)/.test(l))) {
+        pillWhy = `fail:dot-lvl=${c.lvls.join('|')}（等级点必须带 lvl 档）`
       }
     } catch {
-      columnWhy = `fail:probe=${columnDom}`
+      pillWhy = `fail:probe=${pillDom}`
     }
   }
-  r.petWaterColumn = columnWhy || 'ok'
+  r.islandPill = pillWhy || 'ok'
+  // 主进程覆盖的命中区即 peekHitbox（宽 = MINI_PILL_W；DOM pill 宽是 fit-content，随家数变，只钉高）：
+  // 命中区与可见 pill 脱钩 = 看得见点不着，见 dock-hide 跨层契约。
+  const hbHidden = petHitboxDebug()
+  r.islandPillHit =
+    hbHidden && hbHidden.width === MINI_PILL_W && hbHidden.height === MINI_PILL_H
+      ? 'ok'
+      : `fail:hitbox=${JSON.stringify(hbHidden)}（应为 ${MINI_PILL_W}×${MINI_PILL_H} 的顶部 pill 区）`
 
   // 路过不停留 → 不唤出（两次喂送之间无等待：50ms 的 fast 唤出计时也来不及触发）
   await exec('window.api.debugDockCursor(true)')
