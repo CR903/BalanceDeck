@@ -26,3 +26,4 @@
 | 2026-10-10 | [余额家logo对版（复检 pass，截图交付）](daily/2026-10-10_island-balance-mark.md) | `10-10-island-balance-mark` |
 | 2026-10-11 | [灵动岛六修（复检 pass，截图交付）](daily/2026-10-11_island-tri-fix.md) | `10-11-island-tri-fix` |
 | 2026-10-11 | [展开面板点进详情（复检 pass）](daily/2026-10-11_island-open-to-detail.md) | `10-11-island-open-to-detail` |
+| 2026-10-11 | [opencode 详情页 v2：官网数据对齐与用量视图重构](daily/2026-10-11_opencode-detail-v2-sync.md) | `10-11-opencode-detail-v2-sync` |

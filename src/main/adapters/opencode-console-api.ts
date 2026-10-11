@@ -71,17 +71,29 @@ export const METER_FIELDS = {
 export const PERIOD_END_RESET_FIELDS: ReadonlySet<string> = new Set(['month'])
 
 /**
- * `usage/models` 支持的 range → 能对齐的窗口。
+ * `usage/models` 的 range → 窗口的**自然对齐档**。
  *
- * ⚠️ **5 小时窗口对齐不了**：端点最小 range 是 `24h`，而余额板第一个窗口是 5 小时。
- * 把 24h 的数据标成「5 小时」是**口径撒谎**（`TASKS.md` 记过正是这类 bug：
- * 「官方源不可达时退回本机统计，与官方口径不同却用同一套视觉展示」）。
- * 所以这里**不映射 rolling** —— 该窗口宁可不显示明细。
+ * ⚠️ `rolling` **不在这张表里**，它单独用 `MODELS_RANGE_ROLLING` + `since` 对齐
+ *    （见下）。range 只是端点的校验参数，真正的窗口起点由 `since` 决定。
  */
 export const MODELS_RANGES = {
   weekly: '7d',
   monthly: '30d'
 } as const
+
+/**
+ * rolling（5 小时）窗口的 range。
+ *
+ * 端点最小 range 是 `24h`，但 `since` 参数**覆盖 range 起点**（2026-10-11 live 实测：
+ * `range=24h&since=5h前` ≡ `range=7d&since=5h前`）。因此
+ * `usage/models?range=24h&since=<fiveHour.startsAt>` 能精确裁到 5 小时窗口。
+ *
+ * ⚠️ 这**推翻**了旧结论「5 小时窗口拿不到明细、故意不映射 rolling」——
+ *    那时的理由是「range 最小 24h，口径对不上」；`since` 生效后该理由不再成立。
+ *    真正需要防的仍是**口径撒谎**，所以 rolling 的 `since` 必须是官方
+ *    `fiveHour.startsAt`，绝不是「now - 5h」这种本地推算。
+ */
+export const MODELS_RANGE_ROLLING = '24h'
 
 /**
  * 用量聚合（**不是窗口数据源**）。
@@ -96,6 +108,23 @@ export const USAGE_SUMMARY_PATH = '/api/usage/summary'
 
 /** 每模型用量明细（`range` 取自 bundle 声明的枚举 `24h | 7d | 30d`，带分页） */
 export const USAGE_MODELS_PATH = '/api/usage/models'
+
+/**
+ * 按天/按小时的成本时序 —— **趋势区的官方数据源**（2026-10-11 新增）。
+ *
+ * `GET /console/api/usage/cost-by-day?range=<…>&bucket=hour|day&since=<ISO>`
+ * → `[{ date, totalCostMicroCents, totalTokens, totalRequests }]`
+ * · `date` 为 **UTC 整点/整日**（小时桶如 `2026-10-11T04:00:00Z`，日桶为当日 00:00Z）
+ * · `since` 覆盖 range 起点（与 models 同一语义）
+ */
+export const USAGE_COST_BY_DAY_PATH = '/api/usage/cost-by-day'
+
+/**
+ * 时序桶粒度 → 对齐的窗口。
+ * `rolling` 用小时桶（5 小时窗口内逐小时），`weekly`/`monthly` 用日桶。
+ */
+export const COST_BUCKETS = { hour: 'hour', day: 'day' } as const
+export type CostBucket = keyof typeof COST_BUCKETS
 
 /** 金额单位：1 USD = 1e8 microcents（`go/status` 与 `usage/models` 共用此尺度） */
 export const USAGE_UNIT_SCALE = 1e8

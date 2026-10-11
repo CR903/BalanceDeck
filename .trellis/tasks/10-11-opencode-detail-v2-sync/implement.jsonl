@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/10-11-opencode-detail-v2-sync/research/console-api-v2.md", "reason": "新版控制台端点/schema/since 语义的实测事实，实现必读"}
+{"file": ".trellis/spec/adapters/opencode-console.md", "reason": "opencode 控制台集成可执行契约（常量、解析函数、失败语义、测试要求）"}
+{"file": ".trellis/spec/guides/external-api-integration.md", "reason": "外部 API 接入的思考触发器与纪律"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "IPC/共享类型逐字段复验与类型安全要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "详情页/TrendChart 组件结构与样式 token 规范"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "渲染层质量与空态/诚实标注纪律"}

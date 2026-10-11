@@ -1084,9 +1084,9 @@ textarea {
   transform: rotate(0deg);
 }
 
-/* 用量热力图（P1-1）。卡片外壳沿用 .dwin 的形状：它回答的是与「用量窗口」同一批问题
-   （这个窗口每天都在用），形状不同会让用户以为它属于别的模块。
-   2026-10-07 图体由「每天一根柱」（.trend-chart/.trend-bar）改为日历网格（.trend-cell），
+/* 用量趋势（P1-1 → 2026-10-11 重构）。卡片外壳沿用 .dwin 的形状：它回答的是与
+   「用量窗口」同一批问题，形状不同会让用户以为它属于别的模块。
+   2026-10-11 图体从日历网格改为**窗口驱动的柱状序列**（.trend-bar / .trend-axis）；
    外壳（.trend / .trend-switch / .trend-chip）不动 —— 切换控件的交互语义没变。
    ⚠ 只用既有 token（--surface / --border / --track / --fg-faint / --ok/warn/danger），
      不写新的颜色字面量 —— 外部皮肤（ext:*）只吃得到这里的 var()，写字面量等于把它排除在外。 */
@@ -1126,70 +1126,30 @@ textarea {
   border: 1px solid var(--border);
 }
 
-/* ── streak 头 ── */
-.trend-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 8px;
-  font-size: 11px;
-}
-.trend-head-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-weight: 660;
-  color: var(--warn);
-}
-.trend-head-sub {
-  color: var(--fg-faint);
-  font-size: 10.5px;
-}
-.trend-head-badge {
-  margin-left: auto;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-/* ── 日历网格 ──
-   ⚠ 空格（没采到）用 --track，1 档（有记录但没涨）用 color-mix(--ok, --track)。
-     两者必须能一眼区分：混成同一种颜色，用户会把「应用没跑」读成「那天没用」。 */
-/* 网格宽高比是竖的（周只有 4–6 列 × 7 行），所以**不**拉伸到 100% 宽 —— 那样每格会被
-   放大到 40px 以上，失去「一屏看 30 天」的密度。SVG 已带 width/height 按 1:1 出图，
-   max-width 只在极窄的卡上兜底收缩。 */
+/* ── 序列图（窗口驱动）──
+   2026-10-11 由日历网格换回「柱状序列」：跟随左侧用量窗口，5 小时 = 逐小时宽列、
+   本周/本月 = 逐日细柱；柱高 ∝ 该桶花费（USD）。未知桶（本机首桶无基准 / 缺采样）
+   **不画柱** —— 缺口可见，不补 0。轴标签密度由组件按节点数计算。
+   ⚠ 只用既有 token（--border / --track / --ok / --fg-faint），不写字面量颜色 ——
+     外部皮肤（ext:*）只吃得到这里的 var()，写字面量等于把它排除在外。 */
 .trend-chart {
   display: block;
-  max-width: 100%;
+  width: 100%;
   height: auto;
-  margin: 0 auto;
   overflow: visible;
 }
-.trend-cell {
-  fill: var(--track);
+.trend-axis {
+  stroke: var(--border);
+  stroke-width: 1;
 }
-.heat-1 {
-  fill: color-mix(in srgb, var(--ok) 30%, var(--track));
+.trend-bar {
+  fill: color-mix(in srgb, var(--ok) 72%, var(--track));
 }
-.heat-2 {
-  fill: color-mix(in srgb, var(--ok) 58%, var(--track));
-}
-.heat-3 {
-  fill: color-mix(in srgb, var(--ok) 84%, var(--track));
-}
-.heat-4 {
+/* 峰值一档（本轮最大花费的桶）—— 与其余柱区分，用户一眼看到「哪天/哪小时最费」 */
+.trend-bar.peak {
   fill: var(--ok);
 }
-.trend-month {
-  font-size: 8px;
-  fill: var(--fg-faint);
-}
-.trend-weekday {
+.trend-axis-label {
   font-size: 8px;
   fill: var(--fg-faint);
 }
@@ -1198,41 +1158,14 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 7px;
+  margin-top: 6px;
   font-size: 10px;
   color: var(--fg-faint);
 }
-.trend-legend-scale {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-/* 图例格是 SVG rect 的 HTML 替身，只作颜色样本用 */
-.trend-legend-cell {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-  background: var(--track);
-}
-.trend-legend-cell.heat-1 {
-  background: color-mix(in srgb, var(--ok) 30%, var(--track));
-}
-.trend-legend-cell.heat-2 {
-  background: color-mix(in srgb, var(--ok) 58%, var(--track));
-}
-.trend-legend-cell.heat-3 {
-  background: color-mix(in srgb, var(--ok) 84%, var(--track));
-}
-.trend-legend-cell.heat-4 {
-  background: var(--ok);
-}
 
-/* ── 逐日明细 ──
-   热力图给形状（哪天用得多），这里给数值（那天具体用了多少）。
-   ⚠ 只显示有采样的天：用户明确不要空行。而热力图的「缺口可见」是**位置**信息
-     （那天在日历上的哪），明细是**数值**信息 —— 列一行全是「—」的日期
-     没有任何信息量，只是把列表拉长。 */
+/* ── 逐节点明细 ──
+   柱状图给形状（哪个节点用得多），这里给数值（具体多少）。列随窗口口径统一为
+   时间节点 / 用量 / tokens / 请求数；新近优先（查账先看今天）。 */
 .trend-records {
   margin-top: 10px;
   max-height: 190px;
@@ -1244,7 +1177,7 @@ textarea {
 .trend-records-head,
 .trend-records-row {
   display: grid;
-  grid-template-columns: 78px 52px 1fr;
+  grid-template-columns: 74px 1fr auto auto;
   gap: 8px;
   align-items: baseline;
   padding: 4px 9px;
@@ -1269,14 +1202,43 @@ textarea {
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
-.trend-records-pct,
-.trend-records-used {
+.trend-records-used,
+.trend-records-tokens,
+.trend-records-req {
   text-align: right;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
 .trend-records-used {
   font-weight: 600;
+}
+.trend-records-tokens,
+.trend-records-req {
+  color: var(--fg-faint);
+}
+
+/* ── 额外额度行（R5，只读）── billing/status 的 available/balance，缺失时整块不渲染 */
+.credit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 2px;
+  font-size: 12px;
+}
+.credit-label {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.credit-value {
+  font-weight: 660;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.credit-sub {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 
@@ -1289,7 +1251,7 @@ textarea {
 .wmodels-head,
 .wmodels-row {
   display: grid;
-  grid-template-columns: 1fr auto 44px;
+  grid-template-columns: 1fr auto 42px 40px;
   gap: 8px;
   align-items: center;
   padding: 5px 2px;
@@ -1316,8 +1278,10 @@ textarea {
   color: var(--fg);
   text-align: right;
 }
-.wmodels-q,
-.wmodels-quota {
+.wmodels-req,
+.wmodels-reqv {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
   color: var(--fg-faint);
 }
 .wmodels-pct,
@@ -1661,6 +1625,11 @@ textarea {
 .tag.env {
   background: var(--surface-sunken);
   color: var(--fg-dim);
+}
+/* 「本机估算」标注：与「官方」的 .tag.env 区分，提醒口径不同（ADR-0002 诚实标注） */
+.tag.local {
+  background: var(--surface-sunken);
+  color: var(--warn);
 }
 
 .switch {

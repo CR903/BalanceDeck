@@ -2883,5 +2883,51 @@ ok(/className="isl-ring-pct"/.test(islTsx) && /fmtPercent\(mainPct\)/.test(islTs
     `L9c 阴影 5 层含 glow 与底部 inset 暗（实际 ${openLayers.length} 层，glow=${hasGlow}，底暗=${hasBottom}）`)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// M. opencode 详情页 v2（10-11-opencode-detail-v2-sync）：序列视图 / 余额块 / 测试接线
+//    implement.md step 4 的未勾项 —— 新渲染结构必须有结构门，否则删掉整块套件照样绿
+//    （本仓反复记录的「空洞绿」）。只做便宜的静态读文件。
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nM. opencode 详情页 v2：序列视图 / 余额块 / 测试接线')
+{
+  const trend = read('src/renderer/src/TrendChart.tsx')
+  const detail = read('src/renderer/src/DetailView.tsx')
+  const series = read('src/renderer/src/seriesView.ts')
+  const skins = read('src/renderer/src/skins.css')
+  const pkg = JSON.parse(read('package.json'))
+
+  // ① 序列视图：柱 + 横轴 + 两个来源标签，且旧热力图接线/7-30 切换已退役
+  ok(/className=\{`trend-bar\$\{/.test(trend), 'M1 序列图渲染 .trend-bar（删掉柱体即红）')
+  ok(/trend-axis/.test(trend) && /trend-axis-label/.test(trend), 'M2 序列图有横轴与节点标签')
+  ok(/from '\.\/seriesView'/.test(trend), 'M3 序列计算走纯函数模块 seriesView（内联口径即漂）')
+  ok(/'官方'/.test(trend) && /'本机估算'/.test(trend), 'M4 来源两态标注（官方 / 本机估算）')
+  ok(!/from '\.\/usageHeatmap'/.test(trend) && !/DAY_CHOICES\s*=/.test(trend),
+    'M5 旧热力图接线与 7/30 天切换已退役（回来一个即红）')
+
+  // ② 余额块（AC9）：`.credit-row` 只在 `{s.extraCredit && (` 分支内
+  ok(/\{s\.extraCredit && \(/.test(detail) && /className="credit-row"/.test(detail),
+    'M6 详情页余额块是 extraCredit 条件分支内的 .credit-row')
+  ok((detail.match(/className="credit-row"/g) || []).length === 1,
+    'M7 .credit-row 只出现一次（不存在无条件渲染的余额行）')
+
+  // ③ 样式规则存在（前置断言，避免空洞通过）。⚠️ ruleBody 要求选择器前只有空白 ——
+  //   规则前的注释会让它找不到（本仓 D 段记过这个坑），所以先剥注释再查。
+  const skinsNoComments = stripComments(skins)
+  ok(ruleBody(skinsNoComments, '.trend-bar') != null, 'M8 前置：取得到 .trend-bar 规则')
+  ok(ruleBody(skinsNoComments, '.credit-row') != null, 'M9 前置：取得到 .credit-row 规则')
+
+  // ④ 测试接线：新套件在链里，退役的 heatmap 套件不在，死模块已删
+  ok(pkg.scripts['test:series-view'] === 'node scripts/test-series-view.mjs', 'M10 test:series-view 已接线')
+  ok(/test:series-view/.test(pkg.scripts.test), 'M11 test 链包含 test:series-view')
+  ok(pkg.scripts['test:usage-heatmap'] === undefined && !/test:usage-heatmap/.test(pkg.scripts.test),
+    'M12 退役的 test:usage-heatmap 已从 scripts 与 test 链移除')
+  ok(!existsSync(resolve(ROOT, 'src/renderer/src/usageHeatmap.ts')), 'M13 旧热力图纯函数模块已删除（不留死代码）')
+
+  // ⑤ seriesView 是纯模块（无 React / electron / DOM），否则 loadTs 单测加载不了
+  const seriesCode = stripTsComments(series)
+  ok(!/from 'react'|from 'electron'|document\.|window\./.test(seriesCode),
+    'M14 seriesView 是纯模块（无 React / electron / DOM）')
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

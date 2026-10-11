@@ -1,21 +1,27 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// 用量趋势的**纯函数**：把本机快照的原始采样序列聚合成「每天一根柱」
+// 用量趋势的**纯函数**：把本机快照的原始采样序列聚合成分桶（日桶 / 小时桶）
 //
 // 纯函数模块（无 electron / 无 DOM / 无 React / 不读自己的钟），scripts/test-usage-history.mjs
-// 经 loadTs 加载本文件跑真源码。`now` 一律由调用方传入 —— 缺了这条，「同一天」就成了
-// 运行环境的函数，测试与生产会对不上（usageStore 的 dayKey 是同一纪律）。
+// 与 test-series-view.mjs 经 loadTs 加载本文件跑真源码。`now` 一律由调用方传入 ——
+// 缺了这条，「同一天」就成了运行环境的函数，测试与生产会对不上（usageStore 的 dayKey 是同一纪律）。
+//
+// 两种桶，两个消费者：
+//   · `bucketByDay`  —— 本地日历日；`lastUsed` 供序列视图算「当天花费」，
+//     `lastPct/maxPct` 保留给既有百分比口径（老采样可能只有 pct）。
+//   · `bucketByHour` —— 本地小时；5 小时窗口的序列视图用它（同样消费 `lastUsed`）。
 //
 // 为什么单独一个文件而不是塞进 usagePredict.ts：预测要的是「速率 → 什么时候用完」，
-// 趋势图要的是「哪天是几 %」。两者连口径都不共享（预测按重置点切段，趋势图按日历日分桶），
+// 趋势图要的是「哪个桶花了多少」。两者连口径都不共享（预测按重置点切段，趋势按日历分桶），
 // 混在一个模块里会让「估算」与「绘图」两件不相干的事互相牵连。
 //
 // 三条不可让步的纪律（每条下面都有断言钉住）：
-//   1. 每根柱 = 那天**最后一个已知** pct。末尾可能是采样失败记下的 null —— 要跳过它
+//   1. 每个桶 = 该桶内**最后一个已知**值。末尾可能是采样失败记下的 null —— 要跳过它
 //      继续往前找，**不是**取数组最后一个，也**不是**按 0 处理。
-//   2. 缺样本的天**不补 0**，桶还在但 lastPct = null → 不画柱（缺口可见）。用 0 补齐的话，
-//      用户会看到「那 5 天用量是 0」并据此得出「我这几天没用」的错误结论，而真实原因是
+//   2. 缺样本的桶**不补 0**，桶还在但值为 null → 不画柱（缺口可见）。用 0 补齐的话，
+//      用户会看到「那几小时用量是 0」并据此得出「我这段没用」的错误结论，而真实原因是
 //      **采集没跑**（type-safety 第 2 条：缺失值必须保持缺失）。
-//   3. 纵轴固定 0..100，**不随数据缩放**。否则「上周 90%、本周 20%」两张图形状一样。
+//   3. 两类桶的**范围都被窗口跨度夹住**（日桶 ≤ 回看天数、小时桶 ≤ 小时数），
+//      且入参不被就地修改 —— 不伪造比窗口更长的空序列。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import type { UsagePoint } from '../../shared/usage-predict'
@@ -140,4 +146,64 @@ export function bucketByDay(points: UsagePoint[], days: number, now: number): Da
 /** 有历史点位的窗口名（供切换控件）。没点位的窗口不列 —— 切过去只能看到空图 */
 export function windowsWithHistory(pointsByWindow: Record<string, UsagePoint[]>): string[] {
   return Object.keys(pointsByWindow ?? {}).filter((name) => (pointsByWindow[name] ?? []).length > 0)
+}
+
+// ─── 按小时分桶（本机兜底：5 小时窗口的序列视图）──────────────────────────────
+
+/** 本机回看的一个小时桶 */
+export interface HourBucket {
+  /** 桶起点（**本地小时整点**的 ISO） */
+  t: string
+  /** 该小时最后一个**已知** used（窗口周期内累计）；未知 = null */
+  lastUsed: number | null
+  unit?: Unit
+}
+
+/** 本地小时整点（DST / 非整时区都正确 —— 不能用 `t - t % HOUR`） */
+function floorHour(t: number): number {
+  const d = new Date(t)
+  d.setMinutes(0, 0, 0)
+  return d.getTime()
+}
+
+/**
+ * 按**本地小时**把采样聚合成「每小时一桶」。与 `bucketByDay` 同一套三条纪律：
+ *   1. 每桶取该小时**最后一个已知** used（null 不清空它）；
+ *   2. 没采到的小时不补 0，桶在但 lastUsed = null（缺口可见）；
+ *   3. 桶的范围从**首个采样**所在小时到今天当前小时，被 `hours` 夹住 —— 不伪造一个 5 小时全空的图。
+ *
+ * 空历史 → `[]`（调用方据此什么都不显示）。入参不被就地修改。
+ */
+export function bucketByHour(points: UsagePoint[], hours: number, now: number): HourBucket[] {
+  const span = spanOf(hours)
+  const HOUR = 3600_000
+  const end = floorHour(now)
+  const earliest = end - (span - 1) * HOUR
+
+  const inRange: { t: number; used: number | null; unit?: Unit }[] = []
+  for (const p of points ?? []) {
+    if (!p || typeof p.t !== 'number' || !Number.isFinite(p.t)) continue
+    if (p.t > now || p.t < earliest) continue
+    inRange.push({ t: p.t, used: known(p.used) ? p.used : null, unit: p.unit })
+  }
+  if (inRange.length === 0) return []
+  inRange.sort((a, b) => a.t - b.t)
+
+  const out: HourBucket[] = []
+  const cur = new Date(floorHour(inRange[0].t))
+  for (; cur.getTime() <= end && out.length < span; cur.setHours(cur.getHours() + 1)) {
+    out.push({ t: new Date(cur.getTime()).toISOString(), lastUsed: null })
+  }
+  if (out.length === 0) return []
+
+  const byHour = new Map(out.map((b) => [b.t, b]))
+  for (const p of inRange) {
+    const b = byHour.get(new Date(floorHour(p.t)).toISOString())
+    if (!b) continue
+    if (p.used != null) {
+      b.lastUsed = p.used
+      if (p.unit) b.unit = p.unit
+    }
+  }
+  return out
 }

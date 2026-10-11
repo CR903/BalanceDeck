@@ -17,8 +17,9 @@
 
 import { loadTs } from './lib/load-ts.mjs'
 
-const { parseGoStatus, WINDOW_NAMES } = await loadTs('src/main/adapters/opencode-cookie.ts')
-const { parseModelsResponse } = await loadTs('src/main/opencode-details.ts')
+const { parseGoStatus, WINDOW_NAMES, windowStartIso } = await loadTs('src/main/adapters/opencode-cookie.ts')
+const { parseModelsResponse, parseCostByDay, modelsByWindowOf, seriesByWindowOf } =
+  await loadTs('src/main/opencode-details.ts')
 const api = await loadTs('src/main/adapters/opencode-console-api.ts')
 
 let pass = 0
@@ -113,6 +114,42 @@ console.log('\nC. 重置时间 —— month 没有 resetsAt，要回落到订阅
   eq(r.windows.monthly?.resetInSec, r.raw.monthly?.resetInSec, 'C4 monthly 的 windows 与 raw 倒计时一致')
 }
 
+console.log('\nC5. 窗口起点（2026-10-11 新增：meter.startsAt；month 用 access.startsAt）')
+{
+  const r = parseGoStatus(GO_STATUS, NOW)
+  eq(r.raw.rolling?.startAt, '2026-09-26T10:22:41.617Z', 'C5a rolling 起点取 meter.startsAt（官方权威）')
+  eq(r.raw.weekly?.startAt, '2026-09-21T00:00:00.000Z', 'C5b weekly 起点取 meter.startsAt —— 自然周对齐周一 0 点，不是「重置前 7 天」')
+  eq(r.raw.monthly?.startAt, '2026-09-21T01:25:47.000Z', 'C5c month 没有 startsAt → 回落 access.startsAt（订阅周期起点）')
+  // weekly: startAt 到 resetAt（= now + resetInSec）恰好 7 天，证明确实是自然周而不是滚动
+  eq(
+    (NOW + r.raw.weekly.resetInSec * 1000 - Date.parse(r.raw.weekly.startAt)) / 86400000,
+    7,
+    'C5d weekly 起止恰好 7 天（自然周）'
+  )
+  // 垃圾 startsAt 视同缺失（与 resetsAt 同一条纪律）
+  eq(
+    parseGoStatus({ access: { meters: { week: { limitMicroCents: '1', usedMicroCents: '0', startsAt: 'nope' } } } }, NOW)
+      .raw.weekly?.startAt,
+    undefined,
+    'C5e 非法 startsAt 视同缺失（不算出乱七八糟的起点）'
+  )
+}
+
+console.log('\nC6. windowStartIso —— 官方优先、反推兜底')
+{
+  const raw = { startAt: '2026-09-26T10:22:41.617Z', resetInSec: 18000 }
+  eq(windowStartIso(raw, 'rolling', NOW), '2026-09-26T10:22:41.617Z', 'C6a 有官方起点时原样用（不反推）')
+  // 无 startAt → resetAt(=now+resetInSec) - span
+  const noStart = { resetInSec: 7 * 86400 }
+  eq(
+    windowStartIso(noStart, 'weekly', NOW),
+    new Date(NOW + 7 * 86400_000 - 7 * 86400_000).toISOString(),
+    'C6b 缺官方起点 → resetAt - 窗口跨度反推兜底'
+  )
+  eq(windowStartIso({}, 'weekly', NOW), undefined, 'C6c 既无起点也无重置时间 → undefined（不编）')
+  eq(windowStartIso({ resetInSec: 0 }, 'weekly', NOW), undefined, 'C6d resetInSec=0 含义是「未知」，不反推')
+}
+
 console.log('\nD. 站点改版的早期信号：未知计费项不能被静默吞掉')
 {
   const mutated = structuredClone(GO_STATUS)
@@ -200,14 +237,24 @@ console.log('\nG. 窗口名映射（下游按这个名字分组，错了会串�
   eq(WINDOW_NAMES.monthly, '本月', 'G3 monthly → 本月')
 }
 
-console.log('\nG2. MODELS_RANGES —— 口径撒谎的最后一道闸')
+console.log('\nG2. 窗口对齐表 —— 口径撒谎的最后一道闸')
 {
   // 2026-09-26 评审实测：把这张表改成 { weekly: '30d' }（把 30 天数据标成「本周」），
   // 当时 49 项与 146 项测试**全绿**。这张表是本文件里最强的诚实性声明，必须有护栏。
   eq(api.MODELS_RANGES, { weekly: '7d', monthly: '30d' }, 'G2a weekly 必须用 7d（自然周口径）')
   eq(api.MODELS_RANGES.monthly, '30d', 'G2b monthly 必须用 30d')
-  ok(!('rolling' in api.MODELS_RANGES), 'G2c **绝不能**有 rolling —— 端点最小 range 是 24h，对不上 5 小时窗口，宁可不给明细')
-  eq(Object.keys(api.MODELS_RANGES).sort(), ['monthly', 'weekly'], 'G2d 只有这两个窗口')
+  ok(!('rolling' in api.MODELS_RANGES), 'G2c rolling 不在 range 表里 —— 它靠 since 对齐，不用自然 range')
+  eq(Object.keys(api.MODELS_RANGES).sort(), ['monthly', 'weekly'], 'G2d 只有这两个自然对齐档')
+  // 2026-10-11：`since` 实测覆盖 range 起点，5 小时窗口的明细/时序因此可得。
+  // range 仍取端点允许的最小值 24h（真正的裁剪交给 since）。
+  eq(api.MODELS_RANGE_ROLLING, '24h', 'G2e rolling 用端点最小 range 24h + since=<5h 起点>（推翻旧「故意不映射」）')
+}
+
+console.log('\nG2b. 时序端点与桶粒度')
+{
+  eq(api.USAGE_COST_BY_DAY_PATH, '/api/usage/cost-by-day', 'G2f 趋势数据源是 cost-by-day（不是本机历史）')
+  eq(api.COST_BUCKETS.hour, 'hour', 'G2g 小时桶')
+  eq(api.COST_BUCKETS.day, 'day', 'G2h 日桶')
 }
 
 console.log('\nG3. 端点常量与请求头')
@@ -299,6 +346,90 @@ console.log('\nJ. 异常输入')
   eq(partial, [{ model: 'x', provider: '', usageUsd: 0, tokens: 0, requests: 0 }], 'J5 缺字段补 0 而不是 undefined（数字字段）')
   const numeric = parseModelsResponse({ items: [{ model: 'y', totalCostMicroCents: 25000000, totalRequests: 3 }] })
   eq(numeric[0].usageUsd, 0.25, 'J6 数字形态（非字符串）也认 —— 测试里可能用数字')
+}
+
+console.log('\nK. parseCostByDay —— 官方用量时序（趋势数据源）')
+{
+  // 真实响应形状（2026-10-11 实测，脱敏）：date 为 UTC 整点/整日
+  const HOURLY = [
+    { date: '2026-10-11T04:00:00Z', totalCostMicroCents: '25000000', totalTokens: '1500', totalRequests: '3' },
+    { date: '2026-10-11T07:00:00Z', totalCostMicroCents: '100000000', totalTokens: '9000', totalRequests: '12' }
+  ]
+  const rows = parseCostByDay(HOURLY, 'hour')
+  eq(rows.length, 2, 'K1 两个桶全收')
+  eq(rows[0].bucket, 'hour', 'K2 bucket 由调用方给定（响应里没有这个字段）')
+  eq(rows[0].t, '2026-10-11T04:00:00Z', 'K3 桶起点取官方 date 原值')
+  eq(rows[0].cost, 0.25, 'K4 金额 microcents → USD')
+  eq(rows[0].tokens, 1500, 'K5 tokens 原值')
+  eq(rows[0].requests, 3, 'K6 请求数原值')
+
+  // 倒序输入 → 升序返回（图表从左到右按时间画）
+  const reversed = parseCostByDay([...HOURLY].reverse(), 'day')
+  eq(reversed.map((r) => r.t), ['2026-10-11T04:00:00Z', '2026-10-11T07:00:00Z'], 'K7 升序返回')
+  eq(reversed[0].bucket, 'day', 'K8 日桶同样由调用方给定')
+
+  // 容忍未知键（站点改版加字段不该丢行）
+  eq(parseCostByDay([{ ...HOURLY[0], extraField: 'x' }], 'hour').length, 1, 'K9 未知键不影响解析')
+
+  // 坏 date 行跳过，好行保留（不因一行坏数据丢整张表）
+  eq(
+    parseCostByDay([HOURLY[0], { date: 'not-a-date', totalCostMicroCents: '1' }, HOURLY[1]], 'hour').length,
+    2,
+    'K10 坏 date 行被跳过，好行保留'
+  )
+
+  eq(parseCostByDay(null, 'hour'), [], 'K11 null → []')
+  eq(parseCostByDay({ items: [] }, 'hour'), [], 'K12 非数组 → []（宽容，不是崩溃）')
+  eq(parseCostByDay([], 'hour'), [], 'K13 空数组是合法结果（官方确认该窗口无用量）')
+
+  // 缺金额 = 结构变化信号 → 跳过该桶，**不补 0**（0 是「$0.00」，是断言）
+  eq(parseCostByDay([{ date: '2026-10-11T04:00:00Z' }], 'hour'), [], 'K14a 缺 totalCostMicroCents → 跳过该桶（不补 0）')
+  eq(
+    parseCostByDay([HOURLY[0], { date: '2026-10-11T07:00:00Z', totalCostMicroCents: 'abc' }, HOURLY[1]], 'hour').length,
+    2,
+    'K14b 金额不可解析 → 只跳过那一桶，好桶保留'
+  )
+  // 「真的是 0」仍要保留（0 桶是官方真实数据）
+  const zero = parseCostByDay([{ date: '2026-10-11T04:00:00Z', totalCostMicroCents: '0' }], 'hour')
+  eq([zero.length, zero[0].cost], [1, 0], 'K14c totalCostMicroCents="0" → 保留（真的 0，与缺失区分）')
+}
+
+console.log('\nL. modelsByWindowOf / seriesByWindowOf —— 明细/时序 → 快照的窗口映射')
+{
+  const NAMES = { rolling: '5 小时', weekly: '本周', monthly: '本月' }
+  const modelRow = (model) => ({ model, provider: 'opencode-go', usageUsd: 1, tokens: 10, requests: 2 })
+  const bucket = (t, cost) => ({ t, bucket: 'hour', cost, tokens: 1, requests: 1 })
+
+  // ① 三窗口 key 都产出（含 5 小时 —— 旧的「rolling 无明细」限制已推翻）
+  const models = modelsByWindowOf(
+    { models: { rolling: [modelRow('a')], weekly: [modelRow('b')], monthly: [modelRow('c')] } },
+    NAMES
+  )
+  eq(Object.keys(models).sort(), ['5 小时', '本月', '本周'].sort(), 'L1 models 三窗口 key 都产出（含 5 小时）')
+  const series = seriesByWindowOf(
+    { series: { rolling: [bucket('t1', 1)], weekly: [bucket('t2', 2)], monthly: [bucket('t3', 3)] } },
+    NAMES
+  )
+  eq(Object.keys(series).sort(), ['5 小时', '本月', '本周'].sort(), 'L2 series 三窗口 key 都产出')
+
+  // ② 空数组必须**保留 key**（官方确认该窗口无用量 ≠ 抓取失败）
+  const empty = modelsByWindowOf({ models: { rolling: [], weekly: [modelRow('b')] } }, NAMES)
+  ok('5 小时' in empty, 'L3a models 空数组保留 key（不是压成缺失）')
+  eq(empty['5 小时'], [], 'L3b models 空数组照原样带出')
+  ok(!('本月' in empty), 'L3c 未抓到的窗口不产出 key（缺失 = 失败）')
+  const emptySeries = seriesByWindowOf({ series: { monthly: [] } }, NAMES)
+  ok('本月' in emptySeries && emptySeries['本月'].length === 0, 'L3d series 空数组保留 key')
+
+  // ③ 缺失（失败）时该窗口 key **不存在** —— 渲染层据此退回本机并标注「本机估算」
+  const partial = seriesByWindowOf({ series: { weekly: [bucket('t2', 2)] } }, NAMES)
+  eq(Object.keys(partial), ['本周'], 'L4a 只有抓到的窗口产出 key')
+  ok(!('5 小时' in partial) && !('本月' in partial), 'L4b 抓取失败的窗口 key 不存在')
+
+  // ④ 鲁棒：details 为 null / 缺字段
+  eq(modelsByWindowOf(null, NAMES), {}, 'L5a null details → {}')
+  eq(seriesByWindowOf(undefined, NAMES), {}, 'L5b undefined details → {}')
+  eq(modelsByWindowOf({}, NAMES), {}, 'L5c 无 models 字段 → {}')
+  eq(Object.keys(modelsByWindowOf({ models: { weekly: [] } }, NAMES)), ['本周'], 'L5d 空数组窗口也算「产出了 key」')
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)

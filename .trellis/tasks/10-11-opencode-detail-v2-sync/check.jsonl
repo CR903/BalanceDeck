@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/10-11-opencode-detail-v2-sync/prd.md", "reason": "验收标准 AC1-AC7 逐条核对"}
+{"file": ".trellis/tasks/10-11-opencode-detail-v2-sync/design.md", "reason": "契约/数据流/取舍是否被实现忠实落地"}
+{"file": ".trellis/tasks/10-11-opencode-detail-v2-sync/research/console-api-v2.md", "reason": "核对实现是否与实测口径一致（since/startsAt/无 per-model quota）"}
+{"file": ".trellis/spec/adapters/opencode-console.md", "reason": "契约一致性；确认 spec 已按新行为更新"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "空态与诚实标注是否达标"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增可选字段与 IPC 边界的类型复验"}

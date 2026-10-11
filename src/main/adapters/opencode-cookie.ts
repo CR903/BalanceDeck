@@ -59,6 +59,29 @@ export const WINDOW_NAMES: Record<UsageWindowKind, string> = {
 }
 
 /**
+ * 窗口起点（ISO 8601）：优先官方 `startsAt`；缺失时用 `resetAt - 窗口跨度` 反推兜底。
+ *
+ * ⚠️ 官方 `startsAt` 是**权威**起点（`since` 参数、趋势/明细裁剪都依赖它）；反推只是
+ *    缺 `startsAt` 时的兜底。`month` 的起点来自 `access.startsAt`，由 `parseGoStatus`
+ *    填进 `raw.startAt`。
+ *
+ * 实测校准（2026-10-11）：`week.startsAt → resetsAt` 恰好 7 天，所以
+ * `resetsAt - 7d` **精确等于**起点 —— 反推在这里没有误差。真正会偏的是
+ * `now - 7d`（那假设窗口是滚动 7 天，而实际是自然周）。**别把这两者混为一谈。**
+ */
+export function windowStartIso(
+  raw: SsrRawWindow | undefined,
+  kind: UsageWindowKind,
+  nowMs: number
+): string | undefined {
+  if (raw?.startAt) return raw.startAt
+  if (raw?.resetInSec != null && raw.resetInSec > 0) {
+    return new Date(nowMs + raw.resetInSec * 1000 - WINDOW_SPANS[kind]).toISOString()
+  }
+  return undefined
+}
+
+/**
  * 用量金额的最小单位：`go/status` 与 `usage/models` 的 `*MicroCents` 为 1e-8 USD 的整数字符串。
  * 唯一定义在 ./opencode-console-api —— 这里**转发**而非重定义（两份会漂）。
  * 转发是为了不改下游的 import 路径。
@@ -78,6 +101,13 @@ export interface SsrRawWindow {
   /** 配额金额（1e-8 USD） */
   limit?: number
   resetInSec?: number
+  /**
+   * 窗口起点（ISO 8601）—— 官方 `meter.startsAt`（`month` 用 `access.startsAt`）。
+   * 2026-10-11 起官方每个 meter 都带它；下游据此精确定位窗口（`since` 参数、
+   * 趋势/明细的窗口裁剪）。缺它时才用 `resetAt - span` 反推兜底
+   * （见 `windowStartIso`；官方优先，不是因为反推会偏）。
+   */
+  startAt?: string
 }
 
 
@@ -97,6 +127,12 @@ function secondsUntil(iso: unknown, nowMs: number): number | undefined {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return undefined
   return Math.round((t - nowMs) / 1000)
+}
+
+/** ISO 时间原样带出（校验可解析）。非法 / 缺失返回 undefined */
+function isoOrUndefined(iso: unknown): string | undefined {
+  if (typeof iso !== 'string' || !iso) return undefined
+  return Number.isFinite(Date.parse(iso)) ? iso : undefined
 }
 
 export interface GoStatusParse {
@@ -131,8 +167,11 @@ export interface GoStatusParse {
  *  1. **限额由服务端下发**（`limitMicroCents`），不再依赖代码里硬编码的 $12/$30/$60。
  *  2. `month` **没有 `resetsAt`** —— 它的重置时间等于订阅周期末 `access.endsAt`。
  *     实测核对：`endsAt` 减当时 = 24 天 10 小时 41 分，与控制台页面显示的
- *     "Monthly usage … Resets in 24d 10h" 吻合。
+ *     "Monthly usage … Resets in 24d 10h" 吻合。**起点同理**取 `access.startsAt`。
  *  3. 金额是 1e-8 USD 尺度（microcents），与旧 SSR 的 `usage`/`limit` 同尺度。
+ *  4. 2026-10-11 起每个 meter 都带 `startsAt`（窗口起点，ISO）—— 下游据此对齐
+ *     `since` 参数与趋势/明细窗口；缺它时才用「重置时间 - 窗口跨度」反推兜底
+ *     （官方优先，不是因为反推会偏 —— 实测 `week.startsAt → resetsAt` 恰好 7 天）。
  */
 export function parseGoStatus(body: unknown, nowMs: number): GoStatusParse {
   const out: GoStatusParse = { windows: {}, raw: {}, unknownMeters: [] }
@@ -143,6 +182,8 @@ export function parseGoStatus(body: unknown, nowMs: number): GoStatusParse {
   if (!meters || typeof meters !== 'object') return out
 
   const periodEndSec = secondsUntil((access as { endsAt?: unknown }).endsAt, nowMs)
+  // 订阅周期起点 `access.startsAt` —— `month` 的窗口起点（month meter 没有自己的 startsAt）
+  const periodStartIso = isoOrUndefined((access as { startsAt?: unknown }).startsAt)
   // 注意取 **键**（接口里的 meter 字段名），不是值（我们的窗口名）。
   // 取错了会把 fiveHour/week/month 全判成"未知计费项"——2026-09-26 就踩过这个。
   const known = new Set<string>(Object.keys(METER_FIELDS))
@@ -154,11 +195,15 @@ export function parseGoStatus(body: unknown, nowMs: number): GoStatusParse {
     }
     const kind = METER_FIELDS[field as keyof typeof METER_FIELDS]
     if (!value || typeof value !== 'object') continue
-    const m = value as { limitMicroCents?: unknown; usedMicroCents?: unknown; resetsAt?: unknown }
+    const m = value as { limitMicroCents?: unknown; usedMicroCents?: unknown; resetsAt?: unknown; startsAt?: unknown }
 
     const limit = microCents(m.limitMicroCents)
     const usage = microCents(m.usedMicroCents)
     if (limit === undefined && usage === undefined) continue
+
+    // 窗口起点：优先 meter 自带的 startsAt；`month` 没有 → 回落订阅周期起点 access.startsAt
+    // （与 reset 回落 endsAt 同一组字段，见 PERIOD_END_RESET_FIELDS 的说明）。
+    const startAt = isoOrUndefined(m.startsAt) ?? (PERIOD_END_RESET_FIELDS.has(field) ? periodStartIso : undefined)
 
     // month 没有 resetsAt，回落到订阅周期末（实测与页面显示一致）
     const resetInSec = secondsUntil(m.resetsAt, nowMs) ?? (PERIOD_END_RESET_FIELDS.has(field) ? periodEndSec : undefined)
@@ -170,12 +215,12 @@ export function parseGoStatus(body: unknown, nowMs: number): GoStatusParse {
     // 于是下游 `renderedPct` 为 null，优先级链会落到别的来源（官方 API），
     // 实在没别的来源时由 opencode.ts 给出「百分比不可用」的提示。
     if (usagePercent === undefined && (usage ?? 0) > 0) {
-      out.raw[kind] = { status: 'percent-unavailable', usage, limit, resetInSec }
+      out.raw[kind] = { status: 'percent-unavailable', usage, limit, resetInSec, startAt }
       continue
     }
 
     const pct = usagePercent === undefined ? 0 : Math.max(0, Math.min(100, Math.floor(usagePercent)))
-    out.raw[kind] = { status: pct >= 100 ? 'rate-limited' : 'ok', usagePercent, usage, limit, resetInSec }
+    out.raw[kind] = { status: pct >= 100 ? 'rate-limited' : 'ok', usagePercent, usage, limit, resetInSec, startAt }
     out.windows[kind] = {
       kind,
       percent: pct,

@@ -1,11 +1,13 @@
-// 历史趋势图 / 用量热力图的**分桶**聚合（renderer/src/usageHistory.ts）
+// 用量趋势的**分桶**聚合（renderer/src/usageHistory.ts：日桶 / 小时桶）
 // 用法：node scripts/test-usage-history.mjs
 //
-// 覆盖：本地日历日切分、**末值取最后一个已知值**（本设计最容易写错的一处）、
+// 覆盖率：本地日历日切分、**末值取最后一个已知值**（本设计最容易写错的一处）、
 //       缺样本的日子不补 0、窗口过滤、纯度与纯函数纪律。
 //
 // 2026-10-07 起「每天一根柱」改日历网格，纵轴/横轴坐标换算（scaleY / xOf）随图体下线；
-// 网格的差分与强度分档在 usageHeatmap.ts，由 scripts/test-usage-heatmap.mjs 覆盖。
+// 2026-10-11 趋势改为「窗口驱动序列视图」，日历网格的差分/强度分档随 `usageHeatmap.ts`
+// 一起退役（模块已删）；小时桶与序列纯函数（`seriesView.ts`）由
+// `scripts/test-series-view.mjs` 覆盖。
 //
 // 全部经 loadTs 加载**真实源码**（scripts/lib/load-ts.mjs）：bucketByDay /
 // windowsWithHistory 一个都不内联 —— 内联过的测试已经漂移过一次（test-percent.mjs），
@@ -192,8 +194,8 @@ console.log('\nF. 纯函数纪律与纯度')
     'F1 纯函数里没有读自己的钟（now 一律由入参传，否则「同一天」成了运行环境的函数）')
   ok(!/window\.|document\./.test(code), 'F2 不碰 window / DOM（纯聚合）')
   ok(!/Math\.random/.test(code), 'F3 没有随机性（同一份输入必须给出同一份结果）')
-  ok(!/\.sort\(/.test(code.replace(/\.sort\(\(a, b\) => a\.t - b\.t\)/, '')),
-    'F4 唯一的 sort 在**副本**上（就地排序会改坏入参）')
+  ok(!/\.sort\(/.test(code.replace(/\.sort\(\(a, b\) => a\.t - b\.t\)/g, '')),
+    'F4 所有 sort 都作用在**副本**上（就地排序会改坏入参；bucketByDay / bucketByHour 各一处）')
 }
 
 // 入参不被就地修改（深比较）
@@ -228,7 +230,7 @@ console.log('\nF. 纯函数纪律与纯度')
 //
 // 为什么单开一段：PRD 的第 4 / 5 / 6 条（切换不重发 IPC、余额类不发、不受 predictOn 管）
 // —— predictOn 已于 2026-10-07 随「预计耗尽」一起删除，G5 / G5b 保留为**回归防线**：
-// 万一有人把取数又挂到一个开关上（那样开关一关热力图就跟着消失），这两条会红。
+// 万一有人把取数又挂到一个开关上（那样开关一关趋势图就跟着消失），这两条会红。
 // 全都落在 `DetailView.tsx` 的 `useUsageHistory` 里，而 `npm test` 的 17 个套件**没有一个**
 // 碰过 DetailView —— 这正是本仓记录过的那类事故（「开关看起来是活的，测试与 tsc 全绿」）。
 //
@@ -286,22 +288,17 @@ const deps = depsOf(histFn) ?? ''
   ok(/useUsageHistory\(\s*s,\s*planish\s*\)/.test(dvSrc),
     'G5 TrendPanel 的取数开关是 planish（有没有这家且是套餐类），不是 predictOn')
   ok(!/useUsageHistory\([^)]*predictOn/.test(dvSrc),
-    'G5b useUsageHistory 的调用点不接 predictOn（接了则关掉开关会连带让热力图消失）')
+    'G5b useUsageHistory 的调用点不接 predictOn（接了则关掉开关会连带让趋势图消失）')
 }
 
-// 空历史 → 不渲染（不是渲染一个空壳）；缺样本的天 → 不画柱
+// 空数据 → 不渲染（不是渲染一个空壳）；未知花费的桶 → 不画柱
 {
-  ok(/if \(buckets\.length === 0\) return null/.test(tcSrcAll),
-    'G6 TrendChart 收到空 buckets 返回 null（界面上什么都不显示，不是空壳）')
-  ok(/if \(c\.day\.lastPct == null\) return null/.test(tcSrcAll),
-    'G7 lastPct 为 null 的天不画格（缺口可见；画一格最浅色 = 把「没采到」混成「那天没用」）')
-  // ⚠ 「有历史」不等于「这个回看窗口里有历史」：最后一次采样在 10 天前、之后应用没跑时，
-  //   windowsWithHistory 照样列出该窗口。若 TrendPanel 只判 windows.length，
-  //   界面上就是一个「用量趋势」标题 + 两组切换钮、底下空着 —— 比不显示更像坏了。
-  ok(/if \(windows\.length === 0\) return null/.test(tcSrcAll),
-    'G8a 前置：TrendPanel 至少要判「没有任何有历史的窗口」就返回 null')
-  ok(/if \(!windows\.some\(/.test(tcSrcAll),
-    'G8 TrendPanel 在当前回看窗口里一个桶都没有时也返回 null（有历史≠窗口内有历史）')
+  ok(/if \(!available\.some\(/.test(tcSrcAll),
+    'G6 TrendPanel 在「一个可画的窗口都没有」时返回 null（界面上什么都不显示，不是空壳）')
+  ok(/nodes\.length === 0\) return null/.test(tcSrcAll), 'G7 SeriesChart 收到空节点返回 null')
+  // ⚠ 「有官方序列 key」不等于「有节点」；反过来「官方给了空数组」是确认无用量，也不能退回本机。
+  //   本机兜底时首桶无基准 → cost=null → 不画柱：画一根贴地柱 = 把「算不出」混成「没花钱」。
+  ok(/\{h > 0 && \(/.test(tcSrcAll), 'G8 未知花费（cost=null）的桶不画柱（缺口可见，不补 0）')
 }
 
 // ═══ H. bucketByDay 的绝对量字段 ═══════════════════════════════════════════════
@@ -329,7 +326,7 @@ console.log('\nH. 分桶的绝对量字段')
   eq(b[4].lastPct, null, 'H4 空天 pct 是 null')
   eq(b[4].lastUsed, null, 'H4b 空天两个字段都是 null（不是 0）')
 
-  // used 未知不影响 pct 的差分链路（下游 heatmapOf 的 deltaPp 依赖 lastPct）
+  // used 未知不影响 pct 字段：bucketByDay 的 lastPct/maxPct 与 lastUsed 是两份独立判据
   eq(lastPcts(b), [10, 30, 20, 30, null, null, null],
     'H5 pct 序列完整（绝对量字段不参与 pct 判据）')
 

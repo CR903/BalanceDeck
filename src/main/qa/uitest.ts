@@ -330,31 +330,35 @@ export async function runUiTest(
     r.detailOpen = (await exec("!!document.querySelector('.card.detail')")) ? 'ok' : 'fail'
     r.detailWindows = (await exec("!!document.querySelector('.dwin') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
 
-    // ── 用量热力图（P1-1）───────────────────────────────────────────────────
+    // ── 用量趋势（2026-10-11 改为窗口驱动序列视图）──────────────────────────
     // 两态互斥，**不要**写成「有 chart 或没 chart 都算过」：
-    //   · 套餐类（coding/token）且有历史 → 有 `.trend-chart`（日历网格 SVG）+
-    //     `.trend-head`（streak 头），且格数 > 0（缺样本的天不画格，所以格数 ≤ 天数，
-    //     **不能**断言相等）
+    //   · 套餐类（coding/token）且该窗口有节点 → 有 `.trend-chart`（柱状序列 SVG），
+    //     且柱数 > 0（未知花费的桶不画柱，所以柱数 ≤ 节点数，**不能**断言相等）
     //   · 余额类（balance）→ **一定没有** `.trend-chart`，且实现层压根不发那次 IPC
     // 判「有没有 chart」用 `=== null` 而不是 `!`：`!` 会把「元素不存在」与
     // 「选择器写错了」混成同一个结果 —— 那正是本仓反复出现的空洞绿。
     const chartInfo = (await exec(`(() => {
       const chart = document.querySelector('.trend-chart')
-      const host = document.querySelector('.trend') || document.querySelector('[class*="trend"]')
-      const head = document.querySelector('.trend-head')
+      const host = document.querySelector('.trend')
+      const section = [...document.querySelectorAll('.section')]
+        .find((s) => (s.querySelector('.section-title')?.textContent || '').includes('用量趋势'))
+      const tag = section ? (section.querySelector('.section-title .tag')?.textContent || '') : ''
       return JSON.stringify({
         hasChart: chart !== null,
-        cells: chart ? chart.querySelectorAll('.trend-cell').length : -1,
-        hasHead: head !== null,
+        bars: chart ? chart.querySelectorAll('.trend-bar').length : -1,
+        records: document.querySelectorAll('.trend-records-row').length,
+        source: tag,
         hostClass: host ? host.className : ''
       })
     })()`)) as string
     const ci = JSON.parse(chartInfo || '{}') as {
       hasChart?: boolean
-      cells?: number
-      hasHead?: boolean
+      bars?: number
+      records?: number
+      source?: string
       hostClass?: string
     }
+    r.trendSource = ci.source || 'none'
     const isBalance = (await exec(`(() => {
       const t = document.querySelector('.kind-tag')
       return t ? (t.textContent || '').includes('余额') : false
@@ -364,12 +368,36 @@ export async function runUiTest(
       r.trendChart = ci.hasChart ? 'fail:balance-should-have-none' : 'ok'
     } else {
       r.trendChart = ci.hasChart
-        ? // 有图就必须同时有 streak 头和至少一个格：缺一个就是「渲染到一半」
-          (ci.hasHead && (ci.cells ?? 0) > 0 ? 'ok' : 'fail:missing-head-or-cells')
-        : // 没历史时 TrendChart 返回 null，界面什么都不显示 —— 那也是对的态
-          ((await exec("!!document.querySelector('.dwin')")) ? 'ok:no-history' : 'fail')
+        ? // 有图就必须有记录行（节点存在即有行）：连行都没有是「渲染到一半」。
+          // 柱数可能为 0（官方给的桶都是 0 花费），所以不能拿柱数当唯一判据。
+          (ci.records ?? 0) > 0
+          ? 'ok'
+          : 'fail:missing-records'
+        : // 没可画节点时 TrendPanel 返回 null，界面什么都不显示 —— 那也是对的态
+          (await exec("!!document.querySelector('.dwin')"))
+          ? 'ok:no-history'
+          : 'fail'
     }
-    r.trendBars = String(ci.cells ?? -1)
+    r.trendBars = String(ci.bars ?? -1)
+
+    // ── 余额块（AC9）───────────────────────────────────────────────────────
+    // 两态都可判：详情页开的是 opencode 时，`.credit-row` 的有/无必须与快照
+    // `extraCredit` 一致。官方不可达 → 快照无 extraCredit → DOM 也必须没有余额块
+    // （这条正是「不显示假值」的实机面）；官方可达 → 必须显示。删除 UI 或改成无条件
+    // 渲染，在有 extraCredit 的机器上会红；改条件为真值断言则在本机（无 extraCredit）会红。
+    const openName = (await exec(
+      "document.querySelector('.card.detail .brand')?.textContent || ''"
+    )) as string
+    if (openName === 'OpenCode Go') {
+      const hasCredit = (await exec(
+        "window.api.getState().then(s => { const oc = s.snapshots.find(x => x.id === 'opencode'); return !!(oc && oc.extraCredit) })"
+      )) as boolean
+      const hasRow = (await exec("!!document.querySelector('.credit-row')")) as boolean
+      r.creditRow =
+        hasCredit === hasRow ? (hasCredit ? 'ok:present' : 'ok:absent') : `fail:mismatch(snap=${hasCredit},dom=${hasRow})`
+    } else {
+      r.creditRow = `skipped:open=${openName || 'unknown'}`
+    }
 
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
     await sleep(600)
@@ -380,6 +408,8 @@ export async function runUiTest(
     r.detailBack = 'skipped:no-card'
     r.trendChart = 'skipped:no-card'
     r.trendBars = 'skipped:no-card'
+    r.trendSource = 'skipped:no-card'
+    r.creditRow = 'skipped:no-card'
   }
 
   // 收起（底部按钮区）

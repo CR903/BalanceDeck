@@ -10,10 +10,18 @@ import {
   normalizeCookie,
   WINDOW_SPANS,
   WINDOW_NAMES,
-  USAGE_UNIT_SCALE
+  USAGE_UNIT_SCALE,
+  windowStartIso
 } from './opencode-cookie'
+import { BILLING_STATUS_PATH, CONSOLE_ORIGIN, buildConsoleHeaders } from './opencode-console-api'
 import type { UsageWindowKind, SsrUsageWindow, SsrRawWindow } from './opencode-cookie'
-import type { ConsoleModelRow, ConsoleDetails } from '../opencode-details'
+import {
+  fetchConsoleDetails,
+  invalidateConsoleDetails,
+  modelsByWindowOf,
+  seriesByWindowOf
+} from '../opencode-details'
+import type { ConsoleModelRow, ConsoleDetails, ConsoleWindowStarts } from '../opencode-details'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // OpenCode Go 同步策略 v3 —— 对齐官方控制台
@@ -29,13 +37,17 @@ import type { ConsoleModelRow, ConsoleDetails } from '../opencode-details'
 //         解析已失效；新端点由「打开真实 Go 页观测它调了谁」定位（不是从 bundle 声明猜的
 //         —— `/console/api/usage/summary` 也在声明里，但那是**用量聚合**，没有窗口百分比）。
 //         好处：限额由服务端下发，已用量是精确值。
-//      → 每模型明细：GET /console/api/usage/models（tokens 也来自服务端，多设备不再漏）
+//      → 每模型明细：GET /console/api/usage/models?since=<窗口起点>（tokens 也来自服务端，
+//         多设备不再漏）；用量时序：GET /console/api/usage/cost-by-day?bucket=hour|day&since=…
+//      → 额外可用额度：GET /console/api/billing/status（balance/availableMicroCents）
 //   ③ 本机 opencode.db → cost + tokens 明细（仅本机，多设备不全）
 //
 // 关键原则（重要）：
 //   - 百分比 + 重置时间永远以官方为准（API 或 cookie），不用本机推算
-//   - 窗口边界用服务端 resetsAt 反推：start = resetsAt - span
-//     （5h/7d/30d），本机 cost/tokens 在官方窗口内求和，保证与官方口径一致
+//   - 窗口边界用官方 `meters.*.startsAt/resetsAt`（2026-10-11 起官网下发）；
+//     拿不到时才用 `resetsAt - span` 反推。**周窗口是自然周对齐**，反推会偏。
+//   - 每窗口的模型明细与用量时序用 `since = 该窗口 startsAt` 抓，保证与百分比
+//     落在**同一个窗口**（R1：不再跨窗口串数据）
 //   - 官方不可用时才退回本机 block 算法，且明确标注"本机估算"
 //   - 限额优先用控制台 `go/status` 下发的 `limitMicroCents`；只有拿不到时才用下面的
 //     `LOCAL_LIMITS` 兜底（2026-09-26 起服务端才是权威，硬编码只是保底）
@@ -537,6 +549,9 @@ function officialWindows(
       unit: 'usd',
       percent,
       tokens,
+      // 窗口起点：官方 startsAt 优先；缺失时兜底反推（见 windowStartIso）。
+      // 渲染层/采集层用它给 `since` 与趋势裁剪，所以 idle 窗口也给（它不是重置时间）。
+      startAt: windowStartIso(raw, kind, nowMs),
       resetAt: isRollingIdle ? undefined : resetAt,
       note
     })
@@ -548,6 +563,28 @@ function clampPct(v: number | undefined): number {
   if (v === undefined || !Number.isFinite(v)) return 0
   // 归一化到一位小数：杜绝无限小数流入托盘/卡片/详情
   return Math.max(0, Math.min(100, Math.round(v * 10) / 10))
+}
+
+/** microcents（字符串或数字）→ USD；非法/缺失返回 undefined（不编 0） */
+function microToUsd(v: unknown): number | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
+  return Number.isFinite(n) ? n / USAGE_UNIT_SCALE : undefined
+}
+
+/**
+ * 从 `go/status` 的 raw 里取出三个窗口起点，供明细/时序的 `since` 使用。
+ * 官方 `startsAt` 优先，缺失才反推（`windowStartIso`）。
+ */
+function windowStartsOf(
+  raw: Partial<Record<UsageWindowKind, SsrRawWindow>>,
+  nowMs: number
+): ConsoleWindowStarts {
+  const out: ConsoleWindowStarts = {}
+  for (const kind of ['rolling', 'weekly', 'monthly'] as UsageWindowKind[]) {
+    const s = windowStartIso(raw[kind], kind, nowMs)
+    if (s) out[kind] = s
+  }
+  return out
 }
 
 function modelRows(stats: LocalStats, topN = 6): ProviderModelRow[] {
@@ -611,6 +648,7 @@ function mergeConsoleModels(
         model: r.model,
         cost: r.usageUsd,
         tokens: r.tokens || local?.tokens || 0,
+        requests: r.requests,
         source: 'console' as const
       }
     })
@@ -663,6 +701,35 @@ function localWindows(stats: LocalStats, now: number): ProviderWindow[] {
 
 // ─── 适配器主体 ─────────────────────────────────────────────────────────────
 
+/**
+ * 读 `GET /api/billing/status` 的余额/额外可用额度（R5，只读展示）。
+ *
+ * 失败 / 非 200 / 字段缺失 → `undefined`（**不产出**该区块）。设计纪律：官方不可达时
+ * 详情页整块不显示，而不是显示一个 0 —— 0 是断言，缺省才是「不知道」。
+ */
+async function fetchExtraCredit(
+  ctx: CollectContext,
+  cookie: string,
+  orgId: string
+): Promise<{ available: number; balance: number } | undefined> {
+  try {
+    const { status, body } = await readJson(
+      ctx,
+      `${CONSOLE_ORIGIN}${BILLING_STATUS_PATH}`,
+      buildConsoleHeaders(cookie, orgId)
+    )
+    if (status !== 200 || !body || typeof body !== 'object') return undefined
+    const b = body as { availableMicroCents?: unknown; balanceMicroCents?: unknown }
+    const available = microToUsd(b.availableMicroCents)
+    const balance = microToUsd(b.balanceMicroCents)
+    if (available === undefined && balance === undefined) return undefined
+    return { available: available ?? 0, balance: balance ?? 0 }
+  } catch {
+    return undefined
+  }
+}
+
+
 export const opencodeAdapter: ProviderAdapter = {
   id: 'opencode',
   name: 'OpenCode Go',
@@ -709,6 +776,9 @@ export const opencodeAdapter: ProviderAdapter = {
     let cookie: { windows: Partial<Record<UsageWindowKind, SsrUsageWindow>>; raw: Partial<Record<UsageWindowKind, SsrRawWindow>> } | null = null
     let cookieError = ''
     let consoleDetails: ConsoleDetails | null = null
+    // 当前生效的 cookie 串：自愈换用实时 cookie 后要跟着更新，billing 等后续请求
+    // 必须与明细同源（用旧 cookie 会拿到 401，且症状是「余额块莫名其妙不显示」）。
+    let activeCookie: string | null = cookieCred?.cookie ?? null
     if (cookieCred) {
       try {
         const r = await fetchUsageViaCookie(ctx, cookieCred.cookie, cookieCred.workspaceId)
@@ -716,10 +786,14 @@ export const opencodeAdapter: ProviderAdapter = {
         if (r.unknownMeters.length) {
           debugLog(`opencode: 控制台接口出现未知计费项 ${r.unknownMeters.join(',')}`)
         }
-        // 每模型明细（5 分钟缓存，非阻塞：本轮用缓存，后台刷新）
+        // 每模型明细 + 用量时序（5 分钟缓存，非阻塞：本轮用缓存，后台刷新）。
+        // `since` 取该窗口的官方起点 —— 明细/时序与百分比同窗。
         try {
-          const { fetchConsoleDetails } = await import('../opencode-details')
-          consoleDetails = fetchConsoleDetails(cookieCred.workspaceId, cookieCred.cookie)
+          consoleDetails = fetchConsoleDetails(
+            cookieCred.workspaceId,
+            cookieCred.cookie,
+            windowStartsOf(r.raw, nowMs)
+          )
         } catch {
           consoleDetails = null
         }
@@ -733,6 +807,7 @@ export const opencodeAdapter: ProviderAdapter = {
           if (live && live !== cookieCred.cookie) {
             const r = await fetchUsageViaCookie(ctx, live, cookieCred.workspaceId)
             cookie = { windows: r.windows, raw: r.raw }
+            activeCookie = live
             cookieError = ''
             // 自愈成功后同样要报未知计费项 —— 否则"第一次失败恰好因为结构变了"时，
             // 这个改版信号会被丢掉，快照静悄悄退回本机估算（2026-09-26 评审发现）
@@ -741,9 +816,8 @@ export const opencodeAdapter: ProviderAdapter = {
             }
             if (ctx.setKey) await ctx.setKey('opencodeCookie', live)
             try {
-              const { fetchConsoleDetails, invalidateConsoleDetails } = await import('../opencode-details')
               invalidateConsoleDetails()
-              consoleDetails = fetchConsoleDetails(cookieCred.workspaceId, live)
+              consoleDetails = fetchConsoleDetails(cookieCred.workspaceId, live, windowStartsOf(r.raw, nowMs))
             } catch {
               /* 明细是增强项，失败就算了 */
             }
@@ -761,19 +835,28 @@ export const opencodeAdapter: ProviderAdapter = {
     if (apiUsage || cookie) {
       const windows = officialWindows(apiUsage, cookie, local, nowMs)
 
-      // 分窗口的每模型明细（控制台口径）
-      // 注意 `consoleDetails` 只有 weekly/monthly —— 5 小时窗口**没有**明细，
-      // 因为端点最小 range 是 24h（口径对不上，宁可不给，见 opencode-console-api 的说明）
+      // 分窗口的每模型明细（控制台口径）。三窗口都有 —— rolling 靠 `since` 对齐
+      // （2026-10-11 起，旧的「5 小时无明细」限制已被 `since` 推翻）。
+      // key 语义（与 spec 一致）：**key 存在 = 官方确认（空数组也算「无已用模型」）；
+      // key 不存在 = 该窗口抓取失败**。映射抽成纯函数，三条契约有单测钉住。
       const modelsByWindow: Record<string, ProviderModelRow[]> = {}
-      if (consoleDetails) {
-        for (const [kind, rows] of Object.entries(consoleDetails) as [
-          'weekly' | 'monthly',
-          ConsoleModelRow[]
-        ][]) {
-          if (rows && rows.length) modelsByWindow[WINDOW_NAMES[kind]] = mergeConsoleModels(rows, local)
-        }
+      for (const [name, rows] of Object.entries(modelsByWindowOf(consoleDetails, WINDOW_NAMES))) {
+        modelsByWindow[name] = rows.length ? mergeConsoleModels(rows, local) : []
       }
-      const monthlyModels = consoleDetails?.monthly?.length ? mergeConsoleModels(consoleDetails.monthly, local) : null
+      const monthlyModels = consoleDetails?.models?.monthly?.length
+        ? mergeConsoleModels(consoleDetails.models.monthly, local)
+        : null
+
+      // 分窗口用量时序（官方 cost-by-day 口径，趋势区数据源）。
+      // 空数组**要保留**：它表示「官方确认该窗口无用量」，与「抓取失败（key 缺失）」
+      // 是两回事 —— 后者渲染层退回本机历史并标注「本机估算」。
+      const seriesByWindow = seriesByWindowOf(consoleDetails, WINDOW_NAMES)
+
+      // 额外可用额度（billing/status，只读）。官方不可达时不产出 → 渲染层整块不显示。
+      // ⚠️ 用 `activeCookie`（自愈后是实时 cookie），与明细同源 —— 用旧 cookie 会拿 401。
+      const extraCredit = cookie && activeCookie && cookieCred
+        ? await fetchExtraCredit(ctx, activeCookie, cookieCred.workspaceId)
+        : undefined
 
       const parts: string[] = []
       if (cookie) parts.push('控制台（精确）')
@@ -785,6 +868,8 @@ export const opencodeAdapter: ProviderAdapter = {
           windows,
           models: monthlyModels ?? (local ? modelRows(local) : undefined),
           modelsByWindow: Object.keys(modelsByWindow).length ? modelsByWindow : undefined,
+          seriesByWindow: Object.keys(seriesByWindow).length ? seriesByWindow : undefined,
+          extraCredit,
           source: parts.join(' + '),
           detail: cookieError
             ? `控制台 cookie 抓取失败（${cookieError}）；当前百分比来自官方 API，精度为整数`

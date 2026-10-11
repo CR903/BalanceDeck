@@ -127,7 +127,9 @@ function WindowModels({ rows }: { rows: ProviderModelRow[] }): React.JSX.Element
     <div className="wmodels">
       <div className="wmodels-head">
         <span>模型</span>
-        <span className="wmodels-quota">用量 / 配额</span>
+        {/* 「用量」只有已用量 —— 接口**没有每模型配额**，标题不得暗示「配额」（R3）。 */}
+        <span className="wmodels-amount">用量</span>
+        <span className="wmodels-req">请求</span>
         <span className="wmodels-pct">%</span>
       </div>
       {rows.map((m) => (
@@ -135,10 +137,8 @@ function WindowModels({ rows }: { rows: ProviderModelRow[] }): React.JSX.Element
           <span className="wmodels-name" title={m.model}>
             {m.model}
           </span>
-          <span className="wmodels-amount">
-            {fmtAmount(m.cost, 'usd')}
-            {m.quota != null && m.quota > 0 && <span className="wmodels-q"> / {fmtAmount(m.quota, 'usd')}</span>}
-          </span>
+          <span className="wmodels-amount">{fmtAmount(m.cost, 'usd')}</span>
+          <span className="wmodels-reqv">{m.requests != null ? String(m.requests) : '—'}</span>
           <span className="wmodels-pctv">{m.percent != null ? fmtPercent(m.percent) : '—'}</span>
         </div>
       ))}
@@ -314,19 +314,42 @@ export function DetailView({
               </section>
             )}
 
-            {/* ── 用量热力图（P1-1）─────────────────────────────────────────
-                位置：「每模型用量表」**上方**。它答的是「这 30 天每天都在用」，
-                与上方 hero / 用量窗口同一批问题，所以挨着放。
-
-                2026-10-07 由「每天一根柱」换成 GitHub 式日历网格 + streak 头：柱状图只给
-                形状不给数值，用户读不出趋势；日历网格的颜色深浅是当天**日增量**（末值强度
-                在高位用量下整张图全深，看不出哪天用得多），悬停再给末值%，双数齐下。
-
-                ⚠ 刻意**并列**而不是塞进 `{hasModels && …}` 里：热力图不需要 `s.models`
-                存在，而塞进模型明细会让「这家没有模型数据」连带让热力图消失。
-                没有历史时 TrendPanel 返回 null —— 界面什么都不显示（不是「加载失败」）。 */}
+            {/* ── 用量趋势（2026-10-11 重构为窗口驱动的序列视图）─────────────
+                位置：「每模型用量表」**上方**。它跟随左侧用量窗口：5 小时画逐小时、
+                本周/本月画逐日；官方 `cost-by-day` 优先，拿不到才退回本机历史并标注。
+                刻意**并列**而不是塞进 `{hasModels && …}` 里：趋势不需要 `s.models` 存在。
+                没有可展示的节点时 TrendPanel 返回 null —— 界面什么都不显示。 */}
             {plan && (
-              <TrendPanel pointsByWindow={history} primaryWindowName={hero?.name} now={now} />
+              <TrendPanel
+                windows={s.windows}
+                seriesByWindow={s.seriesByWindow}
+                pointsByWindow={history}
+                primaryWindowName={hero?.name}
+                now={now}
+              />
+            )}
+
+            {/* ── 额外额度（R5，只读）───────────────────────────────────────
+                来自 `GET /api/billing/status` 的 `availableMicroCents/balanceMicroCents`。
+                官方不可达时 `s.extraCredit` 不存在 → 整块不显示（不伪造一个 0）。 */}
+            {s.extraCredit && (
+              <section className="section">
+                <div className="section-title">额外额度</div>
+                <div className="credit-row">
+                  <span className="credit-label">
+                    {s.extraCredit.available > 0 ? '额外可用额度' : '账户余额'}
+                  </span>
+                  <span className="credit-value">
+                    {fmtAmount(
+                      s.extraCredit.available > 0 ? s.extraCredit.available : s.extraCredit.balance,
+                      'usd'
+                    )}
+                  </span>
+                  {s.extraCredit.available > 0 && s.extraCredit.balance > 0 && (
+                    <span className="credit-sub">余额 {fmtAmount(s.extraCredit.balance, 'usd')}</span>
+                  )}
+                </div>
+              </section>
             )}
 
             {hasModels && (

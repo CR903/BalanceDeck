@@ -18,6 +18,12 @@ export interface ProviderWindow {
   /** 0 或缺省 = 限额未知，只展示用量 */
   limit?: number
   unit: Unit
+  /**
+   * 窗口起点（ISO 8601）。控制台口径时为官方 `meter.startsAt`（`month` 用
+   * `access.startsAt`）；缺失时由 `resetAt - 窗口跨度` 反推兜底。
+   * 渲染层据此把趋势/明细裁到与百分比**同一个窗口**。
+   */
+  startAt?: string
   resetAt?: string // ISO
   note?: string
   /** 该窗口内的 token 消耗（若可统计） */
@@ -35,12 +41,32 @@ export interface ProviderModelRow {
   /** 花费（USD；控制台口径时为控制台给出的真实用量） */
   cost: number
   tokens: number
+  /** 请求数（服务端口径；本机统计没有该字段 → 缺省 undefined，UI 显示「—」） */
+  requests?: number
   /** 配额（USD，控制台口径才有） */
   quota?: number
   /** 官方百分比（控制台口径才有） */
   percent?: number
   /** 数据来源：console=控制台官方明细，local=本机统计 */
   source?: 'console' | 'local'
+}
+
+/**
+ * 官方 `usage/cost-by-day` 的一个时间桶 —— 趋势区的**序列视图**数据源。
+ *
+ * 口径：`t` 为桶起点（小时桶 = UTC 整点，日桶 = 该日 UTC 00:00，与官方 `date` 字段一致）；
+ * 金额已换算为 USD。**没有「配额」概念** —— 桶只有花费，没有比例。
+ */
+export interface UsageBucket {
+  /** 桶起点（ISO 8601） */
+  t: string
+  bucket: 'hour' | 'day'
+  /** 该桶花费（USD） */
+  cost: number
+  /** 该桶 tokens（服务端口径） */
+  tokens: number
+  /** 该桶请求数（服务端口径） */
+  requests: number
 }
 
 export type ProviderStatus = 'ok' | 'nodata' | 'error' | 'skipped'
@@ -72,6 +98,17 @@ export interface ProviderSnapshot {
    * 有值时详情页在每个窗口下展示可展开的模型表。
    */
   modelsByWindow?: Record<string, ProviderModelRow[]>
+  /**
+   * 分窗口的用量时序（官方 `usage/cost-by-day` 口径），key = 窗口名。
+   * 详情页趋势区据此画「窗口驱动的序列视图」；**key 不存在 = 官方拿不到该窗口序列**，
+   * 渲染层退回本机历史并标注「本机估算」。key 存在但数组为空 = 官方确认该窗口无用量。
+   */
+  seriesByWindow?: Record<string, UsageBucket[]>
+  /**
+   * Go 之外的额外可用额度（`GET /api/billing/status`，只读展示）。
+   * 官方不可达 / 无 cookie 时**不产出**（渲染层整块不显示，不伪造）。
+   */
+  extraCredit?: { available: number; balance: number }
   /** 数据来源标注，如 "官方 API" / "本机统计" */
   source?: string
   /** 数据质量，缺省 official */

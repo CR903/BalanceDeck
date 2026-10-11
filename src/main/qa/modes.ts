@@ -130,16 +130,21 @@ export async function runDetailsTest(): Promise<void> {
   }
   const t0 = Date.now()
   const data = await fetchConsoleDetailsNow(wid, cookie)
-  process.stdout.write(
-    `抓取耗时: ${Date.now() - t0}ms | 结果: ${
-      data ? JSON.stringify(Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length])), null, 1) : 'null'
-    }\n`
-  )
-  for (const [kind, rows] of Object.entries(data ?? {})) {
+  const summarize = (d: NonNullable<typeof data>): Record<string, unknown> => ({
+    models: Object.fromEntries(Object.entries(d.models ?? {}).map(([k, v]) => [k, v.length])),
+    series: Object.fromEntries(Object.entries(d.series ?? {}).map(([k, v]) => [k, v.length]))
+  })
+  process.stdout.write(`抓取耗时: ${Date.now() - t0}ms | 结果: ${data ? JSON.stringify(summarize(data), null, 1) : 'null'}\n`)
+  for (const [kind, rows] of Object.entries(data?.models ?? {})) {
     if (!rows.length) continue
     process.stdout.write(`${kind} 前 3 行（注意：只有已用量，接口不提供每模型配额与百分比）:\n`)
     for (const r of rows.slice(0, 3)) {
       process.stdout.write(`  ${r.model} | $${r.usageUsd.toFixed(4)} | ${r.tokens} tok | ${r.requests} 次\n`)
     }
+  }
+  for (const [kind, buckets] of Object.entries(data?.series ?? {})) {
+    if (!buckets.length) continue
+    const head = buckets.slice(0, 2).map((b) => `${b.t}=$${b.cost.toFixed(4)}`)
+    process.stdout.write(`${kind} 时序 ${buckets.length} 桶（${buckets[0].bucket}）: ${head.join(' · ')}\n`)
   }
 }

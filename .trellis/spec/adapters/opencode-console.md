@@ -23,15 +23,18 @@
 CONSOLE_ORIGIN        // 'https://opencode.ai/console'
 LOGIN_PATH            // '/login'
 ORGS_PATH             // '/api/orgs'
-GO_STATUS_PATH        // '/api/go/status'        ← 配额窗口
-BILLING_STATUS_PATH   // '/api/billing/status'   ← 未接线，仅记录
+GO_STATUS_PATH        // '/api/go/status'        ← 配额窗口（meter 带 startsAt）
+BILLING_STATUS_PATH   // '/api/billing/status'   ← 额外可用额度/余额（v2 已接线，只读展示）
 USAGE_SUMMARY_PATH    // '/api/usage/summary'    ← 不是窗口源！仅授权探针
 USAGE_MODELS_PATH     // '/api/usage/models'     ← 每模型明细
+USAGE_COST_BY_DAY_PATH// '/api/usage/cost-by-day' ← 用量时序（趋势区数据源）
 ORG_ID_HEADER         // 'x-org-id'
 USAGE_UNIT_SCALE      // 1e8  → 1 USD = 1e8 microcents
 METER_FIELDS          // { fiveHour:'rolling', week:'weekly', month:'monthly' }
-PERIOD_END_RESET_FIELDS // Set(['month'])
-MODELS_RANGES         // { weekly:'7d', monthly:'30d' }  ← **故意没有 rolling**
+PERIOD_END_RESET_FIELDS // Set(['month'])   ← month 的 reset 回落 endsAt、start 回落 access.startsAt
+MODELS_RANGES         // { weekly:'7d', monthly:'30d' }  ← 自然对齐档
+MODELS_RANGE_ROLLING  // '24h'  ← rolling 用 range=24h + since=<fiveHour.startsAt> 对齐（**不再**「故意不映射」）
+COST_BUCKETS          // { hour:'hour', day:'day' }  → COST_BUCKETS: 窗口 rolling=hour，周/月=day
 MODELS_PAGE_SIZE      // 50
 
 buildConsoleHeaders(cookie: string, orgId?: string | null): Record<string, string>
@@ -40,18 +43,26 @@ classifyConsoleStatus(status: number): 'unauthorized' | 'forbidden' | null
 consoleAuthMessage(kind): string | null
 ```
 
-两个纯解析函数（可单测，全部有真实 fixture）：
+三个能单测的纯解析/派生函数（全部有真实 fixture）：
 
 ```ts
 // src/main/adapters/opencode-cookie.ts
 parseGoStatus(body: unknown, nowMs: number): {
   windows: Partial<Record<UsageWindowKind, SsrUsageWindow>>
-  raw: Partial<Record<UsageWindowKind, SsrRawWindow>>
+  raw: Partial<Record<UsageWindowKind, SsrRawWindow>>   // 现在带 startAt?: string（ISO）
   unknownMeters: string[]          // 非空 = 站点改版信号
 }
+windowStartIso(raw, kind, nowMs): string | undefined      // 官方 startsAt 优先，缺失才 resetAt-span 反推
 
 // src/main/opencode-details.ts
 parseModelsResponse(body: unknown): ConsoleModelRow[]
+parseCostByDay(body: unknown, bucket: CostBucket): UsageBucket[]   // 升序；容忍未知键/坏行；**缺金额 → 跳过该桶**
+modelsByWindowOf(details, windowNames): Record<string, ConsoleModelRow[]>   // 纯映射；空数组保留、缺失不产出
+seriesByWindowOf(details, windowNames): Record<string, UsageBucket[]>       // 同上
+fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | null
+//   ConsoleDetails = { models?: Partial<Record<'rolling'|'weekly'|'monthly', ConsoleModelRow[]>>
+//                      series?: Partial<Record<'rolling'|'weekly'|'monthly', UsageBucket[]>> }
+//   规则：**key 不存在 = 抓取失败**（渲染层退回本机）；key 存在但空数组 = 官方确认该窗口无用量。
 ```
 
 ## 3. Contracts
@@ -100,7 +111,15 @@ parseModelsResponse(body: unknown): ConsoleModelRow[]
   实测核对：`endsAt` 减当时 = 24 天 10 小时 41 分，与控制台页面 "Resets in 24d 10h" 吻合。
   ⚠️ 只有 `month` 适用：`week.resetsAt` 是 `2026-09-28T00:00:00Z`（**自然周对齐周一 0 点**），
   而 `access` 是周日 09-21 开的 —— 两者锚定方式不同，不能推广。
-- 输出沿用旧 `SsrRawWindow` / `SsrUsageWindow` 形状，**`officialWindows` 零改动**
+- **每个 meter 现在都带 `startsAt`（窗口起点）**（2026-10-11 新增实测）。
+  起点优先取 `meter.startsAt`；`month` 没有 → 回落 `access.startsAt`（与 reset 同一组字段）。
+  下游用它做 `since` 与趋势/明细裁剪；缺失时才用 `resetAt - WINDOW_SPANS[kind]` 反推兜底
+  （`windowStartIso`）。
+  ⚠️ **官方优先不等于「反推会偏」**：实测 `week.startsAt → resetsAt` 恰好 7 天，
+  `resetAt - 7d` **精确等于**起点。会偏的是 `now - 7d`（那假设窗口是滚动 7 天，
+  而实际是自然周）。别再写「周窗口不能反推」——那句话是错的。
+- 输出沿用旧 `SsrRawWindow` / `SsrUsageWindow` 形状，只是 `raw` 多一个可选 `startAt`，
+  **`officialWindows` 零破坏**
 
 ### 3.3 每模型明细 —— `GET /console/api/usage/models`
 
@@ -122,9 +141,34 @@ parseModelsResponse(body: unknown): ConsoleModelRow[]
 - `tokens` = input + output + cacheRead + cacheWrite5m + cacheWrite1h，**服务端口径**
 - ⚠️ **没有 per-model 的 `quota` / `percent`**。旧 DOM 版能从表头读到，新接口没有。
   这两个字段已从 `ConsoleModelRow` **删除**（不是填 0）—— 填 0 会渲染成「$0 / 0%」
-- ⚠️ **`MODELS_RANGES` 故意不映射 `rolling`**：端点最小 range 是 24h，对不上 5 小时窗口。
-  「5 小时」没有明细表是**正确行为**，不是 bug
+- ✅ **三窗口都有明细**（2026-10-11 起）：请求带 `since=<该窗口 startsAt>`（**覆盖 range 起点**，
+  live 实测 `range=24h&since=5h前` ≡ `range=7d&since=5h前`）。
+  rolling 用 `range=24h&since=<fiveHour.startsAt>` —— 这推翻了 v1 的
+  「5 小时没有明细是正确行为」（当时 range 最小 24h，没有 `since`）。
+  **但口径纪律不变：rolling 的 `since` 必须是官方 `startsAt`，绝不是「now - 5h」本地推算。**
 - 401/403 → 静默降级为空明细（增强项，不该让整轮采集失败），但**必须记日志**
+- **key 语义（与 §3.5 一致）**：抓取成功就产出 `models[窗口kind]`（**空数组也保留**，
+  表示「官方确认该窗口无已用模型」）；抓取失败才不产出该 key。快照映射由纯函数
+  `modelsByWindowOf` 完成（三条契约有单测钉住），**不要**在 `collect()` 里内联
+  `if (rows.length)` —— 那会把「确认没有」与「拿不到」压成同一态。
+
+### 3.5 用量时序 —— `GET /console/api/usage/cost-by-day`（趋势区数据源）
+
+```
+?range=24h|7d|30d&bucket=hour|day&since=<ISO>     （必需 x-org-id）
+→ [{ date, totalCostMicroCents, totalTokens, totalRequests }]
+```
+- `date` 为 **UTC 整点/整日**（如 `2026-10-11T04:00:00Z`）；`since` 覆盖 range 起点
+- `parseCostByDay(body, bucket)` 升序返回 `UsageBucket{ t, bucket, cost(USD), tokens, requests }`；
+  容忍未知键、坏 `date` 行跳过不丢整表；**空数组是合法结果**（官方确认该窗口无用量）。
+  ⚠️ **`totalCostMicroCents` 缺失/不可解析 → 跳过该桶**（不补 0）：它是必填字段，
+  缺它说明结构变了；补 0 会把「不知道」渲染成「$0.00」。
+- 窗口粒度：rolling = `bucket=hour`（逐小时），周/月 = `bucket=day`（逐日）
+- 快照落点：`ProviderSnapshot.seriesByWindow[窗口名]`；**key 缺失 = 抓取失败** →
+  渲染层退回本机历史并标注「本机估算」；**key 存在但空数组 = 官方确认无用量**（不退回）
+- 余额：`GET /api/billing/status` 的 `availableMicroCents/balanceMicroCents` →
+  `ProviderSnapshot.extraCredit{ available, balance }`（USD，只读）。失败 → 不产出该字段，
+  详情页整块不显示（**不显示 0**）
 
 ### 3.4 失败语义：两条路径不同（设计决定）
 
@@ -148,18 +192,25 @@ parseModelsResponse(body: unknown): ConsoleModelRow[]
 | 200 但无任何窗口 | — | 抛「未返回任何计费窗口（会话可能已失效，请重新授权）」 |
 | 有 `usage` 但算不出百分比（`limit` 缺失或为 0） | — | **不产出窗口**，由 `opencode.ts` 提示「百分比不可用（控制台未给限额）」 |
 | 明细某 range 失败 | 任意 | 重试一次；仍失败则该窗口 key 缺失 + 日志 |
+| 时序某窗口失败 | 任意 | 同上；该窗口 `series` key 缺失 → 渲染层退回本机并标注「本机估算」 |
 | 明细 401/403 | — | 不重试，静默降级为空 + 日志 |
+| 时序 401/403 | — | 同上（不重试） |
+| 官方确认无明细/无用量 | 200 + 空数组 | `models`/`series` 该 key 为 `[]` → 渲染层**不**退回本机（那是「确认没有」，不是「拿不到」） |
+| 时序非空响应但全行缺必填金额 | 200 + 非空数组且解析出 0 桶 | **不设该 `series` key**（结构可能已变）+ 日志 → 渲染层按「拿不到」处理，**不得**冒充「官方确认无用量」 |
+| billing 失败 | 任意 | `extraCredit` 不产出 → 详情页整块不显示（不显示 0） |
 
 > 401 与 404 必须分开：401 是"要用户去做一件事"，404/5xx 是"这条路暂时不通"。
 > 笼统的「cookie 已过期或无效」已删除。
 
 ## 5. Good / Base / Bad Cases
 
-**Good**（实测真实账号）
+**Good**（实测真实账号，2026-10-11 三窗口口径）
 ```
 本周: used=5.05884411 limit=30 pct=16.9 note='控制台'
-detail=明细分窗 key=['本周','本月']（5 小时缺席）
-models: deepseek-flash $11.8085 tokens=879438123 source='console'
+detail=明细分窗 key=['5 小时','本周','本月']        ← 三窗口都有明细（rolling 靠 since 对齐）
+series=时序分窗 key=['5 小时','本周','本月']（rolling=hour，周/月=day）
+models: deepseek-flash $11.8085 tokens=879438123 requests=4357 source='console'
+extraCredit: available=5.00 balance=0
 ```
 
 **Base**（会话有效但没花过钱）—— 0% 是真的，如实给出窗口。
@@ -187,21 +238,27 @@ deepseek-flash  $11.81  —  本机 880.1M     ← 标题说控制台，标签�
 
 ## 6. Tests Required
 
-`npm run test:ssr` —— **72 项 0 失败**。`scripts/test-ssr-parser.mjs`，
+`npm run test:ssr` —— **113 项 0 失败**。`scripts/test-ssr-parser.mjs`，
 用 `loadTs()` 加载**真源码**，fixture 取自真实响应（脱敏）。
+`npm run test:series-view` —— 47 项，覆盖 `seriesView.ts`（官方搬运 / 本机重置感知增量 /
+`bucketByHour`）与「官方优先、本机回退必标注」的结构切片。
 
 | 组 | 断言点 | 抓到过的回归 |
 |---|---|---|
 | A | 三个窗口映射 + 服务端限额 $12/$30/$60 + used 取原值 | 字段错位 |
 | B | 精确百分比与整数显示 | 取整方向 |
 | C | **`month` 回落 `access.endsAt`** | 回落被删 → 2 项失败 |
+| C5/C6 | **每 meter `startsAt`（month 用 `access.startsAt`）** + `windowStartIso` 官方优先/反推兜底 | 起点改用 `now - span`（忽略官方 startsAt，滚动假设 → 周窗口会偏） |
 | D | 未知计费项要报出来、不能静默少一个窗口 | 改名后静默 |
 | E / E2 | 异常输入不抛；**「花了钱算不出百分比」不报 0%** | 撒谎的 0% → 2 项失败 |
 | E3 | `resetInSec = 0` 表示"未知"；非法 `resetsAt` 视同缺失 | 垃圾秒数 |
 | F | 满额 / 超额钳位 | 出现 133% |
-| G2 | **`MODELS_RANGES` 取值 + 绝不能有 `rolling`** | 拿 30d 冒充 7d → 3 项失败 |
+| G2 | **`MODELS_RANGES` 自然档 + `MODELS_RANGE_ROLLING='24h'`**（`since` 覆盖 range 起点） | 拿 30d 冒充 7d → 3 项失败 |
+| G2b | `USAGE_COST_BY_DAY_PATH` / `COST_BUCKETS` | 趋势源写错 |
 | G3 | 端点常量、`x-org-id` 头带/不带、`PERIOD_END_RESET_FIELDS` | 丢必需头 → 1 项失败 |
 | H–J | 明细解析、**不产出 `quotaUsd`/`percent`**、异常输入 | 字段回潮 |
+| K | **`parseCostByDay`** 升序 / 未知键 / 坏行跳过 / 空数组合法 / **缺金额跳过该桶（不补 0）** | 趋势解析 |
+| L | **`modelsByWindowOf` / `seriesByWindowOf`**：三窗口 key 都产出、**空数组保留 key**、缺失不产出 | 5 小时明细丢失 / 空数组被压成缺失 |
 
 **两条必须知道的测试陷阱**（本项目都犯过）：
 
@@ -261,9 +318,12 @@ const cookie = (await readPartitionCookie()) ?? (await getKey('opencodeCookie'))
 
 ## 8. 已知未接线 / 未覆盖
 
-- `/console/api/billing/status` → `availableMicroCents`（实测 $5.00 可用额外额度）、
-  `renewalAuthorizationRequired`（页面提示需在 Oct 21 前重新授权支付方式）。
-  **两者都是真实可用的数据源**，接入要改快照形状（余额型 vs 套餐型），应单开一轮
-- `/console/api/usage/summary` 与 `cost-by-day` 可用于"本机 vs 全局"对照，本轮未用
+- `/console/api/billing/status` 的 `availableMicroCents` / `balanceMicroCents`
+  **已接线**（`extraCredit`，只读展示）。仍未接线的是 `renewalAuthorizationRequired`
+  （页面提示需重新授权支付方式）—— 那是余额/套餐型快照之外的又一次形状扩展，应单开一轮。
+- `/console/api/usage/summary`（聚合）与 `/api/usage/users`（按人）、
+  `/api/providers/opencode`（模型目录+定价）本轮未用 —— 见
+  `tasks/10-11-opencode-detail-v2-sync/research/console-api-v2.md`。
 - `SsrUsageWindow` / `SsrRawWindow` 的 `Ssr` 前缀已名不副实（不再有 SSR），
   留待下一轮清理
+- `fetchJson` 的**串行 + 重试**仍无自动化测试（见 §6 已知缺口）
