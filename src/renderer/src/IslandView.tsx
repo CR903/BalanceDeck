@@ -572,10 +572,19 @@ export function IslandView({
                     title={`${s.name}${staleLabel(s) ? `（${staleLabel(s)}）` : ''}`}
                   >
                     <NestedRings s={s} />
-                    <span className={`isl-logo ${islandLevel(s) === 'danger' ? 'danger' : 'live'}`}>
+                    <span
+                      className={`isl-logo ${islandLevel(s) === 'danger' ? 'danger' : 'live'}${s.windows.length >= 2 ? ' nested' : ''}`}
+                    >
                       {/* 15 = combo 36 的 42%（原型 logoSize，demo.html:153）；glyph 15 同为
-                          原型 logoSVG(mark, brand, 15) 的画布尺寸 —— 黑圆盘上直接画品牌图形 */}
-                      <ProviderMark mark={s.mark} size={15} glyph={15} />
+                          原型 logoSVG(mark, brand, 15) 的画布尺寸 —— 黑圆盘上直接画品牌图形。
+                          R6 嵌套（≥2 窗）11：最内环 r=7.5/stroke 3（内缘 6.0），半径 5.5
+                          让出内环（全局 border-box 下容器 11 即总盘 11）；单环家保持 15；
+                          展开态 cell logo（26 独立位，不在环心）不动。 */}
+                      <ProviderMark
+                        mark={s.mark}
+                        size={s.windows.length >= 2 ? 11 : 15}
+                        glyph={s.windows.length >= 2 ? 11 : 15}
+                      />
                     </span>
                   </span>
                 ) : (

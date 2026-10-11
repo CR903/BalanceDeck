@@ -133,6 +133,13 @@
   background: transparent;
   border: 0;
 }
+/* R6 嵌套家瘦身（10-11-island-tri-fix）：≥2 窗时中央盘 15→11（半径 5.5 < 最内环内缘 6.0，
+ * 让出 r=7.5/stroke 3 的最内环；全局 border-box 下宽即总盘）。单环家保持 15；
+ * 展开态 cell logo（26 独立位）不在此作用域，不动。 */
+.isl-combo .isl-logo.nested {
+  width: 11px;
+  height: 11px;
+}
 /* logo 动画（R2，贴原型 demo.html:68-74）：呼吸 + ping 环 + danger 抖动。
  * 只用合成器属性 —— 呼吸/抖动走独立 `scale`/`rotate`（不碰 `transform`，
  * 那是居中定位 translate(-50%,-50%) 的位置，动了 logo 会跳到 combo 角上，

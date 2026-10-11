@@ -35,23 +35,31 @@ const MARKS = {
     patch: { from: 'M17 4.8H7v14.4h10z', to: 'M15 7H9v10h6z' },
   },
   claude: { icon: 'simple-icons:claude', color: '#D97757' },
-  codex: { icon: 'simple-icons:openai', color: '' },
-  copilot: { icon: 'simple-icons:githubcopilot', color: '' },
-  cursor: { icon: 'simple-icons:cursor', color: '' },
-  gemini: { icon: 'simple-icons:googlegemini', color: '' },
-  antigravity: { icon: 'simple-icons:google', color: '' },
+  // R6（10-11-island-tri-fix）：9 个无色 mark 各定品牌色，贴官方优先、不撞现有 8 色
+  // （#12B76A/#D97757/#4D6BFE/#3859FF/#7C5CFF/#E23B5C/#615CED/#1664FF）。
+  // 官方黑标（OpenAI #000000 / GitHub #181717 / Cursor 黑）在 #0b0b0d 深黑盘上不可见，
+  // 一律取其深色版（白 / Copilot 紫 / Cursor 橙）；蓝紫 Reds 拥挤处按下述距离选。
+  // 全对最小距离 43（openrouter slate vs generic 灰，形态不同），现有蓝簇已有 28
+  // （deepseek #4D6BFE vs 智谱 #3859FF）先例在先，此集实际更疏。
+  // codex/openai-billing 同取 #FFFFFF：同一 OpenAI 结图标同源一致（siliconflow-intl
+  // 同 #7C5CFF 先例），不算撞车。
+  codex: { icon: 'simple-icons:openai', color: '#FFFFFF' }, // OpenAI 深色版白（官方黑 #000000 压深盘不可见；原型 openai-billing #fff 先例）
+  copilot: { icon: 'simple-icons:githubcopilot', color: '#8534F3' }, // GitHub Copilot Purple 官方（brand.github.com；vs 硅基紫 43，形态不同）
+  cursor: { icon: 'simple-icons:cursor', color: '#F54E00' }, // Cursor 橙官方（brandfetch cursor.com；与等级 warn #ff9f0a 不同通道，见 island.css）
+  gemini: { icon: 'simple-icons:googlegemini', color: '#8AB4F8' }, // Google Material Blue 200（Gemini 蓝 #4285F4 的深色版；原型 #4e8df5 距 deepseek 仅 35，提亮拉开到 89+）
+  antigravity: { icon: 'simple-icons:google', color: '#FBBC04' }, // Google G 黄（四色取黄：蓝撞 gemini/volc、红距 MiniMax 仅 40、绿距 opencode 仅 44）
   deepseek: { icon: 'simple-icons:deepseek', color: '#4D6BFE' },
-  kimi: { icon: 'simple-icons:moonshotai', color: '' },
+  kimi: { icon: 'simple-icons:moonshotai', color: '#00A1FF' }, // Kimi 签名蓝（kimi.ai brand book；#007CFF 备选距火山 33，取浅一档拉到 65）
   zhipu: { icon: 'thesvg:zhipu', color: '#3859FF' },
   siliconflow: { icon: 'thesvg:siliconcloud-siliconflow', color: '#7C5CFF' },
   minimax: { icon: 'simple-icons:minimax', color: '#E23B5C' },
   qwen: { icon: 'simple-icons:qwen', color: '#615CED' },
   volc: { icon: 'thesvg:volcengine', color: '#1664FF' },
   // 自定义协议
-  'openrouter': { icon: 'simple-icons:openrouter', color: '' },
-  'openai-billing': { icon: 'simple-icons:openai', color: '' },
+  'openrouter': { icon: 'simple-icons:openrouter', color: '#94A3B8' }, // simple-icons 官方 slate（favicon 验证，issue #12846；vs generic 灰 43，形态不同）
+  'openai-billing': { icon: 'simple-icons:openai', color: '#FFFFFF' }, // 与 codex 同源一致（同图标同色，不算撞车）
   'siliconflow-intl': { icon: 'thesvg:siliconcloud-siliconflow', color: '#7C5CFF' },
-  generic: { icon: 'lucide:plug', color: '' }
+  generic: { icon: 'lucide:plug', color: '#8E8E93' }, // Apple 系统灰（无品牌 fallback；距缺失灰 #636366 有 76，不会误读成缺失）
 }
 
 async function fetchIcon(name) {
