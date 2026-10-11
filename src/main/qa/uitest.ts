@@ -15,7 +15,7 @@ import { ISLAND_VIEW } from '../../shared/pet-view'
 // R3（10-10-island-mini-tune）：隐藏态命中区即渲染层实测矩形，主进程零覆盖 ——
 // 不再经 shared/dock-hide 取 pill 常数（MINI_PILL_* 已删除，几何只活在 island.css）。
 import { refreshNow } from '../scheduler'
-import { defaultWaterAnchors, parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
+import { parseCssColor, rgbStr } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
 
 export async function runUiTest(
@@ -1122,10 +1122,15 @@ export async function runUiTest(
       islWhy = `fail:bal-amount=${d.combos.find((c) => c.kind === 'balance')?.amount}（余额家应显示金额而非环）`
     } else if (!(d.w > 0 && d.w <= 560)) islWhy = `fail:island-w=${d.w}（岛宽自适应，上限 560）`
     else {
-      // 环色与渲染层同源（shared/water-color，不手写第二份公式）：i1 两窗 70/41
+      // 环色与渲染层同源（IslandView.tsx RING_FIXED，外→内固定彩虹，不跟 waterColor/等级）：
+      // i1 两窗 70/41 → slot0 青 #22d3ee、slot1 紫 #a78bfa；hex 经 shared/water-color
+      // 的 parseCssColor + rgbStr 归一化后再比（computed stroke 回的是 rgb() 串，
+      // 不手写第二份换算公式；RING_FIXED 本体在渲染层，uitest 只做对照）。
       const i1 = d.combos.find((c) => c.id === 'fix-i1')
-      const anchors = defaultWaterAnchors()
-      const want = [70, 41].map((pct) => waterColor(pct, anchors).replace(/\s+/g, ''))
+      const want = ['#22d3ee', '#a78bfa'].map((hex) => {
+        const rgb = parseCssColor(hex)
+        return rgb ? rgbStr(rgb).replace(/\s+/g, '') : hex
+      })
       const got = (i1?.strokes ?? []).slice(1, 3).map((s) => (s || '').replace(/\s+/g, ''))
       if (i1?.rings !== 3) islWhy = `fail:i1-rings=${i1?.rings}（底圈 + 2 窗）`
       else if (got.join('|') !== want.join('|')) islWhy = `fail:ring-color got=${got.join('|')} want=${want.join('|')}`

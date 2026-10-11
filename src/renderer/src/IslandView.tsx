@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderInfo, ProviderSnapshot, ProviderWindow } from '../../shared/types'
 import { ISLAND_VIEW, clampIslandPos } from '../../shared/pet-view'
 import { isPlan } from '../../shared/quality'
-import { defaultWaterAnchors, resolveWaterAnchors, waterColor, type WaterAnchors } from '../../shared/water-color'
 import { shortWindowLabel } from '../../shared/tray-text'
 import { orderForDisplay, snapshotLevel, windowLevel, worstWindow } from './read-model'
 import { Bar } from './components'
@@ -30,8 +29,8 @@ import {
 //     A 式 mini-pill（窄条 + 各家等级点，顶部原位收缩）；唤出 = 点击 pill。
 //   · 位置：顶栏内左右拖动（岛身，落盘 `ui:islandX` 0..1 中心比例，与 `ui:*` 偏好同机制）；
 //     岛边缘 rim / 命中层空白拖 = 主进程窗口拖拽（R7 拖拽分区，CLICK_SLOP 内算点击）；
-//     容器深黑独立文件不跟换皮，嵌套环色跟皮肤水色锚点（`.app` 计算样式 +
-//     data-skin 监听，与 PetBall 同路；等级点保持语义色）。
+//     容器深黑独立文件不跟换皮，嵌套环色为固定彩虹（外→内窗口序号，
+//     与皮肤/等级无关；等级点保持语义色）。
 //
 // 单文件命名导出、无 children、返回 React.JSX.Element；>5 props 用具名接口。
 // 命中测试走主进程 `pet:hitbox`，渲染层只报几何；控件用 `title` 不用 aria。
@@ -66,23 +65,6 @@ const EDGE_PX = 10
 /** 命中分区：'body' = 岛身（调 posX），'edge' = 边缘/空白（主进程移窗） */
 type DragZone = 'body' | 'edge'
 
-/**
- * 读当前皮肤的水色锚点（与 PetBall.readWaterAnchors 同一路胶水，shared 不碰 DOM）。
- * 令牌落在 `.app` 上，不在 body（写错位置会形成继承屏障，读到 :root 旧值）；
- * 读不到/解析失败 → 缺省三色：环退化成"阈值处仍对"的静态色，不断裂；
- * 缺失值（pct == null）仍走灰环 `#636366` + `--`，与锚点无关。
- */
-function readWaterAnchors(): WaterAnchors {
-  try {
-    const app = document.querySelector('.app')
-    if (!app) return defaultWaterAnchors()
-    const cs = getComputedStyle(app)
-    return resolveWaterAnchors((n) => cs.getPropertyValue(n)) ?? defaultWaterAnchors()
-  } catch {
-    return defaultWaterAnchors()
-  }
-}
-
 export interface IslandViewProps {
   /** 全部快照（App state.snapshots；可见口径 = 启用实例，见 ordered） */
   snapshots: ProviderSnapshot[]
@@ -107,20 +89,19 @@ export interface IslandViewProps {
   onConfirmAlert?: () => void
 }
 
+/** 嵌套用量环固定彩虹三色（10-11-island-tri-fix R1 修订：取代等级语义）：
+ * 外→内按窗口序号固定 —— 青/紫/粉系，黑底高对比；不再跟 waterColor/等级。
+ * 等级语义由岛辉光（worstLevel）、图例点、环心百分比承载。
+ * 缺失值（pct == null）仍灰 `#636366` + 无辉光（CSS 以 data-lvl='muted' 排除）。
+ * data-lvl 属性保留，供图例/辉光以外的语义消费，环色不再读它。 */
+const RING_FIXED = ['#22d3ee', '#a78bfa', '#f472b6']
+
 /** 嵌套用量环：外→内 = windows[0..2]，最多 3 环；无可比窗口时灰环 `--` */
 function NestedRings({ s, size = RING_COLLAPSED }: { s: ProviderSnapshot; size?: number }): React.JSX.Element {
   const wins = s.windows.slice(0, 3)
-  // 实时皮肤水色锚点（10-10-island-fixes R3，与 PetBall.readWaterAnchors 同路：
-  // 令牌落在 `.app` 上 + data-skin MutationObserver；读不到 → 缺省三色。
-  // 等级点（isl-dot）保持语义 lvl-* 色，不走这里；容器深黑不动。）
-  const [anchors, setAnchors] = useState<WaterAnchors>(() => readWaterAnchors())
-  useEffect(() => {
-    const app = document.querySelector('.app')
-    if (!app) return
-    const mo = new MutationObserver(() => setAnchors(readWaterAnchors()))
-    mo.observe(app, { attributes: true, attributeFilter: ['data-skin'] })
-    return () => mo.disconnect()
-  }, [])
+  // R1 修订：环色只认窗口序号（RING_FIXED），不读皮肤锚点/等级 —— 此前
+  // readWaterAnchors + waterColor(p, anchors) 跟等级走，与「固定彩虹」决策冲突，
+  // 已删除；data-lvl 保留仅作语义探针，辉光按 data-slot 走（见 island.css）。
   const pcts = wins.map((w) => windowPercent(w))
   const lvls = wins.map((w) => levelOfPercent(windowPercent(w), s.status))
   // 半径/线宽档：外→内逐层收，几何只在 RING_GEO（收起 36 与展开 40 共用，只换画布尺寸）
@@ -138,12 +119,16 @@ function NestedRings({ s, size = RING_COLLAPSED }: { s: ProviderSnapshot; size?:
         cy={c}
         r={RING_GEO.radii[0]}
         fill="none"
-        stroke="rgba(255,255,255,0.14)"
+        // 轨道提亮（10-11-island-tri-fix R1，高调靓丽）：原型口径 #333 系
+        // （prototype/dynamic-island-demo.html:128 ringSVG stroke="#333" /
+        // :162 nestedRingsSVG stroke="#2c2c2e"）；此前 rgba(255,255,255,0.14)
+        // 在深黑底上对比不足。几何/线宽不动，只动这一笔颜色。
+        stroke="#333"
         strokeWidth={RING_GEO.strokes[0]}
       />
       {pcts.map((p, i) => {
         const lvl = lvls[i] ?? 'muted'
-        const stroke = p == null ? '#636366' : waterColor(p, anchors)
+        const stroke = p == null ? '#636366' : (RING_FIXED[i] ?? RING_FIXED[0])
         return (
           <circle
             key={i}
@@ -158,6 +143,7 @@ function NestedRings({ s, size = RING_COLLAPSED }: { s: ProviderSnapshot; size?:
             strokeDasharray={`${p == null ? 0 : Math.min(100, Math.max(0, p)).toFixed(2)} 100`}
             transform={`rotate(-90 ${c} ${c})`}
             data-lvl={lvl}
+            data-slot={i}
           />
         )
       })}
@@ -199,6 +185,8 @@ export function IslandView({
 }: IslandViewProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  /** 确认条本体：命中区必须并进它才算点得动（R2，与 PetBall.confirmRef 同路） */
+  const confirmRef = useRef<HTMLDivElement | null>(null)
   const press = useRef({
     down: false,
     moved: false,
@@ -284,31 +272,57 @@ export function IslandView({
   }, [open, posX, ordered.length])
 
   // 点击穿透：把岛 / pill / 展开卡的实测矩形报给主进程（窗口其余区域穿透到桌面）
+  // R2 确认条并入（与 PetBall.tsx:311-330 的 union 同路）：确认条是 .isl-body 的
+  // 兄弟节点（top:70px），只报 body 会让「好的」画得出点不到；可见
+  // （offsetHeight>0）时与 body 矩形求并集上报，平时不加死区；notice 纯装饰不并入。
+  // R3 去静默早退：量不到时报兜底顶条而非 return，否则一次布局抖动就让 hitbox
+  // 永久陈旧，长时运行后可见岛也点穿。
   const reportHit = useCallback(() => {
     const host = hostRef.current
     const hw = host?.clientWidth || ISLAND_VIEW.width
     const hh = host?.clientHeight || ISLAND_VIEW.height
+    const fallback = { x: 0, y: 0, width: hw, height: Math.min(hh, 60) }
     const el = bodyRef.current
     if (!el || !host) {
-      window.api.setPetHitbox({ x: 0, y: 0, width: hw, height: Math.min(hh, 60) })
+      window.api.setPetHitbox(fallback)
       return
     }
     const cb = el.getBoundingClientRect()
     const hb = host.getBoundingClientRect()
-    if (cb.width <= 0 || hb.width <= 0) return
-    window.api.setPetHitbox({
+    if (cb.width <= 0 || hb.width <= 0) {
+      window.api.setPetHitbox(fallback)
+      return
+    }
+    let box = {
       x: cb.left - hb.left,
       y: cb.top - hb.top,
       width: cb.width,
       height: cb.height
-    })
+    }
+    const c = confirmRef.current
+    if (c && c.offsetHeight > 0) {
+      const cc = c.getBoundingClientRect()
+      if (cc.width > 0 && cc.height > 0) {
+        const o = { x: cc.left - hb.left, y: cc.top - hb.top, width: cc.width, height: cc.height }
+        const x = Math.min(box.x, o.x)
+        const y = Math.min(box.y, o.y)
+        box = {
+          x,
+          y,
+          width: Math.max(box.x + box.width, o.x + o.width) - x,
+          height: Math.max(box.y + box.height, o.y + o.height) - y
+        }
+      }
+    }
+    window.api.setPetHitbox(box)
   }, [])
 
   useEffect(() => {
     reportHit()
     const t = window.setInterval(reportHit, 90)
     return () => window.clearInterval(t)
-  }, [reportHit, open, posX, dockHidden, ordered.length])
+    // alertText/notice：确认条出现/消失即刷一次命中区，不等 90ms 轮询
+  }, [reportHit, open, posX, dockHidden, ordered.length, alertText, notice])
 
   // 兜底：指针在窗口外抬起时复位按下态（否则残留态会让移动鼠标 = 拖岛）
   useEffect(() => {
@@ -581,7 +595,7 @@ export function IslandView({
       ) : null}
       {!dockHidden && alertText ? (
         // 确认条是气泡的兄弟节点（.isl-bubble 是 aria-hidden 纯装饰，交互元素不许藏进去）
-        <div className="isl-confirm" role="status">
+        <div className="isl-confirm" role="status" ref={confirmRef}>
           <span className="isl-confirm-text">{alertText}</span>
           <span className="isl-confirm-foot">
             <span className="isl-confirm-eta" aria-hidden="true">

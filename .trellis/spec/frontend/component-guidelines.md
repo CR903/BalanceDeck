@@ -205,6 +205,22 @@ There is no ARIA layer, and the reason is architectural, not negligence: this is
 explicitly typed `onClick`. Do not introduce `role`/`aria-*` expecting it to change behaviour —
 it will not, because the window is mouse-transparent by default.
 
+**When adding a visible interactive overlay (confirm bubble, notice, popover):** union its rect
+into the reported hitbox, and only while it is visible — otherwise it is "drawn but not
+clickable" (OS clips clicks to the reported rect), and unconditionally including it leaves a
+dead zone on the desktop when hidden:
+
+```tsx
+// src/renderer/src/IslandView.tsx — confirmRef union, mirroring PetBall.tsx:311-330
+const c = confirmRef.current
+if (c && c.offsetHeight > 0 /* visible gate */ && host) { /* min/max union with body rect */ }
+```
+
+**Never leave a stale hitbox on measure failure.** If the body ref is missing or measures
+zero, report a fallback (e.g. the top strip) instead of silently returning — one skipped frame
+otherwise freezes `hitbox` forever and the visible island becomes permanently click-through
+(2026-10-11 island-tri-fix R3).
+
 ---
 
 ## Common Mistakes
