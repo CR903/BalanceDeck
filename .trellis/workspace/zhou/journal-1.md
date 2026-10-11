@@ -418,3 +418,42 @@ R1环色回归原型/R2确认可点/R3去静默早退/R4锁顶+中间段/R5 open
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: opencode 详情页对齐新版官网：窗口序列视图与余额
+<!-- trellis-session: v=2 fp=fc7b6f62955ce489 -->
+
+**Date**: 2026-10-11
+**Task**: opencode 详情页对齐新版官网：窗口序列视图与余额
+**Branch**: `main`
+
+### Summary
+
+研究新版控制台接口（cost-by-day/since/startsAt/billing）→ 窗口起点用官方 startsAt、三窗口含 5h 明细、趋势改窗口驱动序列视图、5h 每模型用量、接入额外额度；退役日历热力图；全门禁绿并归档
+
+### Main Changes
+
+- opencode-console-api/cookie：新增 cost-by-day 常量、parseGoStatus 消费 startsAt（month 回落 access.startsAt）
+- opencode-details：parseCostByDay + 三档 models/cost-by-day；modelsByWindowOf/seriesByWindowOf 纯函数（空数组保留 key）
+- opencode 适配器：modelsByWindow 三窗口 + seriesByWindow + billing→extraCredit；自愈 cookie 同源
+- TrendChart 重写为窗口驱动序列视图（删 7/30 切换）；DetailView 接线序列 + 余额块；退役 usageHeatmap
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c082501` | feat(detail): opencode 详情页对齐新版官网数据与窗口序列视图 |
+
+### Testing
+
+- [OK] npm run typecheck ✓；npm run test 全绿（EXIT=0，ssr113/series-view47/structure461/adapters532）
+- [OK] 护栏自证：删余额块→series-view 4 红；空数组改 length→ssr 3 红；去 rolling→4 红
+- [OK] npx electron . --uitest 实机无 fail（consoleErrors/execErrors none）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- N4/N5/N6 低优先：F3 请求列护栏、AC4 表头措辞、全空窗口提示路径

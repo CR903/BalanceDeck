@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-10-11
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~420 | Active |
+| `journal-1.md` | ~459 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-10-11 | opencode 详情页对齐新版官网：窗口序列视图与余额 | `c082501` | `main` |
 | 13 | 2026-10-11 | 岛展开面板点进详情归档 | `4b7bb22` | `main` |
 | 12 | 2026-10-11 | 灵动岛六修落地归档 | `1482557`, `68dcb8d`, `28299be`, `4ae35e4` | `main` |
 | 11 | 2026-10-08 | 补记 journal 欠账 + 5n 柱区像素对拍结案 + spec 共享门控条目 | `133f5c5`, `6eeb9cc`, `62ca2f5` | `main` |
