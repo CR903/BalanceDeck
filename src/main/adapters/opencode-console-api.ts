@@ -71,10 +71,14 @@ export const METER_FIELDS = {
 export const PERIOD_END_RESET_FIELDS: ReadonlySet<string> = new Set(['month'])
 
 /**
- * `usage/models` 的 range → 窗口的**自然对齐档**。
+ * 周/月窗口对应的 `usage/models` / `usage/cost-by-day` range。
  *
- * ⚠️ `rolling` **不在这张表里**，它单独用 `MODELS_RANGE_ROLLING` + `since` 对齐
- *    （见下）。range 只是端点的校验参数，真正的窗口起点由 `since` 决定。
+ * ⚠️ 周/月**不带 `since`**：`since` 走服务端约 48h 的短期数据路径，超过保留期的
+ *    起点会被静默钳制到最近约 2 天（2026-10-11 live 实测）。所以周/月只用 range
+ *    取完整日聚合，再由客户端裁到窗口边界（`seriesByWindowOf`）。range 在这里
+ *    就是「整周 / 整月」的口径。
+ *
+ * `rolling` **不在这张表里**，它单独用 `MODELS_RANGE_ROLLING` + `since` 对齐（见下）。
  */
 export const MODELS_RANGES = {
   weekly: '7d',
@@ -84,9 +88,13 @@ export const MODELS_RANGES = {
 /**
  * rolling（5 小时）窗口的 range。
  *
- * 端点最小 range 是 `24h`，但 `since` 参数**覆盖 range 起点**（2026-10-11 live 实测：
- * `range=24h&since=5h前` ≡ `range=7d&since=5h前`）。因此
- * `usage/models?range=24h&since=<fiveHour.startsAt>` 能精确裁到 5 小时窗口。
+ * 端点最小 range 是 `24h`；`since` 参数让服务端从该起点开始返回
+ * （2026-10-11 live 实测：`range=24h&since=5h前` ≡ `range=7d&since=5h前`）。
+ * 因此 `usage/models?range=24h&since=<fiveHour.startsAt>` 能精确裁到 5 小时窗口。
+ *
+ * ⚠️ **`since` 只在窗口落在服务端约 48h 保留期内时有效**（5 小时窗口恰好落在里面）；
+ *    周/月窗口起点远超保留期，带 `since` 反而被钳制到最近 2 天 —— 所以只有 rolling
+ *    用它（见 `MODELS_RANGES` 与 `opencode-details.ts` 文件头）。
  *
  * ⚠️ 这**推翻**了旧结论「5 小时窗口拿不到明细、故意不映射 rolling」——
  *    那时的理由是「range 最小 24h，口径对不上」；`since` 生效后该理由不再成立。
@@ -112,10 +120,11 @@ export const USAGE_MODELS_PATH = '/api/usage/models'
 /**
  * 按天/按小时的成本时序 —— **趋势区的官方数据源**（2026-10-11 新增）。
  *
- * `GET /console/api/usage/cost-by-day?range=<…>&bucket=hour|day&since=<ISO>`
+ * `GET /console/api/usage/cost-by-day?range=<…>&bucket=hour|day[&since=<ISO>]`
  * → `[{ date, totalCostMicroCents, totalTokens, totalRequests }]`
  * · `date` 为 **UTC 整点/整日**（小时桶如 `2026-10-11T04:00:00Z`，日桶为当日 00:00Z）
- * · `since` 覆盖 range 起点（与 models 同一语义）
+ * · `since` 从该起点开始返回，但**只对落在约 48h 保留期内的窗口有效**（5 小时）；
+ *   周/月不带 `since`，用 range 全量 + 客户端裁到窗口（见 `MODELS_RANGES`）
  */
 export const USAGE_COST_BY_DAY_PATH = '/api/usage/cost-by-day'
 

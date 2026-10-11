@@ -12,18 +12,43 @@
 - 周窗口会偏（`now - 7d` ≠ 自然周的周一 0:00）；
 - 「5 小时窗口没有明细」会变成一条看似合理的限制，其实只是没找对参数。
 
-**做法**：`go/status` 的每个 meter 都带 `startsAt`（`month` 用 `access.startsAt`），
-把它作为 `since` 传给明细/时序端点，且**进缓存键**（窗口每 5 小时滚动一次，
-键里没有起点就会拿到上一个窗口的数据）。缺 `startsAt` 时才用
-`resetAt - WINDOW_SPANS[kind]` 反推兜底（`windowStartIso`）。
+**做法（2026-10-11 保留期纠错后）**：
+
+- `go/status` 的每个 meter 都带 `startsAt`（`month` 用 `access.startsAt`），且**进缓存键**
+  （5 小时窗口每 5 小时滚动一次，键里没有起点就会拿到上一个窗口的数据）。
+- **`since` 只在窗口落在服务端约 48h 保留期内时可用** —— 只有 5 小时窗口满足：
+  rolling 用 `range=24h&bucket=hour&since=<fiveHour.startsAt>`。
+- **周/月不带 `since`**：带任意旧起点都会被服务端**静默钳制到最近约 2 天**
+  （实测 `range=7d&since=10-05` ≡ `since=10-09`；不带 `since` 才返回完整 7 天）。
+  改用 `range=7d|30d&bucket=day` 取全量日聚合，再由 `seriesByWindowOf` **客户端裁到
+  `[startAt, resetAt)`**（见 §1.1）。
+- 缺 `startsAt` 时才用 `resetAt - WINDOW_SPANS[kind]` 反推兜底（`windowStartIso`）。
 
 ⚠️ **校准（2026-10-11 实测纠错）**：`resetAt - span` 反推**不会偏** ——
 `week.startsAt → resetsAt` 恰好 7 天，反推结果与官方起点逐毫秒相同。会偏的是
 `now - 7d`。本仓库上一版知识页把这两者写混了，据此写下「周窗口不能反推」是**错**的；
 正确表述是「官方 `startsAt` 是权威，反推只是缺字段时的兜底」。
 
-新站实测：`since` **覆盖** `range` 起点 ——
-`range=24h&since=5h前` ≡ `range=7d&since=5h前`。这才是「5 小时窗口明细」可行的原因。
+### 1.1 裁剪口径：保留与窗口**相交**的桶
+
+`cost-by-day` 的桶按 UTC **整点/整日向下取整**，所以窗口第一个桶可能早于 `startAt`
+（rolling 小时桶最多早 59 分钟；month 的订阅起点是 `access.startsAt` 这种非整日时刻，
+首日桶可能早将近一天）。若按「桶起点 `>= startAt`」裁，会把这**第一个不完整桶整只丢掉**，
+于是时序求和 < meter 的已用量 —— 正是本项目最忌讳的「口径不一致」。
+
+```ts
+// 保留与窗口相交的桶：桶起点 + 桶宽 > lower && 桶起点 < upper
+// lower = startAt ?? resetAt - spanMs；upper = resetAt ?? +∞
+return buckets.filter((b) => t + span > lower && t < upper)
+```
+
+代价：首桶可能含极少量窗口外用量（≤ 一个桶宽）。**不会**把对齐窗口的前一整桶带进来 ——
+自然周对齐时（`startAt` = 周一 00:00）前驱桶的末端恰好等于 `startAt`，不含在相交内。
+口径由 `test-ssr-parser.mjs` M 段钉住（弄坏裁剪 → 5 条断言变红）。
+
+⚠️ **序列求和 ≠ meter 已用量**（同轮 live 实测）：5 小时逐分一致，但本周 Σ 比 meter 低约 3.6%、
+本月低约 14%（服务端 `cost-by-day` 有空洞，如缺 `09-25`）。**不要用序列求和反推百分比**，
+百分比一律以 `go/status` 的 meter 为权威；趋势只画形状与逐桶数值。
 
 ## 2. 回退判据：key 缺失 vs 空数组是两回事
 
@@ -40,7 +65,8 @@
 ```ts
 // opencode-details.ts — 空数组保留 key（`if (rows)`，不是 `if (rows.length)`）
 modelsByWindowOf(details, windowNames)   // 三窗口都要有，含 5 小时
-seriesByWindowOf(details, windowNames)
+seriesByWindowOf(details, windows)       // windows: {kind,name,startAt?,resetAt?,spanMs}[]
+                                         // 额外把每个窗口的桶裁到 [startAt, resetAt)（§1.1）
 ```
 
 ⚠️ 把 `if (rows)` 写成 `if (rows.length)` 就把「官方确认该窗口无已用模型」压成了

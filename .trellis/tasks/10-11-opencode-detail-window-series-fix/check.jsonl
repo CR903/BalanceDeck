@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-11-opencode-detail-window-series-fix/prd.md", "reason": "AC1-AC6 逐条核对"}
+{"file": ".trellis/tasks/10-11-opencode-detail-window-series-fix/design.md", "reason": "契约更正是否被忠实落地（映射表/裁剪/空数组契约）"}
+{"file": ".trellis/tasks/10-11-opencode-detail-window-series-fix/research/since-retention.md", "reason": "核对实现与实测口径一致（5h 用 since、周月不带 since + 裁剪）"}
+{"file": ".trellis/spec/adapters/opencode-console.md", "reason": "spec 是否已同步更正且无残留旧说法"}

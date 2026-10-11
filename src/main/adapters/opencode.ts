@@ -37,8 +37,9 @@ import type { ConsoleModelRow, ConsoleDetails, ConsoleWindowStarts } from '../op
 //         解析已失效；新端点由「打开真实 Go 页观测它调了谁」定位（不是从 bundle 声明猜的
 //         —— `/console/api/usage/summary` 也在声明里，但那是**用量聚合**，没有窗口百分比）。
 //         好处：限额由服务端下发，已用量是精确值。
-//      → 每模型明细：GET /console/api/usage/models?since=<窗口起点>（tokens 也来自服务端，
-//         多设备不再漏）；用量时序：GET /console/api/usage/cost-by-day?bucket=hour|day&since=…
+//      → 每模型明细：GET /console/api/usage/models（5 小时带 since，周/月 range 全量；
+//         tokens 也来自服务端，多设备不再漏）；用量时序：GET /console/api/usage/cost-by-day
+//         （5 小时 hour+since，周/月 day 全量 + 客户端裁到窗口）
 //      → 额外可用额度：GET /console/api/billing/status（balance/availableMicroCents）
 //   ③ 本机 opencode.db → cost + tokens 明细（仅本机，多设备不全）
 //
@@ -46,8 +47,10 @@ import type { ConsoleModelRow, ConsoleDetails, ConsoleWindowStarts } from '../op
 //   - 百分比 + 重置时间永远以官方为准（API 或 cookie），不用本机推算
 //   - 窗口边界用官方 `meters.*.startsAt/resetsAt`（2026-10-11 起官网下发）；
 //     拿不到时才用 `resetsAt - span` 反推。**周窗口是自然周对齐**，反推会偏。
-//   - 每窗口的模型明细与用量时序用 `since = 该窗口 startsAt` 抓，保证与百分比
-//     落在**同一个窗口**（R1：不再跨窗口串数据）
+//   - 每窗口的模型明细与用量时序要落在**同一个窗口**（R1：不再跨窗口串数据）：
+//     `since` 只对**窗口落在服务端 ~48h 保留期内**的场景有效（5 小时）；周/月带旧
+//     `since` 会被钳制到最近 2 天，所以它们用 range 取全量，再由 `seriesByWindowOf`
+//     客户端裁到窗口边界。详见 `opencode-details.ts` 文件头。
 //   - 官方不可用时才退回本机 block 算法，且明确标注"本机估算"
 //   - 限额优先用控制台 `go/status` 下发的 `limitMicroCents`；只有拿不到时才用下面的
 //     `LOCAL_LIMITS` 兜底（2026-09-26 起服务端才是权威，硬编码只是保底）
@@ -835,8 +838,8 @@ export const opencodeAdapter: ProviderAdapter = {
     if (apiUsage || cookie) {
       const windows = officialWindows(apiUsage, cookie, local, nowMs)
 
-      // 分窗口的每模型明细（控制台口径）。三窗口都有 —— rolling 靠 `since` 对齐
-      // （2026-10-11 起，旧的「5 小时无明细」限制已被 `since` 推翻）。
+      // 分窗口的每模型明细（控制台口径）。三窗口都有 —— rolling 靠 `since` 精确对齐
+      // 5 小时窗口，周/月用 range 全量（`models?range=7d|30d`，整周/整月口径）。
       // key 语义（与 spec 一致）：**key 存在 = 官方确认（空数组也算「无已用模型」）；
       // key 不存在 = 该窗口抓取失败**。映射抽成纯函数，三条契约有单测钉住。
       const modelsByWindow: Record<string, ProviderModelRow[]> = {}
@@ -848,9 +851,23 @@ export const opencodeAdapter: ProviderAdapter = {
         : null
 
       // 分窗口用量时序（官方 cost-by-day 口径，趋势区数据源）。
+      // 周/月序列是 range 全量日聚合（不带 `since`），**必须客户端裁到窗口** ——
+      // 否则会把窗口外的桶带出去，趋势与 meter 口径不一致（见 `seriesByWindowOf`）。
       // 空数组**要保留**：它表示「官方确认该窗口无用量」，与「抓取失败（key 缺失）」
       // 是两回事 —— 后者渲染层退回本机历史并标注「本机估算」。
-      const seriesByWindow = seriesByWindowOf(consoleDetails, WINDOW_NAMES)
+      const seriesByWindow = seriesByWindowOf(
+        consoleDetails,
+        (['rolling', 'weekly', 'monthly'] as UsageWindowKind[]).map((kind) => {
+          const w = windows.find((x) => x.name === WINDOW_NAMES[kind])
+          return {
+            kind,
+            name: WINDOW_NAMES[kind],
+            startAt: w?.startAt,
+            resetAt: w?.resetAt,
+            spanMs: WINDOW_SPANS[kind]
+          }
+        })
+      )
 
       // 额外可用额度（billing/status，只读）。官方不可达时不产出 → 渲染层整块不显示。
       // ⚠️ 用 `activeCookie`（自愈后是实时 cookie），与明细同源 —— 用旧 cookie 会拿 401。

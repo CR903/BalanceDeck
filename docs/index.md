@@ -27,3 +27,4 @@
 | 2026-10-11 | [灵动岛六修（复检 pass，截图交付）](daily/2026-10-11_island-tri-fix.md) | `10-11-island-tri-fix` |
 | 2026-10-11 | [展开面板点进详情（复检 pass）](daily/2026-10-11_island-open-to-detail.md) | `10-11-island-open-to-detail` |
 | 2026-10-11 | [opencode 详情页 v2：官网数据对齐与用量视图重构](daily/2026-10-11_opencode-detail-v2-sync.md) | `10-11-opencode-detail-v2-sync` |
+| 2026-10-11 | [opencode 周/月序列与模型受 since 保留期限制修复](daily/2026-10-11_opencode-detail-window-series-fix.md) | `10-11-opencode-detail-window-series-fix` |

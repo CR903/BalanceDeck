@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-11-opencode-detail-window-series-fix/research/since-retention.md", "reason": "since 保留期限制的 live 实测证据与正确用法，修复必读"}
+{"file": ".trellis/tasks/10-11-opencode-detail-window-series-fix/design.md", "reason": "契约更正与窗口→请求映射、裁剪点"}
+{"file": ".trellis/spec/adapters/opencode-console.md", "reason": "控制台集成契约；本任务要更正其中 since 语义"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "纯函数签名/IPC 边界类型复验"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "适配器层索引与纪律"}

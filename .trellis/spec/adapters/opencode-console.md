@@ -32,8 +32,8 @@ ORG_ID_HEADER         // 'x-org-id'
 USAGE_UNIT_SCALE      // 1e8  → 1 USD = 1e8 microcents
 METER_FIELDS          // { fiveHour:'rolling', week:'weekly', month:'monthly' }
 PERIOD_END_RESET_FIELDS // Set(['month'])   ← month 的 reset 回落 endsAt、start 回落 access.startsAt
-MODELS_RANGES         // { weekly:'7d', monthly:'30d' }  ← 自然对齐档
-MODELS_RANGE_ROLLING  // '24h'  ← rolling 用 range=24h + since=<fiveHour.startsAt> 对齐（**不再**「故意不映射」）
+MODELS_RANGES         // { weekly:'7d', monthly:'30d' }  ← 周/月用 range 全量，**不带 since**
+MODELS_RANGE_ROLLING  // '24h'  ← 仅 rolling 用 range=24h + since=<fiveHour.startsAt> 对齐
 COST_BUCKETS          // { hour:'hour', day:'day' }  → COST_BUCKETS: 窗口 rolling=hour，周/月=day
 MODELS_PAGE_SIZE      // 50
 
@@ -58,7 +58,12 @@ windowStartIso(raw, kind, nowMs): string | undefined      // 官方 startsAt 优
 parseModelsResponse(body: unknown): ConsoleModelRow[]
 parseCostByDay(body: unknown, bucket: CostBucket): UsageBucket[]   // 升序；容忍未知键/坏行；**缺金额 → 跳过该桶**
 modelsByWindowOf(details, windowNames): Record<string, ConsoleModelRow[]>   // 纯映射；空数组保留、缺失不产出
-seriesByWindowOf(details, windowNames): Record<string, UsageBucket[]>       // 同上
+modelsRequestOf(kind, starts): { range; since? } | null            // 窗口 → models 请求口径（纯函数）
+seriesRequestOf(kind, starts): { range; bucket; since? } | null    // 窗口 → cost-by-day 请求口径（纯函数）
+seriesByWindowOf(details, windows: SeriesWindowBound[]): Record<string, UsageBucket[]>
+//   纯映射 + **裁到窗口**：`windows` 逐项 `{kind,name,startAt?,resetAt?,spanMs}`；
+//   保留与 `[startAt, resetAt)` 相交的桶（`startAt` 缺 → `resetAt - spanMs` 反推）；
+//   空数组保留 key、缺失不产出 key（契约同 modelsByWindowOf）
 fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | null
 //   ConsoleDetails = { models?: Partial<Record<'rolling'|'weekly'|'monthly', ConsoleModelRow[]>>
 //                      series?: Partial<Record<'rolling'|'weekly'|'monthly', UsageBucket[]>> }
@@ -113,7 +118,7 @@ fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | 
   而 `access` 是周日 09-21 开的 —— 两者锚定方式不同，不能推广。
 - **每个 meter 现在都带 `startsAt`（窗口起点）**（2026-10-11 新增实测）。
   起点优先取 `meter.startsAt`；`month` 没有 → 回落 `access.startsAt`（与 reset 同一组字段）。
-  下游用它做 `since` 与趋势/明细裁剪；缺失时才用 `resetAt - WINDOW_SPANS[kind]` 反推兜底
+  下游用它做 `since`（仅 rolling）与趋势**裁剪到窗口**；缺失时才用 `resetAt - WINDOW_SPANS[kind]` 反推兜底
   （`windowStartIso`）。
   ⚠️ **官方优先不等于「反推会偏」**：实测 `week.startsAt → resetsAt` 恰好 7 天，
   `resetAt - 7d` **精确等于**起点。会偏的是 `now - 7d`（那假设窗口是滚动 7 天，
@@ -141,11 +146,14 @@ fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | 
 - `tokens` = input + output + cacheRead + cacheWrite5m + cacheWrite1h，**服务端口径**
 - ⚠️ **没有 per-model 的 `quota` / `percent`**。旧 DOM 版能从表头读到，新接口没有。
   这两个字段已从 `ConsoleModelRow` **删除**（不是填 0）—— 填 0 会渲染成「$0 / 0%」
-- ✅ **三窗口都有明细**（2026-10-11 起）：请求带 `since=<该窗口 startsAt>`（**覆盖 range 起点**，
-  live 实测 `range=24h&since=5h前` ≡ `range=7d&since=5h前`）。
-  rolling 用 `range=24h&since=<fiveHour.startsAt>` —— 这推翻了 v1 的
-  「5 小时没有明细是正确行为」（当时 range 最小 24h，没有 `since`）。
-  **但口径纪律不变：rolling 的 `since` 必须是官方 `startsAt`，绝不是「now - 5h」本地推算。**
+- ⚠️ **`since` 只对「窗口落在约 48h 保留期内」的场景有效**（5 小时；2026-10-11 live 实测纠错）：
+  超过保留期的 `since` 会被服务端**静默钳制到最近约 2 天**。所以：
+  - **rolling**：`range=24h&since=<fiveHour.startsAt>` —— 窗口在保留期内，准确；这是 5 小时
+    明细唯一正确的取法（推翻了 v1「5 小时没有明细是正确行为」）。
+  - **weekly/monthly**：`range=7d|30d`，**不带 `since`** —— 整周/整月口径。
+    带任意旧起点（实测 `range=7d&since=10-05` ≡ `since=10-09`）只会得到最近 2 天的模型。
+  - **口径纪律**：rolling 的 `since` 必须是官方 `startsAt`，绝不是「now - 5h」本地推算。
+  - 映射固定在纯函数 `modelsRequestOf` / `seriesRequestOf` 里，有单测钉住（N 段）。
 - 401/403 → 静默降级为空明细（增强项，不该让整轮采集失败），但**必须记日志**
 - **key 语义（与 §3.5 一致）**：抓取成功就产出 `models[窗口kind]`（**空数组也保留**，
   表示「官方确认该窗口无已用模型」）；抓取失败才不产出该 key。快照映射由纯函数
@@ -155,15 +163,23 @@ fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | 
 ### 3.5 用量时序 —— `GET /console/api/usage/cost-by-day`（趋势区数据源）
 
 ```
-?range=24h|7d|30d&bucket=hour|day&since=<ISO>     （必需 x-org-id）
+?range=24h|7d|30d&bucket=hour|day[&since=<ISO>]     （必需 x-org-id）
 → [{ date, totalCostMicroCents, totalTokens, totalRequests }]
 ```
-- `date` 为 **UTC 整点/整日**（如 `2026-10-11T04:00:00Z`）；`since` 覆盖 range 起点
+- `date` 为 **UTC 整点/整日**（如 `2026-10-11T04:00:00Z`）
+- **`since` 保留期语义同 §3.3**：只对落在约 48h 保留期内的窗口有效（rolling）；
+  周/月**不带 `since`**，取 range 全量日聚合，再由 `seriesByWindowOf` **客户端裁到
+  `[startAt, resetAt)`**。裁剪口径：保留与窗口**相交**的桶（`桶起点+桶宽 > startAt`），
+  这样不会丢掉窗口内第一个不完整桶（rolling 小时桶/月订阅非整日起点的日桶），
+  也不会把对齐窗口的前一整桶带进来（自然周对齐时前驱桶末端恰等于 `startAt`）。
 - `parseCostByDay(body, bucket)` 升序返回 `UsageBucket{ t, bucket, cost(USD), tokens, requests }`；
   容忍未知键、坏 `date` 行跳过不丢整表；**空数组是合法结果**（官方确认该窗口无用量）。
   ⚠️ **`totalCostMicroCents` 缺失/不可解析 → 跳过该桶**（不补 0）：它是必填字段，
   缺它说明结构变了；补 0 会把「不知道」渲染成「$0.00」。
 - 窗口粒度：rolling = `bucket=hour`（逐小时），周/月 = `bucket=day`（逐日）
+- ⚠️ **序列求和 ≠ meter 已用量**（2026-10-11 live 实测）：5 小时逐分一致，但本周 Σ 比 meter 低约 3.6%、
+  本月低约 14%（`cost-by-day` 存在服务端空洞，如缺 `09-25`）。**不要用序列求和反推百分比**；
+  趋势图只画形状与逐桶数值，百分比一律以 `go/status` 的 meter 为权威。
 - 快照落点：`ProviderSnapshot.seriesByWindow[窗口名]`；**key 缺失 = 抓取失败** →
   渲染层退回本机历史并标注「本机估算」；**key 存在但空数组 = 官方确认无用量**（不退回）
 - 余额：`GET /api/billing/status` 的 `availableMicroCents/balanceMicroCents` →
@@ -193,6 +209,8 @@ fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | 
 | 有 `usage` 但算不出百分比（`limit` 缺失或为 0） | — | **不产出窗口**，由 `opencode.ts` 提示「百分比不可用（控制台未给限额）」 |
 | 明细某 range 失败 | 任意 | 重试一次；仍失败则该窗口 key 缺失 + 日志 |
 | 时序某窗口失败 | 任意 | 同上；该窗口 `series` key 缺失 → 渲染层退回本机并标注「本机估算」 |
+| **周/月请求带了 `since`**（超 ~48h 保留期） | 200 | 服务端**静默钳制到最近约 2 天** → 序列只剩 2 桶、模型只剩 2 天的。**禁止**：周/月一律不带 `since`（`modelsRequestOf`/`seriesRequestOf` 钉住）；周/月序列客户端裁到窗口 |
+| 运维/结构变更致 `since` 语义再变 | — | 表现是「窗口序列桶数 < 窗口应有天数」而非报错 → live 复核（`--details-test`）比对桶数，不要只信 200 |
 | 明细 401/403 | — | 不重试，静默降级为空 + 日志 |
 | 时序 401/403 | — | 同上（不重试） |
 | 官方确认无明细/无用量 | 200 + 空数组 | `models`/`series` 该 key 为 `[]` → 渲染层**不**退回本机（那是「确认没有」，不是「拿不到」） |
@@ -207,8 +225,8 @@ fetchConsoleDetails(wid, cookie, starts: ConsoleWindowStarts): ConsoleDetails | 
 **Good**（实测真实账号，2026-10-11 三窗口口径）
 ```
 本周: used=5.05884411 limit=30 pct=16.9 note='控制台'
-detail=明细分窗 key=['5 小时','本周','本月']        ← 三窗口都有明细（rolling 靠 since 对齐）
-series=时序分窗 key=['5 小时','本周','本月']（rolling=hour，周/月=day）
+detail=明细分窗 key=['5 小时','本周','本月']   ← rolling=24h+since；周/月=7d/30d（无 since）
+series=时序分窗 key=['5 小时','本周','本月']   ← rolling=hour+since；周/月=day 全量后**裁到窗口**
 models: deepseek-flash $11.8085 tokens=879438123 requests=4357 source='console'
 extraCredit: available=5.00 balance=0
 ```
@@ -238,7 +256,7 @@ deepseek-flash  $11.81  —  本机 880.1M     ← 标题说控制台，标签�
 
 ## 6. Tests Required
 
-`npm run test:ssr` —— **113 项 0 失败**。`scripts/test-ssr-parser.mjs`，
+`npm run test:ssr` —— **133 项 0 失败**。`scripts/test-ssr-parser.mjs`，
 用 `loadTs()` 加载**真源码**，fixture 取自真实响应（脱敏）。
 `npm run test:series-view` —— 47 项，覆盖 `seriesView.ts`（官方搬运 / 本机重置感知增量 /
 `bucketByHour`）与「官方优先、本机回退必标注」的结构切片。
@@ -253,12 +271,14 @@ deepseek-flash  $11.81  —  本机 880.1M     ← 标题说控制台，标签�
 | E / E2 | 异常输入不抛；**「花了钱算不出百分比」不报 0%** | 撒谎的 0% → 2 项失败 |
 | E3 | `resetInSec = 0` 表示"未知"；非法 `resetsAt` 视同缺失 | 垃圾秒数 |
 | F | 满额 / 超额钳位 | 出现 133% |
-| G2 | **`MODELS_RANGES` 自然档 + `MODELS_RANGE_ROLLING='24h'`**（`since` 覆盖 range 起点） | 拿 30d 冒充 7d → 3 项失败 |
+| G2 | **`MODELS_RANGES` 周/月档 + `MODELS_RANGE_ROLLING='24h'`** | 拿 30d 冒充 7d → 3 项失败 |
 | G2b | `USAGE_COST_BY_DAY_PATH` / `COST_BUCKETS` | 趋势源写错 |
 | G3 | 端点常量、`x-org-id` 头带/不带、`PERIOD_END_RESET_FIELDS` | 丢必需头 → 1 项失败 |
 | H–J | 明细解析、**不产出 `quotaUsd`/`percent`**、异常输入 | 字段回潮 |
 | K | **`parseCostByDay`** 升序 / 未知键 / 坏行跳过 / 空数组合法 / **缺金额跳过该桶（不补 0）** | 趋势解析 |
 | L | **`modelsByWindowOf` / `seriesByWindowOf`**：三窗口 key 都产出、**空数组保留 key**、缺失不产出 | 5 小时明细丢失 / 空数组被压成缺失 |
+| M | **`seriesByWindowOf` 窗口裁剪**：周=整周 7 桶（修复前 2）、窗口外桶裁掉、自然周前驱桶排除、rolling/月的边界不完整桶**保留**、缺 startAt 反推、无边界不裁、空数组保留 | 周/月序列只剩 2 天；把上一周算进来 |
+| N | **`modelsRequestOf` / `seriesRequestOf`**：rolling=24h+since；**周/月 range 全量且不带 since**；rolling 缺起点 → null | 周/月被塞回 `since` → 静默只剩 2 天（R1/R2 的核心） |
 
 **两条必须知道的测试陷阱**（本项目都犯过）：
 
@@ -268,9 +288,12 @@ deepseek-flash  $11.81  —  本机 880.1M     ← 标题说控制台，标签�
    键映射、服务端 tokens、range 表），当时 **49 项全绿** —— 套件只覆盖纯解析器，
    编排层是盲区。补完断言后同样 6 个实验**全部被抓到**。
 
-**已知缺口**：`fetchRange`/`scrape` 的**串行与重试无自动化测试**（需给原生
+**已知缺口**：`scrape` 的**串行与重试无自动化测试**（需给原生
 `fetch` 打桩，而本模块刻意不用 `ctx.request`，不能复用 `test-adapters` 的桩）。
 已在 `opencode-details.ts` 的函数注释里写明。
+**2026-10-11 起部分收窄**：把「窗口 → 请求口径」抽成纯函数 `modelsRequestOf` /
+`seriesRequestOf`（N 段），因此本任务这类「给周/月塞回 `since`」的回归**有牙**了；
+仍无覆盖的是 `fetchJson` 的串行/重试与 `scrape` 的 key 落点编排。
 
 ## 7. Wrong vs Correct
 
@@ -314,6 +337,24 @@ const cookie = (await getExtra('opencodeCookie')) ?? ''
 
 // CORRECT —— 与产品 resolveCookie 同源：分区实时优先，保存值兜底，用 getKey
 const cookie = (await readPartitionCookie()) ?? (await getKey('opencodeCookie')) ?? ''
+```
+
+### 7.4 `since` 只给窗口落在保留期内的场景（周/月不带）
+
+`since` 走服务端**约 48h 短期数据路径**；超出保留期的起点会被静默钳制到最近 2 天，
+表现为「本周序列只剩 2 天、模型只剩最近 2 天」——**不报错，只是少**。
+
+```ts
+// WRONG —— 三窗口一律 since=<窗口起点>：周/月被钳到最近 2 天
+for (const kind of kinds) {
+  await fetchJson(modelsUrl(kind === 'rolling' ? '24h' : MODELS_RANGES[kind], starts[kind]), …)
+  await fetchJson(costByDayUrl(range, bucket, starts[kind]), …)
+}
+
+// CORRECT —— since 只给 rolling；周/月用 range 全量，序列再客户端裁到窗口
+modelsRequestOf(kind, starts)   // rolling → { range:'24h', since }; 周/月 → { range:'7d'|'30d' }
+seriesRequestOf(kind, starts)   // rolling → { range:'24h', bucket:'hour', since }; 周/月 → { …, bucket:'day' }
+seriesByWindowOf(details, windows)  // 裁到 [startAt, resetAt)（保留相交桶）
 ```
 
 ## 8. 已知未接线 / 未覆盖

@@ -145,6 +145,10 @@ export async function runDetailsTest(): Promise<void> {
   for (const [kind, buckets] of Object.entries(data?.series ?? {})) {
     if (!buckets.length) continue
     const head = buckets.slice(0, 2).map((b) => `${b.t}=$${b.cost.toFixed(4)}`)
-    process.stdout.write(`${kind} 时序 ${buckets.length} 桶（${buckets[0].bucket}）: ${head.join(' · ')}\n`)
+    // ⚠ 打的是 scrape **原始桶（裁剪前）**：产品快照会再裁到窗口 [startAt, resetAt)。
+    //   下一个任务改 `--details-test` 前，这里如实标注，免得把月 29 桶当产品口径。
+    process.stdout.write(
+      `${kind} 时序 ${buckets.length} 桶（${buckets[0].bucket}，裁剪前）: ${head.join(' · ')}\n`
+    )
   }
 }

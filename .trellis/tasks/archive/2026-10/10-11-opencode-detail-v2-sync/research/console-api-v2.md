@@ -10,6 +10,23 @@
 - **四个目标的数据官网全部拿得到**（含 5 小时窗口的「每小时」与「每模型」），无需本机兜底；本机只保留为离线降级。
 - 唯一拿不到的是**每模型配额/百分比**（接口从未提供，只有窗口级 `limit/used`）——按既有纪律如实标注，不伪造。
 
+## 0.1 ⚠️ 更正（2026-10-11 后续任务 `10-11-opencode-detail-window-series-fix` 实测）
+
+本文件下方关于 `since` 「覆盖 range 起点」的结论**只对窗口落在服务端约 48h 保留期内时成立**。
+后续在真实会话下补测发现：**超出保留期的 `since` 会被静默钳制到最近约 2 天**：
+
+- `cost-by-day?range=7d|30d&bucket=day&since=<任意 2 天前的 ISO>` → 只回最近 2 天；
+  不带 `since` 才回完整日聚合（7d→7 桶、30d→29 桶）。
+- `models?range=7d&since=10-05` ≡ `since=10-09`（都被钳到 2 天，Σ$5.93）；
+  不带 `since` 才是完整 7 天（11 模型 Σ$8.62）。
+- 5 小时窗口因落在保留期内，`since=<fiveHour.startsAt>` 准确，且与窗口逐分一致。
+
+**因此正确用法**：`since` 只给 rolling（5 小时）；**周/月一律不带 `since`**，用
+`range=7d|30d` 取全量后由客户端裁到 `[window.startAt, window.resetAt)`。
+本文件 §2/§3/§4 中「周/月也用 `since=<window.startsAt>`」的写法据此作废。
+详见 `.trellis/tasks/10-11-opencode-detail-window-series-fix/research/since-retention.md`
+与 `.trellis/spec/adapters/opencode-console.md` §3.3/§3.5。
+
 ## 1. 端点全貌（live 实测，均为 `GET`，Base = `https://opencode.ai/console`）
 
 | 端点 | 用途 | 关键响应字段 |
@@ -30,6 +47,7 @@
 - `range ∈ {24h, 7d, 30d, all}`
 - `bucket ∈ {day, hour}`（仅 `cost-by-day`）
 - `since` = ISO 8601（如 `2026-10-11T07:07:31.262Z`）——**覆盖 range 的起点，实测生效**
+  ⚠️ **仅当窗口落在服务端约 48h 保留期内**（5 小时）；超期会被钳制到最近 2 天。见 §0.1。
 - `models` 另有 `page/pageSize/costOrder`；`users` 另有 `page/pageSize`
 
 ### 金额单位
@@ -39,12 +57,14 @@
 ## 2. 实测关键行为（决定实现细节）
 
 1. **`cost-by-day bucket=hour`**：`date` 按小时取整为 UTC 边界，如 `2026-10-11T04:00:00Z`、`...T07:00:00Z`。24h 范围返回 9 个桶。
-2. **`since` 精确过滤**：`bucket=hour&since=07:07:31Z` → 首桶 `07:00:00Z`、共 6 桶（floor 到小时，起点前的丢弃）。
-3. **`usage/models` 的 `since` 生效**：
+   ⚠️ 桶按整点**向下取整**：`since=07:07:31Z` 的首桶仍是 `07:00:00Z`（早于起点）。客户端裁剪要保留这种相交首桶，否则丢掉窗口内首个不完整桶的用量（见 §0.1 与 spec §3.5）。
+2. **`since` 精确过滤**：`bucket=hour&since=07:07:31Z` → 首桶 `07:00:00Z`、共 6 桶（floor 到小时）。⚠️ 这只在窗口落在服务端约 48h 保留期内时成立（见 §0.1）。
+3. **`usage/models` 的 `since` 生效**：⚠️ **仅在保留期内**（见 §0.1）。原记的
+   「`range=7d&since=<5h 前>`：8 个模型」是因为该起点仍在 48h 内；对更早的起点不成立。
    - `range=7d` 全集：11 个模型，Σ cost = 763,790,290 microcents
    - `range=7d&since=<5h 前>`：8 个模型，Σ = 23,036,841
    - `range=24h&since=<5h 前>`：与上**完全相同**（8 个 / 23,036,841）
-   → **`since` 覆盖 range 起点；5 小时窗口的每模型明细官方可得**。
+   → 5 小时窗口的每模型明细官方可得；**但周/月不能靠 since，要用 range 全量**。
 4. **每个 meter 现在都带 `startsAt`**（旧版只有 `resetsAt`）：
    - `fiveHour`：`12:00:59Z → 17:00:59Z`（精确 5 小时滚动窗）
    - `week`：`2026-10-05T00:00:00Z → 2026-10-12T00:00:00Z`（**UTC 自然周，周一 0 点对齐**）
@@ -60,10 +80,10 @@
 
 ## 4. 目标可行性判定
 
-| 目标 | 官方能否拿到 | 实现路径 |
+| 目标 | 官方能否拿到 | 实现路径（⚠️ 见 §0.1 更正） |
 |---|---|---|
-| 1 用量窗口详情/模型与用量同步一致 | ✅ | 窗口边界取 `meters.*.startsAt/resetsAt`；每窗模型用 `usage/models?since=<window.startsAt>` |
-| 2 趋势按 5h(每小时)/本周(每日)/本月(每日) | ✅ | `cost-by-day?bucket=hour\|day&since=<window.startsAt>` |
+| 1 用量窗口详情/模型与用量同步一致 | ✅ | 窗口边界取 `meters.*.startsAt/resetsAt`；**rolling** 用 `usage/models?range=24h&since=<fiveHour.startsAt>`；**周/月**用 `range=7d\|30d`（**不带 since**） |
+| 2 趋势按 5h(每小时)/本周(每日)/本月(每日) | ✅ | rolling：`cost-by-day?range=24h&bucket=hour&since=<5h.startsAt>`；周/月：`range=7d\|30d&bucket=day`（**不带 since**）+ 客户端裁到窗口 |
 | 3 5h 窗口模型用量 + 配额详情 | ⚠ 部分 | 模型**用量**可得；模型**配额**接口不提供 → 展示窗口级配额 + 每模型用量 |
 | 4 其他可展示数据 | ✅ | billing 余额、usage/users 按人、providers 定价目录、summary.services |
 

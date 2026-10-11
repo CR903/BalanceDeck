@@ -18,7 +18,7 @@
 import { loadTs } from './lib/load-ts.mjs'
 
 const { parseGoStatus, WINDOW_NAMES, windowStartIso } = await loadTs('src/main/adapters/opencode-cookie.ts')
-const { parseModelsResponse, parseCostByDay, modelsByWindowOf, seriesByWindowOf } =
+const { parseModelsResponse, parseCostByDay, modelsByWindowOf, seriesByWindowOf, modelsRequestOf, seriesRequestOf } =
   await loadTs('src/main/opencode-details.ts')
 const api = await loadTs('src/main/adapters/opencode-console-api.ts')
 
@@ -245,8 +245,10 @@ console.log('\nG2. 窗口对齐表 —— 口径撒谎的最后一道闸')
   eq(api.MODELS_RANGES.monthly, '30d', 'G2b monthly 必须用 30d')
   ok(!('rolling' in api.MODELS_RANGES), 'G2c rolling 不在 range 表里 —— 它靠 since 对齐，不用自然 range')
   eq(Object.keys(api.MODELS_RANGES).sort(), ['monthly', 'weekly'], 'G2d 只有这两个自然对齐档')
-  // 2026-10-11：`since` 实测覆盖 range 起点，5 小时窗口的明细/时序因此可得。
-  // range 仍取端点允许的最小值 24h（真正的裁剪交给 since）。
+  // 2026-10-11：`since` 只在**窗口落在服务端约 48h 保留期内**时有效（rolling 用
+  // `range=24h + since=<5h 起点>` 精确裁到 5h）；周/月一律**不传 since**，用 range 取
+  // 完整日聚合再客户端裁剪（超保留期的 since 会被钳制到最近约 2 天，见
+  // `10-11-opencode-detail-window-series-fix/research/since-retention.md`）。
   eq(api.MODELS_RANGE_ROLLING, '24h', 'G2e rolling 用端点最小 range 24h + since=<5h 起点>（推翻旧「故意不映射」）')
 }
 
@@ -398,17 +400,31 @@ console.log('\nL. modelsByWindowOf / seriesByWindowOf —— 明细/时序 → �
 {
   const NAMES = { rolling: '5 小时', weekly: '本周', monthly: '本月' }
   const modelRow = (model) => ({ model, provider: 'opencode-go', usageUsd: 1, tokens: 10, requests: 2 })
-  const bucket = (t, cost) => ({ t, bucket: 'hour', cost, tokens: 1, requests: 1 })
+  const bucket = (t, cost, b = 'hour') => ({ t, bucket: b, cost, tokens: 1, requests: 1 })
+  const HOUR = 3600_000
+  const DAY = 86400_000
+  const bound = (kind, startAt, resetAt, spanMs) => ({ kind, name: NAMES[kind], startAt, resetAt, spanMs })
+  const ALL_BOUNDS = [
+    bound('rolling', '2026-10-11T12:00:00Z', '2026-10-11T17:00:00Z', 5 * HOUR),
+    bound('weekly', '2026-10-05T00:00:00Z', '2026-10-12T00:00:00Z', 7 * DAY),
+    bound('monthly', '2026-10-01T00:00:00Z', '2026-10-31T00:00:00Z', 30 * DAY)
+  ]
 
-  // ① 三窗口 key 都产出（含 5 小时 —— 旧的「rolling 无明细」限制已推翻）
+  // ① 三窗口 key 都产出（含 5 小时 —— 旧的「rolling 无明细」限制已推翻）。models 不裁剪。
   const models = modelsByWindowOf(
     { models: { rolling: [modelRow('a')], weekly: [modelRow('b')], monthly: [modelRow('c')] } },
     NAMES
   )
   eq(Object.keys(models).sort(), ['5 小时', '本月', '本周'].sort(), 'L1 models 三窗口 key 都产出（含 5 小时）')
   const series = seriesByWindowOf(
-    { series: { rolling: [bucket('t1', 1)], weekly: [bucket('t2', 2)], monthly: [bucket('t3', 3)] } },
-    NAMES
+    {
+      series: {
+        rolling: [bucket('2026-10-11T13:00:00Z', 1)],
+        weekly: [bucket('2026-10-06T00:00:00Z', 2, 'day')],
+        monthly: [bucket('2026-10-02T00:00:00Z', 3, 'day')]
+      }
+    },
+    ALL_BOUNDS
   )
   eq(Object.keys(series).sort(), ['5 小时', '本月', '本周'].sort(), 'L2 series 三窗口 key 都产出')
 
@@ -417,19 +433,109 @@ console.log('\nL. modelsByWindowOf / seriesByWindowOf —— 明细/时序 → �
   ok('5 小时' in empty, 'L3a models 空数组保留 key（不是压成缺失）')
   eq(empty['5 小时'], [], 'L3b models 空数组照原样带出')
   ok(!('本月' in empty), 'L3c 未抓到的窗口不产出 key（缺失 = 失败）')
-  const emptySeries = seriesByWindowOf({ series: { monthly: [] } }, NAMES)
+  const emptySeries = seriesByWindowOf({ series: { monthly: [] } }, [bound('monthly', undefined, undefined, 30 * DAY)])
   ok('本月' in emptySeries && emptySeries['本月'].length === 0, 'L3d series 空数组保留 key')
 
   // ③ 缺失（失败）时该窗口 key **不存在** —— 渲染层据此退回本机并标注「本机估算」
-  const partial = seriesByWindowOf({ series: { weekly: [bucket('t2', 2)] } }, NAMES)
+  const partial = seriesByWindowOf({ series: { weekly: [bucket('2026-10-06T00:00:00Z', 2, 'day')] } }, ALL_BOUNDS)
   eq(Object.keys(partial), ['本周'], 'L4a 只有抓到的窗口产出 key')
   ok(!('5 小时' in partial) && !('本月' in partial), 'L4b 抓取失败的窗口 key 不存在')
 
   // ④ 鲁棒：details 为 null / 缺字段
   eq(modelsByWindowOf(null, NAMES), {}, 'L5a null details → {}')
-  eq(seriesByWindowOf(undefined, NAMES), {}, 'L5b undefined details → {}')
+  eq(seriesByWindowOf(undefined, ALL_BOUNDS), {}, 'L5b undefined details → {}')
   eq(modelsByWindowOf({}, NAMES), {}, 'L5c 无 models 字段 → {}')
   eq(Object.keys(modelsByWindowOf({ models: { weekly: [] } }, NAMES)), ['本周'], 'L5d 空数组窗口也算「产出了 key」')
+}
+
+console.log('\nM. seriesByWindowOf 窗口裁剪 —— 周/月 range 全量 + 客户端裁到窗口')
+{
+  const NAMES = { rolling: '5 小时', weekly: '本周', monthly: '本月' }
+  const HOUR = 3600_000
+  const DAY = 86400_000
+  const b = (t, cost, kind = 'day') => ({ t, bucket: kind, cost, tokens: 1, requests: 1 })
+  const WINDOWS = [
+    { kind: 'rolling', name: NAMES.rolling, startAt: '2026-10-11T12:00:59Z', resetAt: '2026-10-11T17:00:59Z', spanMs: 5 * HOUR },
+    { kind: 'weekly', name: NAMES.weekly, startAt: '2026-10-05T00:00:00Z', resetAt: '2026-10-12T00:00:00Z', spanMs: 7 * DAY },
+    { kind: 'monthly', name: NAMES.monthly, startAt: '2026-10-01T01:25:47Z', resetAt: '2026-10-31T01:25:47Z', spanMs: 30 * DAY }
+  ]
+
+  // 周：range=7d 全量（不带 since）返回 10-05..10-11 共 7 个日桶 → 全落在自然周内
+  const week7 = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11']
+    .map((d, i) => b(`${d}T00:00:00Z`, i + 1))
+  const clippedWeek = seriesByWindowOf({ series: { weekly: week7 } }, WINDOWS)['本周']
+  eq(clippedWeek.length, 7, 'M1a 周序列保留整周 7 个日桶（修复前 since 只剩 2 天）')
+  eq(clippedWeek.map((x) => x.cost), [1, 2, 3, 4, 5, 6, 7], 'M1b 桶内容与顺序不变')
+
+  // 窗口外的桶被裁掉（更早的 09-30 / 更晚的 10-12）
+  const withOutliers = [b('2026-09-30T00:00:00Z', 99), ...week7, b('2026-10-12T00:00:00Z', 99)]
+  eq(seriesByWindowOf({ series: { weekly: withOutliers } }, WINDOWS)['本周'].length, 7,
+    'M2 窗口外的日桶被裁掉（09-30 与 10-12）')
+
+  // 自然周对齐：前驱桶（10-04，末端恰好 = startAt）不与窗口相交 → 排除，不把上一周算进来
+  const aligned = [b('2026-10-04T00:00:00Z', 99), ...week7]
+  eq(seriesByWindowOf({ series: { weekly: aligned } }, WINDOWS)['本周'].length, 7,
+    'M3 自然周对齐时前驱桶(10-04)被排除 —— 不把上一周算进来')
+
+  // rolling：小时桶按整点向下取整，首桶(12:00)早于 startsAt(12:00:59) → **保留**
+  // （口径：保留与窗口相交的桶，避免丢掉窗口内第一个不完整桶的用量）
+  const rollingBuckets = ['2026-10-11T11:00:00Z', '2026-10-11T12:00:00Z', '2026-10-11T13:00:00Z',
+    '2026-10-11T14:00:00Z', '2026-10-11T15:00:00Z', '2026-10-11T16:00:00Z', '2026-10-11T18:00:00Z']
+    .map((t) => b(t, 1, 'hour'))
+  const clippedRolling = seriesByWindowOf({ series: { rolling: rollingBuckets } }, WINDOWS)['5 小时']
+  eq(clippedRolling.map((x) => x.t), ['2026-10-11T12:00:00Z', '2026-10-11T13:00:00Z', '2026-10-11T14:00:00Z',
+    '2026-10-11T15:00:00Z', '2026-10-11T16:00:00Z'],
+    'M4a rolling 保留相交首桶(12:00)与窗口内小时桶；11:00 前驱、18:00 越界桶排除')
+
+  // 月份：订阅起点非整日（01:25:47Z），首日桶(10-01)与其相交 → 保留（不漏首日用量）
+  const monthBuckets = ['2026-09-30T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z',
+    '2026-10-31T00:00:00Z', '2026-11-01T00:00:00Z'].map((t) => b(t, 1))
+  eq(seriesByWindowOf({ series: { monthly: monthBuckets } }, WINDOWS)['本月'].map((x) => x.t),
+    ['2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z', '2026-10-31T00:00:00Z'],
+    'M5 月份首日桶(10-01 00:00 < startAt 01:25)保留；10-31 保留；09-30/11-01 排除')
+
+  // 缺 startAt → 用 resetAt - spanMs 反推（口径同 windowStartIso）
+  const noStart = [{ kind: 'weekly', name: NAMES.weekly, startAt: undefined, resetAt: '2026-10-12T00:00:00Z', spanMs: 7 * DAY }]
+  eq(seriesByWindowOf({ series: { weekly: aligned } }, noStart)['本周'].length, 7,
+    'M6 缺 startAt → resetAt - span 反推，效果同上（前驱桶仍排除）')
+
+  // 两侧都缺 → 不裁剪（保守，不冒丢数据之险）
+  const noBounds = [{ kind: 'weekly', name: NAMES.weekly, startAt: undefined, resetAt: undefined, spanMs: 7 * DAY }]
+  eq(seriesByWindowOf({ series: { weekly: withOutliers } }, noBounds)['本周'].length, 9,
+    'M7 无任何边界 → 原样返回（不裁剪）')
+
+  // 空数组裁剪后仍为空，且 key 保留
+  ok(('本周' in seriesByWindowOf({ series: { weekly: [] } }, WINDOWS)) &&
+    seriesByWindowOf({ series: { weekly: [] } }, WINDOWS)['本周'].length === 0,
+    'M8 空数组裁剪后仍为空数组且保留 key')
+
+  // 坏 t（不可解析）的桶丢弃
+  eq(seriesByWindowOf({ series: { weekly: [b('not-a-date', 99), ...week7] } }, WINDOWS)['本周'].length, 7,
+    'M9 坏时间戳的桶被丢弃（不污染窗口）')
+}
+
+console.log('\nN. modelsRequestOf / seriesRequestOf —— 窗口 → 请求口径（since 只给 rolling）')
+{
+  const STARTS = { rolling: '2026-10-11T12:00:59Z', weekly: '2026-10-05T00:00:00Z', monthly: '2026-09-21T01:25:47Z' }
+
+  // rolling：24h + since（窗口在服务端 ~48h 保留期内，准确）
+  eq(modelsRequestOf('rolling', STARTS), { range: '24h', since: STARTS.rolling }, 'N1a rolling models = 24h + since')
+  eq(seriesRequestOf('rolling', STARTS), { range: '24h', bucket: 'hour', since: STARTS.rolling },
+    'N1b rolling series = 24h + hour + since')
+
+  // 周/月：range 全量、**不带 since**（带旧起点会被服务端钳制到最近 2 天）
+  eq(modelsRequestOf('weekly', STARTS), { range: '7d' }, 'N2a weekly models = 7d（无 since）')
+  eq(seriesRequestOf('weekly', STARTS), { range: '7d', bucket: 'day' }, 'N2b weekly series = 7d + day（无 since）')
+  eq(modelsRequestOf('monthly', STARTS), { range: '30d' }, 'N3a monthly models = 30d（无 since）')
+  eq(seriesRequestOf('monthly', STARTS), { range: '30d', bucket: 'day' }, 'N3b monthly series = 30d + day（无 since）')
+
+  // 缺起点也不影响周/月口径（它们不依赖起点）
+  eq(modelsRequestOf('weekly', {}), { range: '7d' }, 'N4a 缺起点时 weekly 仍抓 7d（无 since）')
+  eq(seriesRequestOf('monthly', {}), { range: '30d', bucket: 'day' }, 'N4b 缺起点时 monthly 仍抓 30d')
+
+  // rolling 缺官方起点 → null（宁可不给，也不拿 24h 冒充 5 小时）
+  eq(modelsRequestOf('rolling', {}), null, 'N5a rolling 缺起点 → null（不拿 24h 冒充 5h）')
+  eq(seriesRequestOf('rolling', {}), null, 'N5b rolling 缺起点 → null')
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)

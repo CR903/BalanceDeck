@@ -26,12 +26,23 @@ import type { UsageBucket } from '../shared/types'
 // `npm run details:test` 耗时 21s 返回 `{}`）。而数据端点反而在公开 bundle 里
 // 带着 OpenAPI 声明标了 stable。所以改成直接调接口，删掉整段 DOM 驱动。
 //
-// 2026-10-11 再扩一轮：官网新增 `usage/cost-by-day`（按小时/按天），且 `since`
-// 参数**覆盖 range 起点**——于是「5 小时窗口没有明细」这条旧限制被推翻。本模块现在抓：
-//   · models?range=7d|30d|24h&since=<窗口起点>   → 每模型明细（三窗口）
-//   · cost-by-day?range&bucket=hour|day&since=<窗口起点> → 用量时序（趋势区数据源）
+// 2026-10-11 再扩一轮：官网新增 `usage/cost-by-day`（按小时/按天），`since` 让
+// 「5 小时窗口没有明细」这条旧限制被推翻。本模块现在抓：
+//   · models?range=24h&since=<fiveHour.start>              → 5 小时每模型明细
+//   · models?range=7d|30d（**不带 since**）                → 周/月每模型明细
+//   · cost-by-day?range=24h&bucket=hour&since=<5h.start>   → 5 小时时序（逐小时）
+//   · cost-by-day?range=7d|30d&bucket=day（**不带 since**） → 周/月时序（逐日，
+//     由 `seriesByWindowOf` 客户端裁到窗口）
 //
-// 端点：GET /console/api/usage/models?range=7d|30d|24h&pageSize=N&since=<ISO>（必需 x-org-id）
+// ⚠️ **`since` 走服务端短期数据路径（约 48h 保留）**（2026-10-11 live 实测纠错）：
+//    超过保留期的 `since` 会被静默钳制到最近约 2 天 —— 于是「本周/本月」带
+//    `since=<窗口起点>` 时只会拿到最近 2 天，且与 meter 窗口口径不一致。
+//    因此 `since` 只用于**窗口落在保留期内**的场景（5 小时）；周/月一律不带
+//    `since`，用 range 取完整日聚合，再由 `seriesByWindowOf` 客户端裁剪到
+//    `[startAt, resetAt)`。证据见
+//    `tasks/10-11-opencode-detail-window-series-fix/research/since-retention.md`。
+//
+// 端点：GET /console/api/usage/models?range=7d|30d|24h&pageSize=N[&since=<ISO>]（必需 x-org-id）
 // 真实响应（2026-09-26 实测，已脱敏）：
 //   { "items": [ { "model": "deepseek-flash", "provider": "opencode-go",
 //                  "totalRequests": "4357", "totalInputTokens": "18089708",
@@ -72,8 +83,12 @@ export interface ConsoleModelRow {
 export type ConsoleWindowKind = 'rolling' | 'weekly' | 'monthly'
 
 /**
- * 窗口起点（ISO）。三个窗口的 `since` 都取自官方 `go/status`，是**跨模块的权威口径**：
- * 明细/时序只有与窗口百分比用同一个起点，才不会「串窗」。
+ * 窗口起点（ISO），来自官方 `go/status`（`meters.*.startsAt`，`month` 用
+ * `access.startsAt`）。
+ *
+ * ⚠️ **现在只有 `rolling` 的起点会作为 `since` 下发**：`since` 走约 48h 的短期数据
+ *    路径，周/月带旧 `since` 会被钳制到最近约 2 天（见文件头注释）。`weekly`/
+ *    `monthly` 的起点仍保留在结构里（缓存键指纹用 + 供调用方做窗口裁剪），但不再进 URL。
  */
 export interface ConsoleWindowStarts {
   rolling?: string
@@ -254,17 +269,87 @@ export function modelsByWindowOf(
   return out
 }
 
-/** `ConsoleDetails.series` → `snapshot.seriesByWindow`。契约同 `modelsByWindowOf`（空数组保留） */
+/**
+ * 一个窗口的**裁剪边界** —— `seriesByWindowOf` 用它把官方日聚合裁到窗口内。
+ *
+ * `name` 来自 `WINDOW_NAMES[kind]`（快照 key）；`startAt`/`resetAt` 来自
+ * `go/status`（`ProviderWindow`）。缺 `startAt` 时用 `resetAt - spanMs` 反推
+ * （与 `windowStartIso` 同一口径）。
+ */
+export interface SeriesWindowBound {
+  /** 从 `details.series` 里取哪一组桶 */
+  kind: ConsoleWindowKind
+  /** 快照里的窗口名（= 输出 key），与 `WINDOW_NAMES[kind]` 一致 */
+  name: string
+  /** 窗口起点（ISO）。缺失时用 `resetAt - spanMs` 反推 */
+  startAt?: string
+  /** 窗口重置时刻（ISO）。缺失 = 上界未知，不裁上界 */
+  resetAt?: string
+  /** 窗口跨度（ms），仅在缺 `startAt` 时用于反推起点 */
+  spanMs: number
+}
+
+/** 桶的时间跨度（ms）—— 判定桶与窗口是否相交用（`UsageBucket.bucket`） */
+const BUCKET_SPAN_MS: Record<UsageBucket['bucket'], number> = { hour: 3600_000, day: 86400_000 }
+
+/**
+ * 把一组时序桶裁到窗口 `[lower, upper)`。**纯函数**（经 `seriesByWindowOf` 单测钉住）。
+ *
+ * 口径 —— **保留与窗口相交的桶**，条件 `桶起点 + 桶宽 > lower && 桶起点 < upper`：
+ *
+ *   · 端点的桶按 UTC 整点/整日**向下取整**，所以窗口的第一个桶可能早于 `startAt`
+ *     （rolling 小时桶最多早 59 分钟；monthly 日桶可能早整整一天，因为订阅起点
+ *     是 `access.startsAt` 这种非整日时刻）。
+ *   · 若按「桶起点 `>= startAt`」裁，会把这**第一个（不完整）桶整只丢掉** ——
+ *     于是时序求和 < meter 的已用量，正是本项目最忌讳的「口径不一致」。
+ *   · 用「相交」口径既**不漏窗口内用量**，又不会把前一整桶带进来：自然周对齐时
+ *     （`startAt` = 周一 00:00），前一个日桶的**末端恰好等于** `startAt`，不含在
+ *     相交内，所以不会把上一周算进来。
+ *   · 代价：窗口首桶可能含极少量窗口外用量（≤ 一个桶宽）。这是刻意的取舍，已单测钉住。
+ *
+ * 边界：`lower = startAt ?? resetAt - spanMs`，`upper = resetAt ?? +∞`。
+ * 两侧都无法解析 → 原样返回（不冒丢数据之险）。坏 `t`（不可解析）的桶丢弃。
+ */
+function clipBucketsToWindow(buckets: UsageBucket[], bound: SeriesWindowBound): UsageBucket[] {
+  const startMs = bound.startAt ? Date.parse(bound.startAt) : NaN
+  const resetMs = bound.resetAt ? Date.parse(bound.resetAt) : NaN
+  const hasStart = Number.isFinite(startMs)
+  const hasReset = Number.isFinite(resetMs)
+  if (!hasStart && !hasReset) return buckets
+  const lower = hasStart ? startMs : resetMs - bound.spanMs
+  const upper = hasReset ? resetMs : Infinity
+  return buckets.filter((b) => {
+    const t = Date.parse(b.t)
+    if (!Number.isFinite(t)) return false
+    const span = BUCKET_SPAN_MS[b.bucket] ?? BUCKET_SPAN_MS.day
+    return t + span > lower && t < upper
+  })
+}
+
+/**
+ * `ConsoleDetails.series` → `snapshot.seriesByWindow`。契约同 `modelsByWindowOf`
+ * （**空数组保留 key**、缺失不产出 key），额外把每个窗口的桶**裁到该窗口**
+ * `[startAt, resetAt)`。
+ *
+ * 为什么必须裁剪：周/月时序现在是 `range=7d|30d&bucket=day`（**不带 `since`**，
+ * 见文件头）的全量日聚合，端点返回的是「最近 7/30 天」，**不等于**自然周/订阅月
+ * 窗口边界。交给渲染层前要按 `go/status` 的窗口边界裁掉窗口外的桶，否则趋势与
+ * meter 口径不一致。
+ *
+ * `windows` 要覆盖三个 kind；调用方（`opencode.ts`）从 `ProviderWindow[]` 构造。
+ * 未在 `windows` 里出现的 kind：即使 `details.series` 有该组桶也不会产出（视为调用方
+ * 未提供边界，不做裁剪）。
+ */
 export function seriesByWindowOf(
   details: ConsoleDetails | null | undefined,
-  windowNames: Record<ConsoleWindowKind, string>
+  windows: SeriesWindowBound[]
 ): Record<string, UsageBucket[]> {
   const out: Record<string, UsageBucket[]> = {}
   const series = details?.series
   if (!series) return out
-  for (const kind of WINDOW_KINDS) {
-    const buckets = series[kind]
-    if (buckets) out[windowNames[kind]] = buckets
+  for (const w of windows) {
+    const buckets = series[w.kind]
+    if (buckets) out[w.name] = clipBucketsToWindow(buckets, w)
   }
   return out
 }
@@ -282,9 +367,52 @@ function modelsUrl(range: string, since?: string): string {
   return `${CONSOLE_ORIGIN}${USAGE_MODELS_PATH}?${p.toString()}`
 }
 
-function costByDayUrl(range: string, bucket: CostBucket, since: string): string {
-  const p = new URLSearchParams({ range, bucket, since })
+function costByDayUrl(range: string, bucket: CostBucket, since?: string): string {
+  const p = new URLSearchParams({ range, bucket })
+  // `since` 只在窗口落在服务端 ~48h 保留期内时给（rolling）；超期会被钳制到最近 2 天。
+  if (since) p.set('since', since)
   return `${CONSOLE_ORIGIN}${USAGE_COST_BY_DAY_PATH}?${p.toString()}`
+}
+
+// ─── 窗口 → 请求口径（纯函数，可单测）────────────────────────────────────────
+//
+// 这一层是本任务修复的核心：此前周/月也塞了 `since=<窗口起点>`，落进服务端 ~48h
+// 短期路径被钳制到最近 2 天。抽成纯函数，让「rolling 带 since / 周月不带」这条
+// 契约可被单测钉住 —— 否则改错了（比如又给周月加回 since）不会有任何测试变红
+// （`scrape` 的编排层至今没有 fetch 桩，见 `fetchJson` 注释里的已知缺口）。
+
+/**
+ * 窗口 → `usage/models` 请求口径。
+ *
+ * · `rolling`：`range=24h` + `since=<fiveHour.start>`（窗口在 ~48h 保留期内，准确）。
+ *   缺官方起点 → `null`（宁可不给，也不拿 24h 冒充 5 小时）。
+ * · `weekly`/`monthly`：range 全量（`7d`/`30d`），**不带 `since`**（整周/整月口径）。
+ */
+export function modelsRequestOf(
+  kind: ConsoleWindowKind,
+  starts: ConsoleWindowStarts
+): { range: string; since?: string } | null {
+  if (kind === 'rolling') {
+    return starts.rolling ? { range: MODELS_RANGE_ROLLING, since: starts.rolling } : null
+  }
+  return { range: MODELS_RANGES[kind] }
+}
+
+/**
+ * 窗口 → `usage/cost-by-day` 请求口径。
+ *
+ * · `rolling`：`range=24h` + `bucket=hour` + `since=<fiveHour.start>`。
+ * · `weekly`/`monthly`：range 全量（`7d`/`30d`）+ `bucket=day`，**不带 `since`**；
+ *   返回的日聚合由 `seriesByWindowOf` 客户端裁到窗口。
+ */
+export function seriesRequestOf(
+  kind: ConsoleWindowKind,
+  starts: ConsoleWindowStarts
+): { range: string; bucket: CostBucket; since?: string } | null {
+  if (kind === 'rolling') {
+    return starts.rolling ? { range: MODELS_RANGE_ROLLING, bucket: 'hour', since: starts.rolling } : null
+  }
+  return { range: MODELS_RANGES[kind], bucket: 'day' }
 }
 
 /**
@@ -350,29 +478,30 @@ async function scrape(
 
   // ① 每模型明细（三窗口）。串行，见 fetchJson 的注释。
   for (const kind of kinds) {
-    const since = starts[kind]
-    // rolling 没有官方起点时无法精确对齐 → 跳过（宁可不给，也不拿 24h 冒充 5 小时）
-    if (kind === 'rolling' && !since) continue
-    const range = kind === 'rolling' ? MODELS_RANGE_ROLLING : MODELS_RANGES[kind]
-    const o = await fetchJson(modelsUrl(range, since), cookie, orgId, `models ${kind}`)
+    const req = modelsRequestOf(kind, starts)
+    if (!req) continue // rolling 无官方起点：宁可不给，也不拿 24h 冒充 5 小时
+    const o = await fetchJson(modelsUrl(req.range, req.since), cookie, orgId, `models ${kind}`)
     if (o.ok) {
       const rows = parseModelsResponse(o.body)
       out.models![kind] = rows
       debugLog(
-        `models ${kind} -> ${rows.length} 行${rows[0] ? `，首行=${rows[0].model} $${rows[0].usageUsd.toFixed(4)}` : '（空）'}`
+        `models ${kind} (range=${req.range}${req.since ? ' + since' : ''}) -> ${rows.length} 行${rows[0] ? `，首行=${rows[0].model} $${rows[0].usageUsd.toFixed(4)}` : '（空）'}`
       )
     }
   }
 
-  // ② 用量时序（趋势区数据源）。rolling 用小时桶，周/月用日桶。
+  // ② 用量时序（趋势区数据源）。口径同 ①。
   for (const kind of kinds) {
-    const since = starts[kind]
-    if (!since) continue
-    const bucket: CostBucket = kind === 'rolling' ? 'hour' : 'day'
-    const range = kind === 'rolling' ? MODELS_RANGE_ROLLING : MODELS_RANGES[kind]
-    const o = await fetchJson(costByDayUrl(range, bucket, since), cookie, orgId, `cost-by-day ${kind}`)
+    const req = seriesRequestOf(kind, starts)
+    if (!req) continue
+    const o = await fetchJson(
+      costByDayUrl(req.range, req.bucket, req.since),
+      cookie,
+      orgId,
+      `cost-by-day ${kind}`
+    )
     if (o.ok) {
-      const buckets = parseCostByDay(o.body, bucket)
+      const buckets = parseCostByDay(o.body, req.bucket)
       const rawLen = Array.isArray(o.body) ? o.body.length : 0
       // 非空响应却解析出 0 桶 = 全行缺必填金额（结构变了）→ **不设 key**，
       // 让快照按「抓取失败」处理（渲染层退本机/不显示），而不是冒充「官方确认无用量」。
@@ -383,7 +512,7 @@ async function scrape(
       }
       out.series![kind] = buckets
       debugLog(
-        `cost-by-day ${kind} -> ${buckets.length} 桶` +
+        `cost-by-day ${kind} (range=${req.range}${req.since ? ' + since' : ''}) -> ${buckets.length} 桶` +
           (rawLen > buckets.length ? `（跳过 ${rawLen - buckets.length} 个坏桶，疑结构变更）` : '')
       )
     }
@@ -403,8 +532,9 @@ async function scrape(
  * **非阻塞**：命中缓存直接返回；未命中/过期时触发后台刷新并立即返回旧值（或 null）。
  *
  * ⚠️ `starts` 是该窗口的官方起点（`go/status` 的 `meters.*.startsAt`，month 用
- *    `access.startsAt`）。三项都缺时只能拿到 weekly/monthly 的 range 明细，
- *    rolling 与全部时序缺失 —— 所以采集路径必须传它。
+ *    `access.startsAt`）。**现在只有 `rolling` 依赖它**（作为 `since` 精确裁到 5 小时）；
+ *    weekly/monthly 一律用 range（不带 `since`），缺起点也照抓。缺 `rolling` 起点时
+ *    5 小时明细/时序缺失（宁可不给，也不拿 24h 冒充 5 小时）。
  */
 export function fetchConsoleDetails(
   workspaceId: string,
