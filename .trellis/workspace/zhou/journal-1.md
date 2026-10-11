@@ -457,3 +457,41 @@ R1环色回归原型/R2确认可点/R3去静默早退/R4锁顶+中间段/R5 open
 ### Next Steps
 
 - N4/N5/N6 低优先：F3 请求列护栏、AC4 表头措辞、全空窗口提示路径
+
+
+## Session 15: opencode 详情页修复：周/月 since 保留期缺陷
+<!-- trellis-session: v=2 fp=07e03f984d9e4d12 -->
+
+**Date**: 2026-10-11
+**Task**: opencode 详情页修复：周/月 since 保留期缺陷
+**Branch**: `main`
+
+### Summary
+
+live 验证发现 since 走 ~48h 短期数据，周/月只回 2 天；改为周/月用 range + 客户端裁到窗口，5h 保持 since；同步 spec/research/知识页；全门禁绿并归档
+
+### Main Changes
+
+- opencode-details：since 可选；modelsRequestOf/seriesRequestOf 固化窗口→请求口径；seriesByWindowOf 按相交口径裁到 [startAt,resetAt)
+- opencode.ts：seriesByWindow 传窗口边界裁剪；周/月 models 不带 since
+- spec/research/知识页：更正 since 语义、记录序列求和≠meter、裁剪口径
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4226fe8` | fix(detail): 周/月序列与模型改用 range + 客户端裁剪，绕开 since 保留期 |
+
+### Testing
+
+- [OK] npm run typecheck ✓；npm run test 全绿（ssr133/series-view47/structure461）
+- [OK] 护栏自证：裁剪恒真→M 段 5 红；周/月加回 since→N 段 2 红
+- [OK] live --details-test：series rolling3/weekly7/monthly29；models weekly11/monthly20
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- F5 接线点缺静态断言；F6 dock-hide 定时竞态 flake；F4 序列求和≠meter 可另开调查
