@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "IslandView cell click wiring must follow component conventions (named exports, title, no aria)"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "view switching openDetail/doExpand collapsed-state transitions"}

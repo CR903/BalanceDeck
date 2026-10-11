@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "verify cell click does not break gesture/backdrop behavior"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "verify AC1-AC3 observable behavior, no regressions"}
