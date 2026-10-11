@@ -391,7 +391,7 @@ for (const skin of ['dark', 'minimal', 'candy', 'ink']) {
     `D3f dot-winlabel 的 color 走 --ball-fg（实际 ${JSON.stringify(wl2.color || '未找到')}；借 --fg-dim 即红）`
   )
   // B1 第二轮补：mark 的回落链路。PetBall.tsx 是 markColor(s.mark) || 'currentColor' ——
-  // 15 个 mark 里 7 个品牌色为空，走 currentColor，所以 .dot-provider 的 color 才是它们
+  // 18 个 mark 里 9 个品牌色为空（opencode 在 R5 定了 #12B76A 后退出此列），走 currentColor，所以 .dot-provider 的 color 才是它们
   // 真正的颜色来源。这里仍是 var(--fg) 时，minimal 的 #111114 / candy 的 #2b1b46 深 logo
   // 会压暗盘（实拍 5c-ball-candy = 暗紫方块压深绿盘）。首版门只验 --ball-fg 令牌存在、
   // 没验这条回落链路，正是 5c 五帧拍出来才发现的洞。

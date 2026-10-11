@@ -20,8 +20,8 @@ export interface ProviderMark {
 export const PROVIDER_MARKS: Record<string, ProviderMark> = {
   "opencode": {
     "viewBox": "0 0 24 24",
-    "body": "<path fill=\"currentColor\" d=\"M22 24H2V0h20zM17 4.8H7v14.4h10z\"/>",
-    "color": "",
+    "body": "<path fill=\"currentColor\" d=\"M22 24H2V0h20zM15 7H9v10h6z\"/>",
+    "color": "#12B76A",
     "src": "simple-icons:opencode"
   },
   "claude": {

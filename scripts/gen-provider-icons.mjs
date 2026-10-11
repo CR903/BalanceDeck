@@ -23,7 +23,17 @@ const OUT = join(ROOT, 'src/renderer/src/provider-icons.ts')
 /** markId → { icon: Iconify 名, color: 品牌色（'' = 跟随主题前景色） } */
 const MARKS = {
   // 内置预设
-  opencode: { icon: 'simple-icons:opencode', color: '' },
+  // opencode（R5 · B 方案）：官方只有双色像素 O（opencode.ai/brand，无品牌色；
+  // simple-icons 标注色即 #000000），无官方实心版可换。原方环壁厚仅 5/24，
+  // 在 15px 下显小偏灰 → 内孔收窄使壁厚 5→7（墨量 336→420，+25%），另定品牌绿。
+  // 绿系此前无人用（深鲨蓝 #4D6BFE / Claude #D97757 / 智谱 #3859FF /
+  // 硅基 #7C5CFF / MiniMax #E23B5C / 通义 #615CED / 火山 #1664FF 均已占）。
+  opencode: {
+    icon: 'simple-icons:opencode',
+    color: '#12B76A',
+    // 加粗补丁：from 必须命中，否则说明上游换了路径 —— 宁可失败也不静默产出细环
+    patch: { from: 'M17 4.8H7v14.4h10z', to: 'M15 7H9v10h6z' },
+  },
   claude: { icon: 'simple-icons:claude', color: '#D97757' },
   codex: { icon: 'simple-icons:openai', color: '' },
   copilot: { icon: 'simple-icons:githubcopilot', color: '' },
@@ -65,7 +75,11 @@ async function fetchIcon(name) {
 const out = {}
 for (const [id, def] of Object.entries(MARKS)) {
   try {
-    const { viewBox, body } = await fetchIcon(def.icon)
+    let { viewBox, body } = await fetchIcon(def.icon)
+    if (def.patch) {
+      if (!body.includes(def.patch.from)) throw new Error(`${def.icon} → 加粗补丁未命中，上游路径可能已变`)
+      body = body.replace(def.patch.from, def.patch.to)
+    }
     out[id] = { viewBox, body, color: def.color, src: def.icon }
     process.stdout.write(`✓ ${id.padEnd(18)} ${def.icon}\n`)
   } catch (e) {
