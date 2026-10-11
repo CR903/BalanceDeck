@@ -47,8 +47,8 @@ function inside(posX, islandW, hostW = ISLAND_VIEW.width) {
 console.log('用例 1：常量口径（窗口宽取 ISLAND_VIEW，不硬编码 560）')
 eq(ISLAND_VIEW.width, 560, '岛窗口宽 560（ISLAND_VIEW 口径）')
 eq(ISLAND_EDGE_PX, 8, '贴边留白 8px')
-eq(ISLAND_POS_MIN, 0.08, 'legacy 下界 0.08（退化目标）')
-eq(ISLAND_POS_MAX, 0.92, 'legacy 上界 0.92（退化目标）')
+eq(ISLAND_POS_MIN, 0.25, 'legacy 下界 0.25（R4 中间一半，退化目标）')
+eq(ISLAND_POS_MAX, 0.75, 'legacy 上界 0.75（R4 中间一半，退化目标）')
 eq(typeof clampIslandPos, 'function', 'clampIslandPos 导出（修前没有，缺了即红）')
 
 console.log('用例 2：居中默认渲染与修前一致（AC2 的算术形式）')
@@ -76,7 +76,7 @@ console.log('用例 4：极窄岛退化为现行行为（PRD R1 括号）')
 eq(clampIslandPos(0, 0), ISLAND_POS_MIN, '岛宽 0（未测到）→ legacy 下界')
 eq(clampIslandPos(1, 0), ISLAND_POS_MAX, '岛宽 0（未测到）→ legacy 上界')
 eq(clampIslandPos(0.02, NaN), ISLAND_POS_MIN, '岛宽 NaN → legacy 下界')
-eq(clampIslandPos(0, 40), ISLAND_POS_MIN, '极窄岛 40px（宽度界 0.059 < 0.08）→ legacy 下界')
+eq(clampIslandPos(0, 40), ISLAND_POS_MIN, '极窄岛 40px（宽度界 0.05 < 0.25）→ legacy 下界')
 eq(clampIslandPos(1, 40), ISLAND_POS_MAX, '极窄岛 40px → legacy 上界')
 
 console.log('用例 5：拖拽映射（R2：dx 折中心 px，分母仍是窗口宽，落盘经同一钳制）')
@@ -107,6 +107,19 @@ console.log('用例 7：调用点口径（IslandView 三处同走 clampIslandPos
   ok(uses.length >= 3, `加载/拖拽/落盘三处调用（实际 ${uses.length} 处，少了即红）`)
   ok(!/:\s*560|560\s*[-/]/.test(src), 'IslandView 无字面 560 算术（窗口宽走 ISLAND_VIEW）')
   ok(/bodyRef\.current\?\.clientWidth/.test(src), '读 bodyRef.clientWidth 实测岛宽（估算/写死即红）')
+}
+
+console.log('用例 8：R4 中间一半（legacy 界收窄，窄岛位置不出 [0.25, 0.75]）')
+{
+  // 窄岛 120px：宽度界 [0.121, 0.879] 比 legacy [0.25, 0.75] 松 → 取交 = legacy
+  eq(clampIslandPos(0, 120), 0.25, '窄岛 120px 左到头 → 0.25（不到左边缘）')
+  eq(clampIslandPos(1, 120), 0.75, '窄岛 120px 右到头 → 0.75（不到右边缘）')
+  eq(clampIslandPos(0.5, 120), 0.5, '窄岛 120px 居中不动')
+  ok(inside(0, 120), '窄岛左到头后岛仍在窗内（≥8px 留白）')
+  ok(inside(1, 120), '窄岛右到头后岛仍在窗内')
+  // 典型岛 284px：宽度界 [0.268, 0.732] 反而更紧 → 交集仍是宽度界（岛体不出窗优先）
+  ok(clampIslandPos(0, 284) > 0.25, '典型岛左钳制仍由宽度界定（>0.25，不退化）')
+  ok(clampIslandPos(1, 284) < 0.75, '典型岛右钳制仍由宽度界定（<0.75，不退化）')
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`)

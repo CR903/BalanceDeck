@@ -1401,13 +1401,11 @@ const shotsCode = stripTsComments(read('src/main/qa/shots.ts'))
 ok(/dockFluid/.test(uitestCode), 'J4a 前置：uitest 真的有 dockFluid 断言键')
 ok(/__bd_fluid_freeze|dataset\.fluid|data-fluid/.test(uitestCode), 'J4 uitest 读流体相位（状态序列不断就等于没测 morph）')
 ok(/__bd_fluid_freeze/.test(shotsCode), 'J4b shots 经 __bd_fluid_freeze 取拉伸/桥接/水渍三帧')
-// J4c · 岛环期望与渲染层同源（10-11-island-tri-fix R1：固定彩虹取代 waterColor 插值 ——
-// 环色只认窗口序号 RING_FIXED，hex 经 shared/water-color 的 parseCssColor + rgbStr
-// 归一化后比 computed stroke，不手写第二份换算公式；PetBall 水体仍走 waterColor(pct)，见 K3d）
+// J4c · 岛环期望与渲染层同源（waterColor 插值口径，不手写第二份公式；
+// PetBall 水体仍走 waterColor(pct)，见 K3d）
 ok(
-  /shared\/water-color/.test(uitestCode) && /parseCssColor\(/.test(uitestCode) && /rgbStr\(/.test(uitestCode) &&
-    /#22d3ee/.test(uitestCode) && /#a78bfa/.test(uitestCode),
-  'J4c uitest 岛环期望经 shared/water-color 归一化对照固定彩虹（RING_FIXED，不手写第二份公式）'
+  /shared\/water-color/.test(uitestCode) && /waterColor\(pct/.test(uitestCode),
+  'J4c uitest 水色期望经 shared/water-color 算（与渲染层同源，不手写第二份公式）'
 )
 
 // J5 · 推送不抛：dock 通道一律走 safeSend（reload / GPU 崩溃恢复时裸 send 会抛

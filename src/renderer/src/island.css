@@ -1,7 +1,8 @@
 /* 灵动岛（10-10-dynamic-island）：独立视觉资产，不跟 skins 换皮。
  *
- * 深黑 iPhone 式固定样式；嵌套环为固定彩虹三色（外→内窗口序号，青/紫/粉，
- * 10-11-island-tri-fix R1 修订，不再跟 waterColor/等级），
+ * 深黑 iPhone 式固定样式；嵌套环色按窗口等级走连续水色（JS 内联 waterColor，
+ * 与原型 nestedRingsSVG 同口径），轨道 #333；进度环按 data-lvl 加对应色辉光，
+ * 缺失（muted）无辉光。
  * 容器只提供 lvl-* 环境辉光。窗口固定 560×480（ISLAND_VIEW），岛收起
  * fit-content（上限 528px + 两侧辉光余量，超长横滑）；展开 430px 居中。
  * 外层阴影只用在远小于窗口的元素上（岛 / pill / 展开卡四周都有余量），
@@ -191,19 +192,18 @@
 .isl-rings {
   display: block;
 }
-/* R1 固定彩虹辉光（10-11-island-tri-fix 修订，高调不要适度）：进度环按 data-slot
- * （窗口序号，外→内 青/紫/粉，与 TSX 的 RING_FIXED 同源）加对应色辉光；
- * 缺失（data-lvl='muted'）无辉光，避免「缺失也很亮」的误读。
- * data-lvl 保留仅作语义探针，环色/辉光不再读它。
+/* R1 原型嵌套色辉光（10-11-island-tri-fix：改回原型口径）：进度环按 data-lvl
+ * （窗口等级，ok/warn/danger）加对应色辉光；缺失（data-lvl='muted'）无辉光，
+ * 避免「缺失也很亮」的误读。轨道 #333 见 TSX（原型 ringSVG/nestedRingsSVG 口径）。
  * danger 复用现有呼吸节奏，不新增 keyframes（静态辉光已足够抢眼）。 */
-.isl-rings circle[data-slot='0']:not([data-lvl='muted']) {
-  filter: drop-shadow(0 0 3px rgba(34, 211, 238, 0.9)) drop-shadow(0 0 8px rgba(34, 211, 238, 0.45));
+.isl-rings circle[data-lvl='ok'] {
+  filter: drop-shadow(0 0 3px rgba(48, 209, 88, 0.9)) drop-shadow(0 0 8px rgba(48, 209, 88, 0.45));
 }
-.isl-rings circle[data-slot='1']:not([data-lvl='muted']) {
-  filter: drop-shadow(0 0 3px rgba(167, 139, 250, 0.95)) drop-shadow(0 0 8px rgba(167, 139, 250, 0.5));
+.isl-rings circle[data-lvl='warn'] {
+  filter: drop-shadow(0 0 3px rgba(255, 159, 10, 0.95)) drop-shadow(0 0 8px rgba(255, 159, 10, 0.5));
 }
-.isl-rings circle[data-slot='2']:not([data-lvl='muted']) {
-  filter: drop-shadow(0 0 3px rgba(244, 114, 182, 1)) drop-shadow(0 0 10px rgba(244, 114, 182, 0.6));
+.isl-rings circle[data-lvl='danger'] {
+  filter: drop-shadow(0 0 3px rgba(255, 69, 58, 1)) drop-shadow(0 0 10px rgba(255, 69, 58, 0.6));
 }
 .isl-rings circle[data-lvl='muted'] {
   filter: none;

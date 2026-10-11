@@ -291,7 +291,8 @@ function resizeCollapsed(): void {
   const target = collapsedTarget()
   const wa = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
   const nx = clampToWorkArea(b.x, wa.x, wa.x + wa.width - target.width)
-  const ny = clampToWorkArea(b.y, wa.y, wa.y + wa.height - target.height)
+  // R4 永驻顶部：收起态只定 x，y 恒回 workArea 顶部（与 snapBackToWorkArea 同口径）
+  const ny = wa.y
   win.setResizable(true)
   applyingBounds = true
   win.setBounds({ x: Math.round(nx), y: Math.round(ny), width: target.width, height: target.height })
@@ -511,7 +512,8 @@ function watchDisplays(): void {
     const target = state.collapsed ? collapsedTarget() : EXPANDED
     const nb = win.getBounds()
     const nx = clampToWorkArea(nb.x, wa.x, wa.x + wa.width - target.width)
-    const ny = clampToWorkArea(nb.y, wa.y, wa.y + wa.height - target.height)
+    // R4 永驻顶部：收起态回主屏时 y 直接回顶（展开态仍夹回工作区内，不动）
+    const ny = state.collapsed ? wa.y : clampToWorkArea(nb.y, wa.y, wa.y + wa.height - target.height)
     applyingBounds = true
     win.setBounds({ x: Math.round(nx), y: Math.round(ny), width: target.width, height: target.height })
     applyingBounds = false
@@ -585,7 +587,10 @@ export function setCollapsed(collapsed: boolean): void {
     // 有记录时仍还原到展开前的位置。
     if (dotAnchor) {
       nx = clampToWorkArea(dotAnchor.x, wa.x, wa.x + wa.width - target.width)
-      ny = clampToWorkArea(dotAnchor.y, wa.y, wa.y + wa.height - target.height)
+      // R4 永驻顶部（10-11-island-tri-fix）：收起态 y 恒为 workArea 顶部 ——
+      // 展开态卡片可被边缘拖到别处（拖中即锁顶，dotAnchor.y 实为 wa.y），但存量
+      // dotAnchor / 旧版落盘仍可能带离顶 y；收起时直接回顶，不沿用。
+      ny = wa.y
     } else {
       nx = clampToWorkArea(
         Math.round(wa.x + (wa.width - target.width) / 2),

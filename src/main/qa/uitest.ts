@@ -10,12 +10,12 @@
 import { app, screen } from 'electron'
 import { join } from 'path'
 import { consumeDragFired } from '../ipc'
-import { petHitboxDebug, petIgnoreState, petWindowState } from '../overlay'
+import { petHitboxDebug, petIgnoreState, petWindowState, setDockHideEnabled } from '../overlay'
 import { ISLAND_VIEW } from '../../shared/pet-view'
 // R3（10-10-island-mini-tune）：隐藏态命中区即渲染层实测矩形，主进程零覆盖 ——
 // 不再经 shared/dock-hide 取 pill 常数（MINI_PILL_* 已删除，几何只活在 island.css）。
 import { refreshNow } from '../scheduler'
-import { parseCssColor, rgbStr } from '../../shared/water-color'
+import { defaultWaterAnchors, parseCssColor, resolveWaterAnchors, rgbStr, waterColor } from '../../shared/water-color'
 import { demoSnapshot } from './fixtures'
 
 export async function runUiTest(
@@ -82,6 +82,22 @@ export async function runUiTest(
       await new Promise(res=>setTimeout(res,40))
     }
     h.dispatchEvent(new PointerEvent('pointerup',{...o,clientX:cx+${dx},buttons:0}))
+    return 'sent'
+  })()`
+  /** 中部拖动（真落点口径，10-11-island-tri-fix R4）：起点落在中央 combo 本体上 ——
+   * 真实按压的 target 是 combo 子元素（如 pmark-glyph），经冒泡到根；只打 .isl-hit
+   * 的 islDragJs 测不到 target 相关的断裂，两者互补 → 改 posX + 落盘，不切换展开 */
+  const islComboDragJs = (dx: number): string => `(async ()=>{
+    const combos=[...document.querySelectorAll('.isl-combo')]; if(!combos.length) return 'no-combo'
+    const c=combos[Math.floor(combos.length/2)]; const rc=c.getBoundingClientRect()
+    const cx=rc.x+rc.width/2, cy=rc.y+rc.height/2
+    const o={clientX:cx,clientY:cy,pointerId:13,bubbles:true,pointerType:'mouse',button:0,buttons:1}
+    c.dispatchEvent(new PointerEvent('pointerdown',o))
+    for(let i=1;i<=4;i++){
+      c.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:cx+${dx}*i/4}))
+      await new Promise(res=>setTimeout(res,40))
+    }
+    c.dispatchEvent(new PointerEvent('pointerup',{...o,clientX:cx+${dx},buttons:0}))
     return 'sent'
   })()`
   /** 边缘拖动：起点落在岛边缘 rim 内（命中分区 edge）→ 主进程窗口拖拽，posX 不动 */
@@ -386,6 +402,11 @@ export async function runUiTest(
   )
 
   // 岛身拖动：>6px 判拖动（改 posX + 落盘，不切换展开）；窗口固定不动
+  // 本段测点击语义，dwell 必须隔离：合成点击动不了真光标，edge 拖的真 dragStop
+  // 会 arm 1s dwell 并在展开点击后把岛藏掉（drive8 复现：reClick 读到 pill，
+  // dblclick 被 dockHidden 跳过 → cardBack2/noDrift 连锁红；真用户点击时光标
+  // 在岛上，dwell 当场取消，无此问题）。关了测完即恢复，dock 段自理状态。
+  setDockHideEnabled(false)
   const islDrag0 = await islandProbe()
   await exec(islDragJs(60))
   await sleep(700)
@@ -410,12 +431,30 @@ export async function runUiTest(
       : Math.abs(Number(savedX) - islDrag1.posX) < 0.005
         ? 'ok'
         : `fail:extras=${savedX} posX=${islDrag1.posX}`
-  // 分区其二：边缘拖启动主进程窗口拖拽（R7 分区），posX 不动
+  // 中部真落点拖动（AC4：起点在中央 combo 本体 —— 真实按压的 target 口径；
+  // 与 islDragJs（打 .isl-hit）互补，target 相关断裂只红这里）。往回拖 -60：
+  // 上一步 +60 已右移，此时左拖回中部，钳制边界饱和误红不了
+  const islCombo0 = await islandProbe()
+  await exec(islComboDragJs(-60))
+  await sleep(700)
+  const islCombo1 = await islandProbe()
+  r.dragComboMoved =
+    islCombo1.err || islCombo0.err
+      ? `fail:probe=${islCombo0.err || islCombo1.err}`
+      : Math.abs(islCombo1.posX - islCombo0.posX) > 0.01
+        ? 'ok'
+        : `fail:posX=${islCombo0.posX}->${islCombo1.posX}（combo 落点拖应横滑）`
+  r.dragComboNoExpand = !islCombo1.expanded && !islCombo1.open ? 'ok' : 'fail:expanded-on-combo-drag'
+  r.dragComboNoWinDrag = !consumeDragFired() ? 'ok' : 'fail:main-drag-fired（combo 拖动不应启动主进程窗口拖拽）'
+  // 分区其二：边缘拖启动主进程窗口拖拽（R7 分区），posX 不动；窗口 y 恒定（AC4 永驻顶部）
   const islEdge0 = await islandProbe()
+  const edgeY0 = bounds().y
   await exec(islEdgeDragJs(60))
   await sleep(700)
   const islEdge1 = await islandProbe()
   r.dragEdgeWinDrag = consumeDragFired() ? 'ok' : 'fail:edge-drag-no-main-drag（边缘拖动应移动窗口）'
+  r.dragTopPinned =
+    bounds().y === edgeY0 ? 'ok' : `fail:y=${edgeY0}->${bounds().y}（边缘拖窗口不得离开顶部）`
   r.dragEdgeNoPosX =
     islEdge1.err || islEdge0.err
       ? `fail:probe=${islEdge1.err || islEdge0.err}`
@@ -476,6 +515,7 @@ export async function runUiTest(
       : Math.abs(islDriftA.posX - islDriftB.posX) < 0.005 && islDriftB.mode === 'collapsed'
         ? 'ok'
         : `fail:posX=${islDriftA.posX}->${islDriftB.posX} mode=${islDriftB.mode}`
+  setDockHideEnabled(true)
   await exec('window.api.expand()')
   await sleep(800)
   r.logoBadge = (await exec("!!document.querySelector('.brand-badge img')")) ? 'ok' : 'fail:no-img'
@@ -1122,15 +1162,10 @@ export async function runUiTest(
       islWhy = `fail:bal-amount=${d.combos.find((c) => c.kind === 'balance')?.amount}（余额家应显示金额而非环）`
     } else if (!(d.w > 0 && d.w <= 560)) islWhy = `fail:island-w=${d.w}（岛宽自适应，上限 560）`
     else {
-      // 环色与渲染层同源（IslandView.tsx RING_FIXED，外→内固定彩虹，不跟 waterColor/等级）：
-      // i1 两窗 70/41 → slot0 青 #22d3ee、slot1 紫 #a78bfa；hex 经 shared/water-color
-      // 的 parseCssColor + rgbStr 归一化后再比（computed stroke 回的是 rgb() 串，
-      // 不手写第二份换算公式；RING_FIXED 本体在渲染层，uitest 只做对照）。
+      // 环色与渲染层同源（shared/water-color，不手写第二份公式）：i1 两窗 70/41
       const i1 = d.combos.find((c) => c.id === 'fix-i1')
-      const want = ['#22d3ee', '#a78bfa'].map((hex) => {
-        const rgb = parseCssColor(hex)
-        return rgb ? rgbStr(rgb).replace(/\s+/g, '') : hex
-      })
+      const anchors = defaultWaterAnchors()
+      const want = [70, 41].map((pct) => waterColor(pct, anchors).replace(/\s+/g, ''))
       const got = (i1?.strokes ?? []).slice(1, 3).map((s) => (s || '').replace(/\s+/g, ''))
       if (i1?.rings !== 3) islWhy = `fail:i1-rings=${i1?.rings}（底圈 + 2 窗）`
       else if (got.join('|') !== want.join('|')) islWhy = `fail:ring-color got=${got.join('|')} want=${want.join('|')}`

@@ -39,12 +39,17 @@ export const ISLAND_VIEW = { width: 560, height: 480 }
  *
  * 约定：入参出参都是**中心比例**（`ui:islandX` 口径不变，仍按中心落盘）；
  * hostW 缺省 ISLAND_VIEW.width，调用方不要写字面 560。
- * 与 legacy 界取交（都要满足）：极窄岛（宽度界比 0.08/0.92 更松）退化为现行行为；
+ * 与 legacy 界取交（都要满足）：极窄岛（宽度界比 0.25/0.75 更松）退化为现行行为；
  * islandW 非正/非法 = 还没测到，同样走现行行为。非法 raw 回居中，不抛。
+ *
+ * R4（10-11-island-tri-fix）：legacy 界从 [0.08, 0.92] 收为 [0.25, 0.75] ——
+ * 岛只能在顶部中间一半内滑动，不到两边；宽度感知交集逻辑不动（宽岛仍被窗界
+ * 收紧，岛体保证不出窗）。存量越界落盘值经同一函数自动收敛（读回与重测两处
+ * 已调同一函数）。
  */
 export const ISLAND_EDGE_PX = 8
-export const ISLAND_POS_MIN = 0.08
-export const ISLAND_POS_MAX = 0.92
+export const ISLAND_POS_MIN = 0.25
+export const ISLAND_POS_MAX = 0.75
 
 export function clampIslandPos(raw: number, islandW: number, hostW: number = ISLAND_VIEW.width): number {
   if (!Number.isFinite(raw)) return 0.5
