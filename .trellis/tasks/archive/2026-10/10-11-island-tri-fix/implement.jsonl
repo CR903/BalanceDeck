@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "IslandView/NestedRings 改动需守单文件导出、无children、title不用aria与RING_GEO单点纪律"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "reportHit/confirmRef/alertPending 联动需走定时器契约与ref镜像纪律，不新增常驻定时器"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "辉光与命中死区的视觉/交互回归门禁，缺失值保持缺失不断裂"}

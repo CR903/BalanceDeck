@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "验收岛收起/展开/确认条三态渲染结构未漂移"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "验收命中上报90ms链与alertPending确认链无多余定时器、无陈旧闭包"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验收渲染层hitbox与主进程穿透判定的跨层一致性（pad/forward语义不变）"}
