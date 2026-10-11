@@ -396,3 +396,25 @@ R1环色回归原型/R2确认可点/R3去静默早退/R4锁顶+中间段/R5 open
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 岛展开面板点进详情归档
+<!-- trellis-session: v=2 fp=6d8c5d9e164d0c28 -->
+
+**Date**: 2026-10-11
+**Task**: 岛展开面板点进详情归档
+**Branch**: `main`
+
+### Summary
+
+展开态点卡片进详情（先展窗再openDetail），空白收起与切换手势不动；check放行；归档+日志
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b7bb22` | feat(island): 展开面板点供应商进详情 |
+
+### Status
+
+[OK] **Completed**
