@@ -382,6 +382,14 @@
   min-width: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
+/* 可点击卡片（10-11-island-open-to-detail R1）：有 data-supplier 的才可点进详情，
+ * 无数据的空 cell 保持旧行为。容器深黑不跟换皮，hover 只提亮度，不引新色。 */
+.isl-grid .isl-cell[data-supplier] {
+  cursor: pointer;
+}
+.isl-grid .isl-cell[data-supplier]:hover {
+  filter: brightness(1.12);
+}
 /* R2 单行横排（贴原型 .tcell .top）：[mark 26] [环 40] [右列 side]，gap 10 同原型 */
 .isl-cell-top {
   display: flex;

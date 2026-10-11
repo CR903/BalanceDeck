@@ -221,6 +221,22 @@ zero, report a fallback (e.g. the top strip) instead of silently returning — o
 otherwise freezes `hitbox` forever and the visible island becomes permanently click-through
 (2026-10-11 island-tri-fix R3).
 
+**Clickable overlay regions use `onClick`, never `pointerup`.** A drag gesture never produces
+a `click`, so `onClick` is inherently drag-safe; `pointerup` would fire at drag end and need a
+manual moved-guard. And every new clickable region must join the root pointer-guard exemption
+alongside `button`, or press-down on it enters the drag/click state machine and fires a second
+action on release:
+
+```tsx
+// src/renderer/src/IslandView.tsx:421-424, 525-530 — island cells open detail on click
+if ((e.target as HTMLElement | null)?.closest?.('button, .isl-cell[data-supplier]')) return
+```
+
+```tsx
+// ... cell itself, scoped to data-bearing cells so empty cells keep old toggle behavior
+<div className="isl-cell" data-supplier={s.id} onClick={(e) => { e.stopPropagation(); onOpen?.(s.id) }}>
+```
+
 ---
 
 ## Common Mistakes

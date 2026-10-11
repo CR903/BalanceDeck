@@ -98,6 +98,11 @@ export interface IslandViewProps {
   fluidEdge?: string | null
   /** 回到卡片视图（双击岛身 / 右键菜单「展开面板」；R5 起头部条按钮已删） */
   onExpand: () => void
+  /**
+   * 展开态点击供应商卡片 → 进该家详情页（10-11-island-open-to-detail R1）。
+   * 缺省（undefined）= 只读卡片，保持旧行为；App 侧接“先展开窗口再 openDetail(id)”（R2）。
+   */
+  onOpenDetail?: (id: string) => void
   /** 右键菜单：交给主进程弹原生菜单，返回被选中的 action */
   onMenu: () => Promise<string | null>
   /** 语音提醒的视觉通知文案（'' = 无；与确认气泡同位，确认优先） */
@@ -198,6 +203,7 @@ export function IslandView({
   fluidEdge = null,
   onExpand,
   onMenu,
+  onOpenDetail,
   notice,
   alertText,
   alertMinutes = 0,
@@ -416,9 +422,10 @@ export function IslandView({
 
   const onPointerDown = (e: React.PointerEvent): void => {
     if (e.button !== 0) return
-    // 真实按钮（展开面板 / 确认）走自己的 onClick，不进拖拽/点击状态机 ——
-    // 否则点按钮那一下会在 root 上起 press，抬起时再误触一次展开/收起
-    if ((e.target as HTMLElement | null)?.closest?.('button')) return
+    // 真实按钮（展开面板 / 确认）与展开态供应商卡片走自己的 onClick，不进拖拽/点击状态机 ——
+    // 否则点卡片那一下会在 root 上起 press，抬起时再误触一次展开/收起
+    // （卡片收 `closest` 限定到 [data-supplier]：无数据的空 cell 仍走旧的点击切换）。
+    if ((e.target as HTMLElement | null)?.closest?.('button, .isl-cell[data-supplier]')) return
     press.current = {
       down: true,
       moved: false,
@@ -519,8 +526,9 @@ export function IslandView({
       }}
       onPointerCancel={() => finishPress(true)}
       onDoubleClick={(e) => {
-        // 按钮上双击不回卡片：连点「好的」确认时会顺带切走视图，等于吞掉一次确认
-        if ((e.target as HTMLElement | null)?.closest?.('button')) return
+        // 按钮与展开态供应商卡片上双击不回卡片：连点「好的」确认时会顺带切走视图，
+        // 等于吞掉一次确认；卡片单击已进详情（岛随即卸载），双击同样不应再切视图
+        if ((e.target as HTMLElement | null)?.closest?.('button, .isl-cell[data-supplier]')) return
         if (!dockHidden) onExpand()
       }}
       onContextMenu={(e) => void openMenu(e)}
@@ -557,6 +565,7 @@ export function IslandView({
             hideBalance={hideBalance}
             now={now}
             onBackdrop={() => setOpen(false)}
+            onOpenDetail={onOpenDetail}
           />
         ) : (
           <div className="isl-strip">
@@ -678,12 +687,15 @@ function IslandOpen({
   ordered,
   hideBalance,
   now,
-  onBackdrop
+  onBackdrop,
+  onOpenDetail
 }: {
   ordered: ProviderSnapshot[]
   hideBalance: boolean
   now: number
   onBackdrop: () => void
+  /** 供应商卡片点击 → 进详情（undefined = 只读，保持旧行为） */
+  onOpenDetail?: (id: string) => void
 }): React.JSX.Element {
   return (
     <div className="isl-open" data-open={ordered.length}>
@@ -700,9 +712,9 @@ function IslandOpen({
         {ordered.length ? (
           ordered.map((s) =>
             isPlan(s) ? (
-              <PlanCell key={s.id} s={s} now={now} />
+              <PlanCell key={s.id} s={s} now={now} onOpen={onOpenDetail} />
             ) : (
-              <BalanceCell key={s.id} s={s} hide={hideBalance} />
+              <BalanceCell key={s.id} s={s} hide={hideBalance} onOpen={onOpenDetail} />
             )
           )
         ) : (
@@ -719,7 +731,7 @@ function IslandOpen({
  * 单行横排 [logo 26 | 环 40 含环心百分比 | 右列 = 名称 +（嵌套 ? 图例 : 文字 + 4px 彩条）]。
  * 嵌套（≥2 窗）与单窗共用同一套 RING_GEO 几何（单窗 = NestedRings 只画 1 环，与原型
  * ringSVG 同参）；缺失值保持缺失：环心 `—`、彩条不画、不编 0。 */
-function PlanCell({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.Element {
+function PlanCell({ s, now, onOpen }: { s: ProviderSnapshot; now: number; onOpen?: (id: string) => void }): React.JSX.Element {
   const main = worstWindow(s.status === 'ok' ? s : undefined)
   const mainPct = main ? windowPercent(main) : null
   const lvl = snapshotLevel(s)
@@ -727,7 +739,21 @@ function PlanCell({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.E
   // 无可比窗口（无窗 / 非 ok / 百分比缺失）时干脆不画环 —— 缺失保持缺失
   const hasRing = nested || (s.status === 'ok' && mainPct != null)
   return (
-    <div className="isl-cell" data-supplier={s.id} data-kind="plan" data-lvl={lvl}>
+    // 可点击卡片（10-11-island-open-to-detail R1）：单击进该家详情页。
+    // 手势与根状态机解耦 —— pointerdown 在根守卫里已跳过 .isl-cell[data-supplier]
+    // （与 button 同路），这里只收 onClick；拖拽（moved）不产 click，天然不误触。
+    // title 兼 --uitest 选择器（控件用 title 不用 aria，本文件顶注）。
+    <div
+      className="isl-cell"
+      data-supplier={s.id}
+      data-kind="plan"
+      data-lvl={lvl}
+      title={`${s.name} · 点击查看详情`}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen?.(s.id)
+      }}
+    >
       <div className="isl-cell-top">
         <ProviderMark mark={s.mark} size={26} glyph={16} />
         <span className="isl-ringbox">
@@ -796,13 +822,21 @@ function PlanCell({ s, now }: { s: ProviderSnapshot; now: number }): React.JSX.E
 }
 
 /** 展开态 balance 卡：大金额为主（BalanceCard 口径），有 limit 才附 Bar */
-function BalanceCell({ s, hide }: { s: ProviderSnapshot; hide: boolean }): React.JSX.Element {
+function BalanceCell({ s, hide, onOpen }: { s: ProviderSnapshot; hide: boolean; onOpen?: (id: string) => void }): React.JSX.Element {
   const lvl = snapshotLevel(s)
   const w: ProviderWindow | undefined = s.windows[0]
   const active = s.status === 'ok' && !!w
   const pct = w ? windowPercent(w) : null
   return (
-    <div className="isl-cell" data-supplier={s.id} data-kind="balance" data-lvl={lvl}>
+    // 可点击卡片（10-11-island-open-to-detail R1）：单击进该家详情页，手势解耦见 PlanCell。
+    // 首行 identity 属性保持同行：结构门禁 D6d12 按 `data-kind="balance" data-lvl={lvl}` 硬空格锚定。
+    <div className="isl-cell" data-supplier={s.id} data-kind="balance" data-lvl={lvl}
+      title={`${s.name} · 点击查看详情`}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen?.(s.id)
+      }}
+    >
       <div className="isl-cell-top">
         {/* 26/16 与原型 .picon 同（demo.html:231 展开态也用 picon 26）；形态与动画
             由 island.css 的 .isl-cell[data-kind='balance'] .pmark 作用域覆盖提供 */}

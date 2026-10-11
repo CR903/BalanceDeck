@@ -961,6 +961,18 @@ export default function App(): React.JSX.Element {
     setOpenId(id)
     setView('detail')
   }
+  /**
+   * 展开态卡片点击进详情（10-11-island-open-to-detail R2）：复用 doExpand 语义
+   * （setCollapsed(false) + window.api.expand()，收起态窗口装不下详情页），
+   * 再 openDetail(id)。不经 doExpand 本体 —— 它会把 view 先置 'card'，
+   * 紧接着 openDetail 又置 'detail'，多一次中间渲染；语义相同，少一次跳转。
+   * 返回沿用 DetailView 现有 onBack → card（R3，不新增路径）。
+   */
+  const openIslandDetail = (id: string): void => {
+    setCollapsed(false)
+    window.api.expand()
+    openDetail(id)
+  }
 
   const current = state.snapshots.find((s) => s.id === openId)
 
@@ -1018,6 +1030,7 @@ export default function App(): React.JSX.Element {
             fluidEdge={fluidEdge}
             onExpand={doExpand}
             onMenu={petMenu}
+            onOpenDetail={openIslandDetail}
             notice={ttsVisualText}
             alertText={alertText}
             alertMinutes={alertMinutes}
