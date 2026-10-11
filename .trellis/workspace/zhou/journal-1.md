@@ -371,3 +371,28 @@ holo 全息球太大下掉，收起态回 56 小球：删 holo/ + three + HOLO_V
 - 10-04-rain-weather-column / 10-04-skin-fluid-redesign 各剩一条用户人眼动态终验，需实机，本轮不动
 - 可选：像素对拍脚本当前只在临时目录，不可复跑；要留得进仓（建议挂在 scripts/ 下、复用 png-probe.mjs）
 - 0% 计划类分支仍只有 DOM 级证据（FIX_ZERO + K8o1/K8p），--shots 里没有 0% 帧，无像素级证据
+
+
+## Session 12: 灵动岛六修落地归档
+<!-- trellis-session: v=2 fp=4349e5f4c7c6c1f4 -->
+
+**Date**: 2026-10-11
+**Task**: 灵动岛六修落地归档
+**Branch**: `main`
+
+### Summary
+
+R1环色回归原型/R2确认可点/R3去静默早退/R4锁顶+中间段/R5 opencode图标/R6品牌色+logo瘦身；uitest161项0fail；顺手归档10-03与10-04-rain
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1482557` | fix(island): 嵌套环固定彩虹三色，确认条并入命中，量不到报兜底 |
+| `68dcb8d` | fix(island): 环色回归原型等级，永驻顶部锁y，横向收窄中间一半 |
+| `28299be` | fix(icons): opencode 换粗环 + 品牌绿 #12B76A |
+| `4ae35e4` | feat(island): 9家补品牌色，嵌套家logo瘦身15→11 |
+
+### Status
+
+[OK] **Completed**
