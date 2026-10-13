@@ -231,15 +231,12 @@
 .isl-rings circle[data-lvl='muted'] {
   filter: none;
 }
+/* 余额家收起态 = 与用量家同一个 36×36 圆位（10-13：收起态不再放金额，读数归面板与
+ * 展开态）。此前 `width: auto` + 金额是为容纳 `¥453.62` 那截文字，钱一撤就失去理由 ——
+ * 留着它，余额家只剩一个 26px mark 却占 auto 宽，岛身照样不齐。color 保留：它经
+ * currentColor 喂给下面 ping 环的边（删了会退回继承色，环色随皮肤漂）。 */
 .isl-combo.bal {
-  width: auto;
-  gap: 6px;
   color: #f2f2f7;
-}
-.isl-combo.bal .isl-amount {
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
 }
 /* 余额家 mark 对版（10-10-island-balance-mark，原型 `.picon`：demo.html:68 / :145-151）：
  * 26 正圆黑盘 + inset 高光 + 外投影 + 呼吸/ping —— keyframes 复用用量家那三套，

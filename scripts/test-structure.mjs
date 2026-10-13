@@ -2912,6 +2912,28 @@ ok(/className="isl-ring-pct"/.test(islTsx) && /fmtPercent\(mainPct\)/.test(islTs
     `L10d 收起态辉光保持外扩 -8px -16px（实际 ${baseInset ?? '未找到'}；顺手改它 = 收起态氛围跟着变）`)
 }
 
+// L11 · 收起态余额家不放金额（10-13 用户决定：金额撤出岛，读数归面板与展开态）。
+//
+// 这是**产品决定**，不是实现细节 —— 金额挂回 `.isl-combo.bal` 就等于撤消它，所以静态门
+// 直接钉「收起态分支里没有金额节点」。运行门在 uitest 的 petBallCenterValue
+// （`bal-amount` 那条：amount 必须为 null），两层各守一份：静态门挡住写回来的那次提交，
+// 运行门挡住「静态门没覆盖的选择器改写」。
+// ⚠ 前置必须先取到块：取不到时 `.test()` 会得到 false 空洞通过，所以两个读取都要 ok 一次。
+{
+  const balIdx = islTsx.indexOf('className={`isl-combo bal')
+  const openIdx = islTsx.indexOf('function BalanceCell')
+  ok(balIdx >= 0 && openIdx > balIdx, 'L11 前置：取得到收起态余额家分支与展开态 BalanceCell')
+  // 金额节点与它的文本构造器一并退役：只删 span 不删 balanceText，等于留一个没人调的
+  // 读数函数，下一个人会以为金额"还在只是没显示"
+  const collapsedBranch = islTsx.slice(balIdx, openIdx)
+  ok(!/className="isl-amount"/.test(collapsedBranch) && !islTsx.includes('function balanceText'),
+    'L11 收起态余额家无 .isl-amount 且 balanceText 已退役（金额挂回来即红）')
+  // 展开态仍是大金额为主：撤过头（连展开态一起删）同样红 —— 面板之外岛上唯一的读数在这
+  const openCell = islTsx.slice(openIdx)
+  ok(/className="isl-big"/.test(openCell) && /fmtAmount\(w\.used, w\.unit\)/.test(openCell),
+    'L11b 展开态 BalanceCell 仍显示金额（一起删即红，读数会无处可看）')
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // M. opencode 详情页 v2（10-11-opencode-detail-v2-sync）：序列视图 / 余额块 / 测试接线
 //    implement.md step 4 的未勾项 —— 新渲染结构必须有结构门，否则删掉整块套件照样绿

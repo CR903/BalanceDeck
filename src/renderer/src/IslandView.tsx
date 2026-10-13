@@ -628,14 +628,16 @@ export function IslandView({
                   >
                     {/* 26 = 原型 .picon（demo.html:68，展开态同为 26），glyph 16 =
                         logoSVG(mark, brand, 16)（demo.html:146）；live|danger 类挂在
-                        承载动画的 .pmark 自身（与用量家 .isl-logo 同一套判定） */}
+                        承载动画的 .pmark 自身（与用量家 .isl-logo 同一套判定）。
+                        收起态**不放金额**（用户 10-13 决定）：金额曾挂在这里让余额家比
+                        用量家宽出一截，岛身随各家读数长短参差。读数归面板与展开态 ——
+                        展开态 BalanceCell 仍是大金额为主，卡片视图不变。打码同理只在那两处。 */}
                     <ProviderMark
                       mark={s.mark}
                       size={26}
                       glyph={16}
                       className={islandLevel(s) === 'danger' ? 'danger' : 'live'}
                     />
-                    <span className="isl-amount">{balanceText(s, hideBalance)}</span>
                   </span>
                 )
               )
@@ -691,15 +693,6 @@ function worstLevel(snaps: ProviderSnapshot[]): Level {
     if (rank[l] < rank[worst]) worst = l
   }
   return seen ? worst : 'muted'
-}
-
-/** 余额家 collapsed 金额（BalanceCard 口径：金额为主；打码只管读数） */
-function balanceText(s: ProviderSnapshot, hide: boolean): string {
-  if (s.status !== 'ok') return s.status === 'error' ? '!' : '—'
-  const w: ProviderWindow | undefined = s.windows[0]
-  if (!w) return '—'
-  if (hide) return '••••'
-  return fmtAmount(w.used, w.unit)
 }
 
 /** 展开态：2 列只读卡片。无头部条（10-10-island-fidelity-2 R5）——

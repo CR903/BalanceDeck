@@ -1348,10 +1348,17 @@ export async function runUiTest(
     else if (d.combos.filter((c) => c.kind === 'plan').length !== 3) islWhy = `fail:plan=${JSON.stringify(d.combos)}`
     else if (d.combos.filter((c) => c.kind === 'balance').length !== 1) islWhy = `fail:balance=${JSON.stringify(d.combos)}`
     else if (d.combos.find((c) => c.id === 'fix-i3')?.lvl !== 'danger') islWhy = `fail:i3-lvl=${d.combos.find((c) => c.id === 'fix-i3')?.lvl}（91% 应 danger）`
-    else if (!(d.combos.find((c) => c.kind === 'balance')?.amount ?? '').includes('¥')) {
-      islWhy = `fail:bal-amount=${d.combos.find((c) => c.kind === 'balance')?.amount}（余额家应显示金额而非环）`
-    } else if (!(d.w > 0 && d.w <= 560)) islWhy = `fail:island-w=${d.w}（岛宽自适应，上限 560）`
+    // 收起态余额家 = 只有 logo（10-13 用户要求：金额撤出岛，读数归面板与展开态）。
+    // 旧断言反过来钉「必须有 ¥」—— 那条随金额一起作废；新判据是**两无**：
+    // 无金额（amount 为 null）且无环（balance 家本来就不画用量环，rings=0）。
+    // 带出实际值：金额回来了（有人手滑加回）与多画了环，两种红要能一眼分清。
     else {
+      const bal = d.combos.find((c) => c.kind === 'balance')
+      if (bal?.amount != null) islWhy = `fail:bal-amount=${bal.amount}（收起态不放金额，读数看面板/展开态）`
+      else if (bal?.rings !== 0) islWhy = `fail:bal-rings=${bal?.rings}（余额家不该画用量环）`
+    }
+    if (!islWhy && !(d.w > 0 && d.w <= 560)) islWhy = `fail:island-w=${d.w}（岛宽自适应，上限 560）`
+    if (!islWhy) {
       // 环色与渲染层同源（shared/water-color，不手写第二份公式）：i1 两窗 70/41
       const i1 = d.combos.find((c) => c.id === 'fix-i1')
       const anchors = defaultWaterAnchors()
@@ -1453,25 +1460,36 @@ export async function runUiTest(
     return 'fail:timeout'
   }
 
-  // ── 隐藏余额（岛版）：右键菜单切 → 余额 combo 金额变 •••• ────────────────
-  // 打码只管读数（balanceText 构造时即 lit，不经过任何动画链路）
+  // ── 隐藏余额（岛版）：右键菜单切 → 展开态余额卡读数变 •••• ────────────────
+  //
+  // 10-13 起收起态不再放金额，打码的验证点随之移到**展开态** `.isl-big`（那里才是
+  // 岛上唯一的余额读数）。前置先量一次未打码值：读到空串说明选择器/展开没生效，
+  // 这时再断言 •••• 会把「没展开」误判成「打码对了」——前置红比后面全绿有价值。
   await pushFix(FIX_BAL)
+  await exec(islClickJs())
+  await sleep(700)
   const islBalHide = async (): Promise<string> =>
-    String(await exec(`document.querySelector('.isl-combo[data-kind="balance"] .isl-amount')?.textContent ?? ''`))
+    String(await exec(`document.querySelector('.isl-cell[data-kind="balance"] .isl-big')?.textContent ?? ''`))
+  const plain0 = await islBalHide()
   const hideOn2 = await setHide(true)
   await sleep(500)
   const hv1 = await islBalHide()
   await sleep(400)
   const hv2 = await islBalHide()
   const hideBack2 = await setHide(hideWasOn)
+  // 收尾把岛收回收起态，后续断言（皮肤表面 / 双击回卡片）按原状态走
+  await exec(islClickJs())
+  await sleep(500)
   r.petHideBalanceNoAnim =
     hideOn2 !== 'ok'
       ? `fail:${hideOn2}`
-      : hv1 !== '••••' || hv2 !== '••••'
-        ? `fail:${hv1}/${hv2}`
-        : hideBack2 !== 'ok'
-          ? `fail:restore=${hideBack2}`
-          : 'ok'
+      : !plain0 || plain0 === '••••'
+        ? `fail:precondition=${plain0 || 'empty'}（展开态没读到未打码金额，断言无意义）`
+        : hv1 !== '••••' || hv2 !== '••••'
+          ? `fail:${hv1}/${hv2}`
+          : hideBack2 !== 'ok'
+            ? `fail:restore=${hideBack2}`
+            : 'ok'
   // 收尾：采集频率拉回默认（setExtras 会 reconfigure → 立刻补一轮真实数据）
   await exec("window.api.setExtras({refreshInterval:'60'})")
 
