@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "改动落在 island.css / IslandView.tsx：token 驱动 CSS、深黑独立文件不跟换皮、辉光层级纪律（D6）都在这份里"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "无 linter，唯一门禁是 tsc + 断言脚本 + QA harness；新增断言必须加载真源码并先弄坏一次"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "若渲染层要为托盘展开新增订阅 effect，本仓禁止自定义 hook，effect 必须带 cleanup"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "托盘点击 → 主进程 → 渲染层的状态推送通道（ui:collapsed 同类）需遵守 extras/store 与 lifted-state 规则"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动跨主进程 tray.ts/overlay.ts 与渲染层 IslandView/App，属跨层信号：先确认通道与首帧时序（参考 ui:get-collapsed 的既有教训）"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "定位/居中/复位贴边已有 snapBackToWorkArea、resizeCollapsed、win.on('show') 三处同类逻辑，改前先搜再写第四份"}
