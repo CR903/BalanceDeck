@@ -2883,6 +2883,35 @@ ok(/className="isl-ring-pct"/.test(islTsx) && /fmtPercent\(mainPct\)/.test(islTs
     `L9c 阴影 5 层含 glow 与底部 inset 暗（实际 ${openLayers.length} 层，glow=${hasGlow}，底暗=${hasBottom}）`)
 }
 
+// L10 · 展开面板溢出归零（10-13-island-open-overflow R2）：展开态的辉光伪元素不许外扩。
+//
+// 因果链写在 island.css 的注释里，这里是它的**可执行版**（实测的渲染面读数在
+// --uitest 的 islandOpenNoOverflow，静态门与运行门各守一层）：
+//   `.isl-body.open` 设 overflow-y:auto → 按 CSS 规范横轴的 visible 被算成 auto →
+//   `.isl-body::after` 的 inset 一旦为负（向外扩 16px/8px）就产生可滚动溢出。
+//   修复前实测 435/419 + 217/209；2K 屏只是叠加式滚动条不渲染 —— 所有屏都在溢出。
+// ⚠ 前置必须先取到块：取不到时 `inset === undefined`，负值断言会"通过"（空洞绿）。
+{
+  const openBody = ruleBody(isl, '.isl-body.open')
+  const openAfter = ruleBody(isl, '.isl-body.open::after')
+  ok(openBody != null && openAfter != null, 'L10 前置：取得到 .isl-body.open 与 .isl-body.open::after 整块')
+  const openAfterInset = decls(openAfter).inset
+  ok(openAfterInset === '0',
+    `L10 展开态辉光 inset 收回 0（实际 ${openAfterInset ?? '未找到'}；改回 -8px -16px 即滚动条回归）`)
+  const od = decls(openBody)
+  ok(od['max-height'] === '440px' && od['overflow-y'] === 'auto',
+    `L10b 纵滚语义不变：max-height 440 + overflow-y auto（实际 ${od['max-height']}/${od['overflow-y']}）`)
+  // 横轴护栏 = **裁内容**（长图例名实测撑出 21px），不是藏滚动条：
+  // `scrollbar-width: none` / `::-webkit-scrollbar{display:none}` 那类才是掩盖，
+  // 内容照样能被拖走、下一块屏还会再露一次 —— 出现即红。
+  ok(od['overflow-x'] === 'hidden' && !/scrollbar-width:\s*none/.test(openBody),
+    `L10c 横轴 overflow-x: hidden 裁内容且不用 scrollbar-width:none 掩盖（实际 ${od['overflow-x']}）`)
+  // 收起态的外扩辉光不动（它没有 overflow，扩出去本来就看得到）
+  const baseInset = decls(ruleBody(isl, '.isl-body::after')).inset
+  ok(baseInset === '-8px -16px',
+    `L10d 收起态辉光保持外扩 -8px -16px（实际 ${baseInset ?? '未找到'}；顺手改它 = 收起态氛围跟着变）`)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // M. opencode 详情页 v2（10-11-opencode-detail-v2-sync）：序列视图 / 余额块 / 测试接线
 //    implement.md step 4 的未勾项 —— 新渲染结构必须有结构门，否则删掉整块套件照样绿

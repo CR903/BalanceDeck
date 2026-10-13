@@ -3,7 +3,7 @@ import { join } from 'path'
 import { registerIpc } from './ipc'
 import { keystoreStore } from './keystore'
 import { configureProviders } from './providers'
-import { createOverlay, getOverlay, loadPersisted, petIgnoreState, primePrefs, setCollapsed, toggleOverlay } from './overlay'
+import { createOverlay, getOverlay, loadPersisted, petIgnoreState, primePrefs, setCollapsed, toggleOverlay, expandIslandPanelFromTray } from './overlay'
 import { createTray, updateTray, currentTrayTitle, trayImageInfo } from './tray'
 import { syncAutostart } from './autostart'
 import { startScheduler, refreshNow, currentState, stopScheduler } from './scheduler'
@@ -153,7 +153,7 @@ app.whenReady().then(async () => {
 
   // ── 正常启动 ────────────────────────────────────────────────────────────
   createOverlay()
-  createTray(toggleOverlay, refreshNow)
+  createTray(toggleOverlay, refreshNow, expandIslandPanelFromTray)
   startScheduler(pushState, updateTray)
   // 已开启开机自启时，用当前 .app 路径重写登录项（应用被移动过的自愈）
   syncAutostart()

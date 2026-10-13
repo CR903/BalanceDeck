@@ -402,6 +402,49 @@ else, it is not a figure-form property.*
 `PetBall.tsx:408` still sets `data-pet={pet.id}` but only `.petball` consumes it. Do not
 write new rules in that region.
 
+### Don't: let an ambient-glow pseudo-element out of a scroll container
+
+**Problem.** `.isl-body.open` sets `overflow-y: auto` (`island.css:337`). CSS computes a
+`visible` axis to `auto` when the *other* axis is not visible — so the horizontal axis was
+scrollable too, and nobody writing `overflow-y` intended that. The ambient glow
+`.isl-body::after` (`island.css:~60`) carries `inset: -8px -16px`, extending its box 16px
+horizontally and 8px vertically out of the panel. That out-of-box part is **scrollable
+overflow**: `scrollWidth 435 > clientWidth 419`, `scrollHeight 245 > clientHeight 237` —
+a permanent scroll range of exactly the inset, on top of any real content.
+
+**Why it's bad:** the bug is invisible on a HiDPI screen. macOS overlay scrollbars only
+render while scrolling, so on the 2K panel the range exists but nothing is drawn; on an
+external / non-retina display the classic scrollbar appears and the panel becomes draggable.
+Read as "a resolution compatibility problem", which sends the fix toward DPI-specific CSS.
+It is not resolution-dependent — **every** screen overflows; one of them just hides the bar.
+
+**Instead:** keep the glow's paint but pull its box back inside the scrollport.
+
+```css
+/* 辉光的 filter: blur() 绘制外溢**不计入**可滚动溢出 —— 收回 inset 就够，
+   blur 保留 = 视觉不丢；实测归零 430/430。 */
+.isl-body.open::after { inset: 0; }
+```
+
+Two mistakes to avoid while fixing it:
+- **Do not** "fix" it with `scrollbar-width: none` / `::-webkit-scrollbar { display: none }`.
+  That hides the bar while the range stays — the content is still drag-scrollable sideways,
+  and the next display that shows classic scrollbars re-reveals it.
+- **Do not** touch the collapsed state's copy. `.isl-strip` has no `overflow`, so its
+  out-of-box glow was always visible and always intended; the rule is scoped to `.open`.
+
+Guard: structure gate `L10`–`L10d` in `scripts/test-structure.mjs` pins the `.open`
+inset to `0`, the base `.isl-body::after` inset to `-8px -16px`, and asserts
+`overflow-x: hidden` without a `scrollbar-width: none` anywhere in the block. Runtime
+readings live in `--uitest` (`islandOpenNoOverflow` / `islandOpenTallScroll`), which measure
+the *rendered* `scrollWidth`/`clientWidth` on real `island.css` — the static gate alone
+cannot see a second selector reintroducing the overflow.
+
+Note `overflow-x: hidden` is a **separate** guard, not the fix: `.isl-legend-item` is
+`white-space: nowrap` with no clip anywhere up its chain, so a long window name overflows
+the 430px card by 21px. That path is a content-clip (the user cannot drag it away), which is
+a different thing from a scroll range.
+
 ## Related
 
 - State & timers: [`state-management.md`](./state-management.md) · [`hook-guidelines.md`](./hook-guidelines.md)

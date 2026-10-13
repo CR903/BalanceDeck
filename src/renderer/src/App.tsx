@@ -1,4 +1,4 @@
-import { Component, useEffect, useRef, useState } from 'react'
+import { Component, useCallback, useEffect, useRef, useState } from 'react'
 import type { AppState, ProviderInfo, ProviderSnapshot } from '../../shared/types'
 import { CardView } from './CardView'
 import { DetailView } from './DetailView'
@@ -113,6 +113,14 @@ export default function App(): React.JSX.Element {
   const [dockHide, setDockHide] = useState(true)
   /** 是否已藏到只剩痕迹（主进程推）：此时点击走唤出而非展开 */
   const [dockHidden, setDockHidden] = useState(false)
+  /**
+   * 主进程「展开灵动岛面板」意图序号（托盘左键，10-13 R3）；0 = 没有待消费的意图。
+   * 订阅必须挂在这里（App 常驻）而不是岛上：岛随收起/展开挂载卸载，自己订阅会把
+   * 「面板还在卡片视图」那次推送吞掉 —— 与 ui:collapsed 启动丢首帧是同一类时序洞。
+   */
+  const [islandOpenSeq, setIslandOpenSeq] = useState(0)
+  /** 消费一次展开意图：清零回 0。不清的话信号会一直挂着，岛之后每次收起都自动展开 */
+  const consumeIslandOpen = useCallback(() => setIslandOpenSeq(0), [])
   /**
    * 流体相位 + 贴边（主进程 dock:fluid 推，渲染层只切 CSS 类）。
    * 相位不在四项内时按 edge-visible 画全可见岛（preload 已复验，这里再守一次 ——
@@ -934,6 +942,8 @@ export default function App(): React.JSX.Element {
     // （表现为「启动了但看不到界面」）。invoke 无时序依赖，拿到后覆盖即可；
     // 若拉取返回前推送已到（不应发生，但顺序无害），后到的 invoke 值与之一致。
     void window.api.getCollapsed().then(setCollapsed)
+    // 托盘展开意图（10-13 R3）：常驻订阅，岛的挂载/卸载与它无关；序号语义见 preload 注释
+    const off4 = window.api.onIslandOpen((seq) => setIslandOpenSeq(seq))
     const apply = (id: string): void => {
       setSkinId(id)
       if (id.startsWith('ext:')) void window.api.getSkinCss(id).then(setSkinCss)
@@ -945,6 +955,7 @@ export default function App(): React.JSX.Element {
       off1()
       off2()
       off3()
+      off4()
     }
   }, [])
 
@@ -1028,6 +1039,8 @@ export default function App(): React.JSX.Element {
             dockHidden={dockHidden}
             fluidPhase={fluidPhase}
             fluidEdge={fluidEdge}
+            islandOpenSeq={islandOpenSeq}
+            onIslandOpenConsumed={consumeIslandOpen}
             onExpand={doExpand}
             onMenu={petMenu}
             onOpenDetail={openIslandDetail}

@@ -36,6 +36,19 @@ const api = {
    * 56×56 建，渲染层却画展开卡片，界面看起来「打不开」。推送只管后续变更。
    */
   getCollapsed: (): Promise<boolean> => ipcRenderer.invoke('ui:get-collapsed'),
+  /**
+   * 主进程「展开灵动岛面板」意图（10-13 R3，托盘左键）：序号单调递增，渲染层消费后
+   * 把它清零（见 App 的 onIslandOpenConsumed）。
+   *
+   * ⚠ 订阅方必须是**常驻的 App**，再以 prop 递给灵动岛 —— 岛随收起/展开挂载卸载，
+   *   让岛自己订阅会把「面板当时还在卡片视图」的那次推送整个吞掉，
+   *   与 ui:collapsed 启动期丢首帧（getCollapsed 那条注释）是同一类时序洞。
+   */
+  onIslandOpen: (cb: (seq: number) => void): (() => void) => {
+    const l = (_e: unknown, seq: unknown): void => cb(typeof seq === 'number' && Number.isFinite(seq) ? seq : 0)
+    ipcRenderer.on('ui:island-open', l)
+    return () => ipcRenderer.removeListener('ui:island-open', l)
+  },
 
   // ─── 供应商实例管理 ────────────────────────────────────────────────────────
   listProviders: (): Promise<ProvidersPayload> => ipcRenderer.invoke('providers:list'),
@@ -129,6 +142,17 @@ const api = {
    */
   debugTrayImage: (): Promise<{ level: string; shape: string; iconKey: string }> =>
     ipcRenderer.invoke('debug:tray-image'),
+  /**
+   * 托盘左键展开入口（10-13 R3）：调用**真实**入口（主进程 QA 门内注册）并回传观测点
+   * （openedByTray / seq / collapsed / visible）；窗口几何由 uitest 在主进程侧直读。
+   */
+  debugTrayExpand: (): Promise<{
+    openedByTray: boolean
+    seq: number
+    collapsed: boolean
+    visible: boolean
+    island: { x: number; y: number } | null
+  }> => ipcRenderer.invoke('debug:tray-expand'),
 
   // ─── 皮肤 ──────────────────────────────────────────────────────────────────
   listSkins: (): Promise<SkinInfo[]> => ipcRenderer.invoke('skins:list'),

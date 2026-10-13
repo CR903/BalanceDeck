@@ -78,6 +78,22 @@
   z-index: -1;
   pointer-events: none;
 }
+/* 展开态的辉光不许外扩（10-13-island-open-overflow R2）。因果链，一环都不能少：
+ *   ① `.isl-body.open`（下面）设 `overflow-y: auto`；
+ *   ② CSS 规范：一轴为 `visible` 而另一轴非 `visible` 时，`visible` 被计算成 `auto`
+ *      → 横轴实际也是可滚的（写的人只想着纵向）；
+ *   ③ 上面这条 `inset: -8px -16px` 把辉光盒向外扩 16px（横）/ 8px（纵）；
+ *   ④ 于是横竖都产生**可滚动溢出**：横轴实测 scrollWidth 435 > clientWidth 419
+ *      （纵轴同样多出 8px；绝对值随卡片内容变，溢出量恒等于那 16/8px 的 inset）。
+ * 教训：**所有屏都在溢出**，2K 屏只是叠加式（overlay）滚动条平时不渲染，
+ * 外接屏 / 非视网膜屏才把它露出来 —— 别把修复做成 `scrollbar-width: none`
+ * 之类"藏滚动条"，内容照样能被横向拖走，而且下一块屏还会再露一次。
+ * 为什么收回 inset 就够：`filter: blur()` 的绘制外溢**不计入**可滚动溢出，
+ * 所以 blur 保留、溢出照样归零（实测 430/430，横竖都归零），辉光不丢。
+ * 收起态（`.isl-strip`）没有 overflow，外扩那版原样保留 —— 只有展开态在滚动。 */
+.isl-body.open::after {
+  inset: 0;
+}
 .isl-strip::-webkit-scrollbar {
   display: none;
 }
@@ -321,6 +337,14 @@
   width: 430px;
   max-height: 440px;
   overflow-y: auto;
+  /* 横向裁内容（10-13-island-open-overflow R2 护栏），**不是**藏滚动条：
+   * 图例项 `.isl-legend-item` 是 `white-space: nowrap` 且整条链上没有一处 overflow 裁剪，
+   * 长窗口名会把它撑出卡片（实测 sw 451 > cw 430，横向多出 21px）→ 展开面板横轴可滚。
+   * 实际渲染里图例名先过 `shortWindowLabel()`（未知窗口截前 2 字），今天撑不出去；
+   * 这条兜的是**结构**：哪天有人绕过短标签直接塞原名，溢出会被裁掉而不是变成滚动条。
+   * 裁的是内容（用户拖不走），与 `scrollbar-width: none` 那种掩盖有本质区别；
+   * 纵向语义不动 —— 内容超过 max-height: 440px 时照样能滚（AC3）。 */
+  overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: #444 transparent;
   border-radius: 26px;

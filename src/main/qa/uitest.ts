@@ -514,6 +514,90 @@ export async function runUiTest(
     })()`)
   )
 
+  // ── AC1/AC2 展开面板溢出归零 + 环境辉光仍在（10-13-island-open-overflow R2）───
+  //
+  // 读的是**真实 island.css 加载后**的实测滚动量（不是内联副本）：辉光伪元素
+  // `.isl-body::after` 一旦再向外扩（inset 回到负值），sw/cw 与 sh/ch 立刻不等 ——
+  // 修复前实测就是 435/419、217/209 这组数。静态门在 test-structure 的 L10，
+  // 这条守的是**渲染出来**的那份。
+  const readOpenScroll = async (): Promise<{
+    err: string
+    m: {
+      sw: number
+      cw: number
+      sh: number
+      ch: number
+      tall: boolean
+      glowBg: string
+      glowFilter: string
+      overflowX: string
+    } | null
+  }> => {
+    const raw = String(
+      await exec(`(()=>{
+        const b=document.querySelector('.isl-body.open'); if(!b) return 'fail:no-open'
+        const grid=document.querySelector('.isl-grid')
+        const cs=getComputedStyle(b,'::after')
+        // 内容自然高度 = 网格高 + 上下 padding 16×2；超过 clientHeight 才算"真的超高"
+        const need=(grid?grid.getBoundingClientRect().height:0)+32
+        return JSON.stringify({
+          sw:b.scrollWidth, cw:b.clientWidth, sh:b.scrollHeight, ch:b.clientHeight,
+          tall: need > b.clientHeight,
+          glowBg:cs.backgroundColor, glowFilter:cs.filter, overflowX:getComputedStyle(b).overflowX
+        })
+      })()`)
+    )
+    if (!raw.startsWith('{')) return { err: raw.slice(0, 60), m: null }
+    try {
+      return { err: '', m: JSON.parse(raw) as { sw: number; cw: number; sh: number; ch: number; tall: boolean; glowBg: string; glowFilter: string; overflowX: string } }
+    } catch {
+      return { err: `parse:${raw.slice(0, 60)}`, m: null }
+    }
+  }
+  // AC3 与 AC1 都用恒定夹具：真实数据有几家属实不由本机决定（这轮 6 家刚好撑过 440，
+  // 「内容不超高」那个分支反而没被走到 —— 两头各推一份自己说了算的夹具才有确定前提）。
+  const realSnapsHere = (await exec('window.api.getState().then(s=>s.snapshots)')) as unknown[]
+  // ① AC1：内容不超高（2 家 1 行）→ 横竖都要零溢出，这是 PRD 的字面口径
+  // ⚠ FIX_PLAN1 / FIX_BAL 本身都是**数组**（快照列表），拼夹具要展开而不是嵌套 ——
+  //   嵌套成 [[snap],[snap]] 会让主进程 summaryParts 读到 undefined.length 直接抛，
+  //   渲染层拿到嵌套快照同样在渲染时抛（ErrorBoundary 接管，整轮断言从这里全红）。
+  await pushFix([...FIX_PLAN1, ...FIX_BAL])
+  const openSmall = await readOpenScroll()
+  const os = openSmall.m
+  r.islandOpenNoOverflow = openSmall.err
+    ? `fail:${openSmall.err}`
+    : os!.tall
+      ? `fail:precondition（2 家仍超高 sh=${os!.sh}/ch=${os!.ch}，这条断言失去意义）`
+      : os!.sw !== os!.cw
+        ? `fail:sw=${os!.sw}!=cw=${os!.cw}（横轴可滚 = 辉光伪元素又外扩了）`
+        : os!.sh !== os!.ch
+          ? `fail:sh=${os!.sh}!=ch=${os!.ch}（纵轴溢出 = 辉光外扩 8px）`
+          : `ok(sw=${os!.sw} sh=${os!.sh})`
+  // AC2 展开态辉光：--glow 断供时 ::after 的背景会退成 transparent，blur 层就没色了
+  // （收起态的常驻辉光与 danger 呼吸另有静态门 L3/L4，这里只管展开态这份）
+  r.islandOpenGlow = openSmall.err
+    ? `fail:${openSmall.err}`
+    : os!.glowFilter.includes('blur') && os!.glowBg !== 'rgba(0, 0, 0, 0)' && os!.glowBg !== 'transparent'
+      ? `ok(${os!.glowBg} overflow-x=${os!.overflowX})`
+      : `fail:bg=${os!.glowBg} filter=${os!.glowFilter}`
+
+  // ② AC3：内容超过 max-height（440px）时**只纵滚、不长横条** —— 推 18 家撑过 440
+  const tallFix = Array.from({ length: 18 }, (_, i) => planFix(`fix-tall${i}`, `Fix 高度 ${i}`, [fw('5 小时', 10 + (i % 70))]))
+  await pushFix(tallFix)
+  const open2 = await readOpenScroll()
+  // 原样推回真实快照：紧随其后的收起 / 回卡片断言按真实数据走（与本段前置一致）
+  await pushFix(realSnapsHere)
+  const o2 = open2.m
+  r.islandOpenTallScroll = open2.err
+    ? `fail:${open2.err}`
+    : !o2!.tall
+      ? `fail:not-tall（18 家仍没撑过 440px，前提不成立 sh=${o2!.sh}/ch=${o2!.ch}）`
+      : o2!.sh <= o2!.ch
+        ? `fail:no-v-scroll sh=${o2!.sh} ch=${o2!.ch}`
+        : o2!.sw !== o2!.cw
+          ? `fail:sw=${o2!.sw}!=cw=${o2!.cw}（超高内容不该带出横向滚动条）`
+          : `ok(sh=${o2!.sh}>ch=${o2!.ch} sw=cw)`
+
   // 再点一次岛身（空白处除外）→ 收起；随后仍在岛上
   await exec(islClickJs())
   await sleep(600)
@@ -525,7 +609,12 @@ export async function runUiTest(
   await sleep(900)
   const b2 = bounds()
   r.dotClickExpand2 = b2.width > 300 ? 'ok' : `fail:${b2.width}x${b2.height}`
-  r.cardBack2 = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
+  // 失败时带现场（岛还在不在、是不是隐藏态 pill）—— 裸 'fail' 分不清「双击没切走」
+  // 与「切走了但卡片没渲染」；卡在 dockHidden 跳过双击那条历史上正是这样查了很久。
+  const cb2 = await islandProbe()
+  r.cardBack2 = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')"))
+    ? 'ok'
+    : `fail:no-card mode=${cb2.mode} pill=${cb2.pill} open=${cb2.open}（岛还在 = 双击没切走）`
   // 回到岛上，后续岛断言以它为基准
   await exec(footerClick('收起'))
   await sleep(700)
@@ -970,6 +1059,77 @@ export async function runUiTest(
         ? 'ok'
         : `fail:${trayMode}`
       : `skipped(${trayMode})`
+
+  // ── 托盘左键 = 展开灵动岛面板 + 顶部居中（10-13-island-open-overflow R3 / AC4）──
+  //
+  // 驱动的是**真实入口** `expandIslandPanelFromTray()`（debug:tray-expand 只是把它
+  // 从 QA 门内接出来，不另写一份模拟）。前置 = 主卡片视图 + 窗口可见 —— 正是 PRD
+  // 「面板已在展示时，首次点击按展开语义处理、不额外多一次显隐跳变」那一条。
+  {
+    type TrayState = { openedByTray: boolean; seq: number; collapsed: boolean; visible: boolean; island: { x: number; y: number } | null }
+    const wa0 = screen.getDisplayNearestPoint({ x: bounds().x + bounds().width / 2, y: bounds().y + bounds().height / 2 }).workArea
+    const wantX = Math.round(wa0.x + (wa0.width - ISLAND_VIEW.width) / 2)
+    const trayClick = async (): Promise<TrayState | null> =>
+      (await exec('window.api.debugTrayExpand()')) as TrayState | null
+
+    // ① 首次点击（面板还在卡片视图）→ 展开语义：不隐藏、岛尺寸、顶部居中、岛真的展开
+    const c1 = await trayClick()
+    await sleep(900)
+    const b1 = bounds()
+    const p1 = await islandProbe()
+    r.trayExpand = [
+      c1?.openedByTray ? '' : `fail:openedByTray=${c1 ? c1.openedByTray : 'no-reply'}`,
+      win.isVisible() ? '' : 'fail:hidden（已在展示时首次点击不该先藏一次）',
+      b1.width === ISLAND_VIEW.width && b1.height === ISLAND_VIEW.height ? '' : `fail:size=${b1.width}x${b1.height}`,
+      b1.x === wantX ? '' : `fail:x=${b1.x}!=${wantX}（应顶部居中）`,
+      b1.y === wa0.y ? '' : `fail:y=${b1.y}!=${wa0.y}（应贴菜单栏下沿）`,
+      p1.err
+        ? `fail:probe=${p1.err}`
+        : p1.open && p1.expanded
+          ? ''
+          : `fail:open=${p1.open} mode=${p1.mode}（主进程的展开信号没落到岛上）`,
+      c1?.island && c1.island.x === b1.x && c1.island.y === b1.y
+        ? ''
+        : `fail:落盘没跟上 ${JSON.stringify(c1?.island ?? null)} != ${b1.x},${b1.y}（AC7 口径）`
+    ]
+      .filter(Boolean)
+      .join(' | ') || 'ok'
+
+    // ② 再次点击（面板正是①由托盘打开的）→ 隐藏
+    const c2 = await trayClick()
+    await sleep(300)
+    r.trayExpandHide =
+      !win.isVisible() && c2 && c2.openedByTray === false
+        ? 'ok'
+        : `fail:visible=${win.isVisible()} openedByTray=${c2 ? c2.openedByTray : 'no-reply'}`
+
+    // ③ 隐藏中再点 → 重新展开，且**必须发一次新的序号**（岛这次是把 seq 从 0 消费掉的；
+    //    光看 open 会与①残留的本地状态混淆，序号是主进程侧单调的）
+    const c3 = await trayClick()
+    await sleep(900)
+    r.trayExpandAgain =
+      win.isVisible() && c3 && c3.openedByTray && c3.seq === (c1?.seq ?? -1) + 1
+        ? 'ok'
+        : `fail:visible=${win.isVisible()} openedByTray=${c3 ? c3.openedByTray : 'no-reply'} seq=${c3?.seq}!=${(c1?.seq ?? -1) + 1}`
+
+    // 还原：回主卡片视图（= 本段前置），后续断言从卡片开始；顺带验证手动开合
+    // 会让托盘的「已展开」标记失效（下次首点走展开语义而不是直接隐藏）
+    await exec('window.api.expand()')
+    await sleep(800)
+    const c4 = await trayClick()
+    await sleep(900)
+    const p4 = await islandProbe()
+    r.trayExpandFromCard =
+      win.isVisible() && c4 && c4.openedByTray && c4.seq === (c3?.seq ?? -1) + 1 && !p4.err && p4.open
+        ? 'ok'
+        : `fail:visible=${win.isVisible()} openedByTray=${c4 ? c4.openedByTray : 'no-reply'} seq=${c4?.seq}!=${(c3?.seq ?? -1) + 1} open=${p4.open} err=${p4.err}`
+    // 收尾：手动展开回卡片（窗口保持可见，托盘标记同时失效），把状态交回后续断言
+    await exec('window.api.expand()')
+    await sleep(800)
+    r.trayExpandRestore = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')"))
+      ? 'ok'
+      : 'fail:no-card'
+  }
 
   // 主面板余额显隐（眼睛按钮：打码 + 偏好持久化 + 可还原）
   const clickEye = (): Promise<unknown> =>

@@ -17,7 +17,9 @@ import {
   dockTapPeek,
   petWindowState,
   currentCollapsed,
-  resyncDockState
+  resyncDockState,
+  expandIslandPanelFromTray,
+  trayPanelState
 } from './overlay'
 import { refreshNow, currentState, resort, reconfigure, debugPush, loadUsageHistory, pruneUsageHistory } from './scheduler'
 import { setTrayIcon, trayBadgeInfo, trayInteractionMode } from './tray'
@@ -529,6 +531,12 @@ export function registerIpc(): void {
     ipcMain.handle('debug:tray-mode', () => trayInteractionMode())
     // 图标等级与状态点形状：模板图标在 macOS 上没有颜色，等级只能从这里读
     ipcMain.handle('debug:tray-image', () => trayBadgeInfo())
+    // 托盘左键展开入口（10-13 R3）：驱动**真实**入口本身（不另写一份模拟），
+    // 回传观测点；窗口几何由 uitest 自己读 win.getBounds() 对 workArea 判定
+    ipcMain.handle('debug:tray-expand', () => {
+      expandIslandPanelFromTray()
+      return trayPanelState()
+    })
     // 穿透状态 / 收起态 / 漫游轮询是否在跑（验证球外区域可点到桌面）
     ipcMain.handle('debug:pet-state', () => ({ ...petIgnoreState(), ...petWindowState() }))
     // 设置置顶偏好（uitest 用；生产走渲染层 UI）

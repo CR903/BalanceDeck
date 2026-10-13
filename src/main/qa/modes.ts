@@ -1,4 +1,4 @@
-import { createOverlay, toggleOverlay } from '../overlay'
+import { createOverlay, toggleOverlay, expandIslandPanelFromTray } from '../overlay'
 import { createTray, updateTray, currentTrayTitle, trayImageInfo } from '../tray'
 import { currentState, refreshNow, startScheduler } from '../scheduler'
 import type { AppState } from '../../shared/types'
@@ -39,7 +39,7 @@ export function setupTestApp(onState: PushFn): TestApp {
       if (process.env.BD_TRACE === '1') process.stdout.write(`[renderer:${level}] ${message.slice(0, 400)}\n`)
     }
   })
-  createTray(toggleOverlay, refreshNow)
+  createTray(toggleOverlay, refreshNow, expandIslandPanelFromTray)
   // 托盘回调传真实 updateTray：让 smoke 能验证状态栏文案与图标链路
   startScheduler(onState, updateTray)
   return { win, consoleErrors, preloadError: () => preloadError }

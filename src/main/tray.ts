@@ -40,7 +40,7 @@ function defaultIconPath(): string {
   return join(base, name)
 }
 
-export function createTray(onToggle: () => void, onRefresh: () => void): Tray {
+export function createTray(onToggle: () => void, onRefresh: () => void, onLeftClick?: () => void): Tray {
   toggleFn = onToggle
   const icon = nativeImage.createFromPath(defaultIconPath())
   if (process.platform === 'darwin') {
@@ -48,8 +48,12 @@ export function createTray(onToggle: () => void, onRefresh: () => void): Tray {
   }
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
   tray.setToolTip('BalanceDeck 余额板')
-  // 左键点击 → 直接切换悬浮卡片显隐（这是菜单栏组件的核心操作）
-  tray.on('click', () => toggleFn())
+  // 左键点击 → macOS：展开灵动岛面板（10-13 R3：点状态栏 = 顶部居中的展开卡片，
+  // 再点一次隐藏）。**菜单项仍走 onToggle 的纯显隐** —— 右键菜单「显示 / 隐藏悬浮卡片」
+  // 的现有行为按 PRD 保持不变，两条入口就此分工，别把新逻辑顺手塞给菜单。
+  // 非 macOS 保持 setContextMenu 现状（PRD Out of Scope：不改那边的左键行为）。
+  const leftClick = process.platform === 'darwin' && onLeftClick ? onLeftClick : onToggle
+  tray.on('click', () => leftClick())
   if (process.platform === 'darwin') {
     // ⚠️ macOS 上 setContextMenu 会让菜单抢占左键点击（click 事件不再触发），
     // 表现为"点击状态栏只弹菜单、面板要再从菜单里点一次"。

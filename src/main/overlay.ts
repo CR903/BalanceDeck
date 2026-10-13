@@ -238,8 +238,8 @@ export function dockTestToEdge(edge: DockEdge): { x: number; y: number } {
       : edge === 'right'
         ? { x: wa.x + wa.width - w, y: Math.round(wa.y + (wa.height - h) / 2) }
         : edge === 'top'
-          ? { x: Math.round(wa.x + (wa.width - w) / 2), y: wa.y }
-          : { x: Math.round(wa.x + (wa.width - w) / 2), y: wa.y + wa.height - h }
+          ? { x: centeredX(wa, w), y: wa.y }
+          : { x: centeredX(wa, w), y: wa.y + wa.height - h }
   applyingBounds = true
   // 744 崩溃同类：裸 win.setPosition 不得吃非有限数（守卫与注入的 setPosition 同口径）
   if (Number.isFinite(pos.x) && Number.isFinite(pos.y)) win.setPosition(pos.x, pos.y)
@@ -530,13 +530,117 @@ export function getOverlay(): BrowserWindow | null {
 
 export function toggleOverlay(): void {
   if (!win) return
+  // 菜单项「显示 / 隐藏悬浮卡片」走的是这条纯显隐：它不是"托盘展开"，
+  // 之前的展开标记在这里失效 —— 之后第一次点托盘按展开语义走，不当成第二次点击直接隐藏
+  trayOpenedByClick = false
   if (win.isVisible()) win.hide()
   else win.show()
+}
+
+// ─── 托盘左键：展开灵动岛面板（10-13-island-open-overflow R3）────────────────
+
+/**
+ * 「面板是被托盘点开的」标记：再点一次据此隐藏（R3 第 2 条）。
+ * 用户自己切视图（setCollapsed）或用菜单显隐（toggleOverlay）即失效 —— 那之后的
+ * 第一次点击按展开语义走（面板无论原来在哪个形态，都摆成岛的展开态，不多一次显隐跳变）。
+ */
+let trayOpenedByClick = false
+/**
+ * 托盘 → 渲染层的「展开面板」意图序号（单调递增，消费后由渲染层清零回 0）。
+ * 用序号而不是布尔：布尔一旦被消费成 false，同一帧内到达的第二次推送会被合并掉。
+ */
+let islandOpenSeq = 0
+
+/** 测试观测点：托盘展开入口的状态（--uitest 用，仿 petWindowState / trayBadgeInfo） */
+export function trayPanelState(): {
+  openedByTray: boolean
+  seq: number
+  collapsed: boolean
+  visible: boolean
+  /** 落盘的岛位置（state.island）：托盘定位是否走进同一条 notePosition 口径，AC7 */
+  island: { x: number; y: number } | null
+} {
+  return {
+    openedByTray: trayOpenedByClick,
+    seq: islandOpenSeq,
+    collapsed: !!state.collapsed,
+    visible: win?.isVisible() ?? false,
+    island: validIsland(state.island)
+  }
+}
+
+/**
+ * 托盘左键：把面板摆成「灵动岛展开态 + 顶部居中、紧贴菜单栏下沿」（R3）。
+ *
+ * 为什么不能直接用 `toggleOverlay()`：它只做 `win.hide()/show()`，既不改收起态也不重新
+ * 定位 —— 用户点状态栏要看到的是那块 430px 的 2 列卡片，而不是"原来的形态碰巧显示出来"。
+ *
+ * 定位只活在这条路径上：启动定位（createOverlay R1/R2）、开合定位（setCollapsed）、
+ * 拖拽落盘（notePosition / state.island）各守各的语义，这里一个都不改写。
+ */
+export function expandIslandPanelFromTray(): void {
+  if (!win) return
+  // ① 贴边自动隐藏先复位（与 setCollapsed 同口径）：隐藏态下 getBounds 读到的是屏外
+  //    隐藏坐标，不复位就会按它挑显示器，面板被"居中"到看不见的地方
+  dock.resetToVisible()
+  // ② 「已由托盘打开」再点一次 = 隐藏（右键菜单的显隐走 toggleOverlay，互不相干）
+  if (trayOpenedByClick && win.isVisible()) {
+    trayOpenedByClick = false
+    win.hide()
+    return
+  }
+  // ③ 还停在主卡片视图 → 先切回收起态灵动岛（setCollapsed 内含 resetToVisible、
+  //    窗口阴影、ui:collapsed 推送与穿透轮询开关）
+  if (!state.collapsed) setCollapsed(true)
+  // 面板必须整体可点：已在收起态时 setCollapsed 不会再来一次，这里补一次（幂等，
+  // watchTimer 非空时直接 return）
+  setPetCursorWatch(true)
+  trayOpenedByClick = true
+  // ④ 顶部居中 + 紧贴菜单栏下沿（这条路径专属的落位）
+  placeTopCentered()
+  // ⑤ 展开意图推给渲染层：岛的展开态是 IslandView 的本地 useState，主进程推不动它，
+  //    只能发信号 —— 由**常驻的 App** 订阅再以 prop 递给岛（岛随收起/展开挂载卸载，
+  //    让岛自己订阅会把"面板还在卡片视图"那次推送吞掉，与 ui:collapsed 丢首帧同类）
+  islandOpenSeq += 1
+  safeSend('ui:island-open', islandOpenSeq)
+  if (!win.isVisible()) win.show()
+}
+
+/**
+ * 托盘路径的落位：x = workArea 水平居中、y = workArea 顶部、尺寸 = 灵动岛窗口。
+ * x 的算术与 `dockTestToEdge('top'/'bottom')` 同走 `centeredX`，不长第二份。
+ *
+ * 落盘照旧走 `notePosition` —— 程序化移窗与拖拽是同一条口径（moved 事件稍后也会同值
+ * 覆盖），不写它磁盘上的位置就会谎称窗口还停在用户上次拖到的地方。
+ */
+function placeTopCentered(): void {
+  if (!win) return
+  const b = win.getBounds()
+  // 按窗口中心挑显示器：与 snapBackToWorkArea / resizeCollapsed 同一口径
+  const wa = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + b.height / 2 }).workArea
+  const x = centeredX(wa, COLLAPSED_ISLAND.width)
+  const y = wa.y
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return
+  win.setResizable(true)
+  applyingBounds = true
+  win.setBounds({ x, y, width: COLLAPSED_ISLAND.width, height: COLLAPSED_ISLAND.height })
+  applyingBounds = false
+  win.setResizable(false)
+  notePosition(x, y)
 }
 
 /** 把 v 夹回 [lo, hi]（lo > hi 时取 lo，防止小屏负区间） */
 function clampToWorkArea(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), Math.max(lo, hi))
+}
+
+/**
+ * workArea 水平居中（并夹回工作区，小屏 w > 工作区时退到左上角）。
+ * `dockTestToEdge` 的 top/bottom 摆位与托盘展开（`placeTopCentered`）共用这一条算术 ——
+ * 同一个几何抄第二份，等着漂移（RING_GEO 那次教训同理）。
+ */
+function centeredX(wa: Electron.Rectangle, w: number): number {
+  return Math.round(clampToWorkArea(wa.x + (wa.width - w) / 2, wa.x, wa.x + wa.width - w))
 }
 
 /**
@@ -569,6 +673,9 @@ let applyingBounds = false
 
 export function setCollapsed(collapsed: boolean): void {
   if (!win) return
+  // 手动开合即改变视图状态：托盘「已由托盘打开」标记失效 —— 之后第一次点托盘按展开
+  // 语义走（R3 第 3 条），不会因为残留标记把面板直接藏掉。托盘路径自己在调用后重置。
+  trayOpenedByClick = false
   // 展开/收起切换先取消隐藏计时与动画、不残留隐藏偏移（R1/R5 取消条件）——
   // 必须在读 bounds 之前：隐藏态下读到的是屏外隐藏坐标，圆点锚点/展开原点都会跟着错。
   dock.resetToVisible()

@@ -93,6 +93,13 @@ export interface IslandViewProps {
   hideBalance: boolean
   /** 是否已缩成 mini-pill（主进程 dock:hidden 推，此时单击 = 唤出） */
   dockHidden: boolean
+  /**
+   * 主进程「展开面板」意图序号（托盘左键，10-13 R3；0 = 无待办）。
+   * 由常驻的 App 订阅推送后转发过来 —— 岛自己订阅会丢掉面板还在卡片视图那一次。
+   */
+  islandOpenSeq?: number
+  /** 消费一次意图（App 把序号清零）；不消费的话残留序号会让下次收起也自动展开 */
+  onIslandOpenConsumed?: () => void
   /** 流体相位 + 贴边（主进程 dock:fluid 推，只切呈现类，不算几何） */
   fluidPhase?: string
   fluidEdge?: string | null
@@ -199,6 +206,8 @@ export function IslandView({
   instanceInfo,
   hideBalance,
   dockHidden,
+  islandOpenSeq = 0,
+  onIslandOpenConsumed,
   fluidPhase = 'edge-visible',
   fluidEdge = null,
   onExpand,
@@ -287,6 +296,18 @@ export function IslandView({
   useEffect(() => {
     if (dockHidden) setOpen(false)
   }, [dockHidden])
+
+  // 主进程「展开面板」意图（托盘左键，10-13 R3）：序号非 0 即有待办 ——
+  // 已挂载时直接展开；带着序号挂载（面板当时在卡片视图，切过来时序号已先到）同样展开。
+  // 消费即由 App 清零，否则残留序号会让岛之后每次收起都自动展开。
+  // dockHidden 期间**不消费**：主进程那条路径先复位贴边隐藏再推序号，这里等
+  // dock:hidden 把隐藏态清掉再展开 —— 否则本 effect 与上面那条强制收起同帧打架，
+  // 展开被当帧撤销而序号已被消费（面板从此打不开，且没有任何报错）。
+  useEffect(() => {
+    if (!islandOpenSeq || dockHidden) return
+    setOpen(true)
+    onIslandOpenConsumed?.()
+  }, [islandOpenSeq, dockHidden, onIslandOpenConsumed])
 
   // 测试钩子：__bd_island 读展开/位置/家数（纯数据，可结构化克隆）
   useEffect(() => {

@@ -520,6 +520,69 @@ verbatim; if it goes red, the fix is to move the request, not to edit `index.htm
 Related: [`../guides/external-api-integration.md`](../guides/external-api-integration.md)
 Step 9 (verify from the layer that actually issues the request).
 
+### Don't: let an intermittently-mounted component own a main-process push subscription
+
+**Scope / trigger.** A main-process *intent* (not state) must reach a component that mounts
+and unmounts — here `IslandView`, which is only rendered while `collapsed` is true. The
+push in question is `ui:island-open` (tray left-click → "show the expanded island panel",
+`10-13-island-open-overflow` R3).
+
+**Two independent failure modes**, both silent, both already paid for:
+
+1. **The mount/unmount swallow.** If `IslandView` subscribes itself, a push that arrives
+   while the panel is on the card view is delivered to *nobody* — the subscriber does not
+   exist. Same class as `ui:collapsed` losing its first frame to `loadFile().then(...)`
+   (`overlay.ts:76` documents that one); the fix there was a pull (`ui:get-collapsed`),
+   because `collapsed` is replayable state — an intent is not, so it needs a resident
+   subscriber instead.
+2. **The sticky-signal swallow.** A boolean flag the consumer clears on read works until two
+   pushes land in one frame — React batches, the second write wins, and one click evaporates.
+
+**Contract.**
+
+| Piece | Where | Rule |
+|---|---|---|
+| Signal type | `overlay.ts` `islandOpenSeq` | **Monotonic counter**, never a boolean |
+| Channel | `ui:island-open`, payload `number` | Consumer diffs against its last-seen value; `0` = nothing pending |
+| Subscriber | `App.tsx` (always mounted) | Subscribes once in the boot effect, forwards to the island **as a prop** |
+| Consumption | `IslandView` effect | Sets `open=true` **then** calls `onIslandOpenConsumed()` to zero it |
+
+```ts
+// IslandView.tsx — the ordering and the guard are both load-bearing
+useEffect(() => {
+  if (!islandOpenSeq || dockHidden) return   // ← do not consume while blocked
+  setOpen(true)
+  onIslandOpenConsumed?.()                    // ← zero it, or every later collapse auto-opens
+}, [islandOpenSeq, dockHidden, onIslandOpenConsumed])
+```
+
+**Validation & error matrix.**
+
+| Condition | Result if the rule is broken |
+|---|---|
+| Push while on card view | Panel never opens; no error, no log |
+| Consumer not zeroing the signal | Island re-opens itself on every subsequent collapse |
+| `dockHidden` guard dropped from the effect | That frame's force-collapse wins, the signal is *already consumed*, panel permanently unopenable |
+| Boolean instead of counter | Two clicks in one frame collapse into one |
+
+The `dockHidden` branch deserves its own line: `IslandView` has a standing effect that forces
+`setOpen(false)` whenever `dockHidden` flips true. The tray path calls `dock.resetToVisible()`
+before pushing, so the two can land in the same frame. Consuming the signal there spends the
+intent on an `open` that is overwritten before paint — and since the signal is now zero, there
+is nothing left to retry with.
+
+**Wrong vs correct.**
+
+```ts
+// Wrong: island subscribes to 'ui:island-open' itself → the card-view frame is lost
+// Wrong: main pushes a boolean → cannot reach a component that isn't mounted,
+//        and cannot say "again, twice"
+// Correct: resident App holds a counter, forwards as prop, island consumes and zeroes it
+```
+
+Related: [`../guides/cross-layer-thinking-guide.md`](../guides/cross-layer-thinking-guide.md)
+— a push channel that crosses a mount boundary is a cross-layer boundary, not a prop.
+
 ## Related
 
 - [`hook-guidelines.md`](./hook-guidelines.md) ·
