@@ -48,3 +48,27 @@ CP1 过：Aria 有肤色与西装配色）、步骤 2（`pet3d/viewfit.ts` 二�
 量 z=±halfZ 的 ink box 宽高比 ≥1.35×），再做步骤 4（语音）与步骤 5（文档）。
 `PetBall.tsx`(+41) 与 `skins.css`(+6) 是子代理为消除 `320/230` 重复而改的，**还没逐行审过**。
 所有改动仍在工作区未提交；用户应用状态已还原为 `ui:pet='1'` / `id='ray'`。
+
+
+## Session 1: 展开面板滚动条归零 + 托盘左键展开定位
+<!-- trellis-session: v=2 fp=c057fa1af3f8dbb4 -->
+
+**Date**: 2026-10-13
+**Task**: 展开面板滚动条归零 + 托盘左键展开定位
+**Branch**: `main`
+
+### Summary
+
+用户报「2K 屏没滚动条」，实测定性为所有屏都在溢出：.isl-body.open 的 overflow-y:auto 让横轴的 visible 被算成 auto，氛围辉光伪元素 inset -8px -16px 向外扩的 16/8px 成了可滚动溢出（435/419、245/237）。根修收回 inset 0（blur 的绘制外溢不计入滚动量，辉光不丢），另加 overflow-x: hidden 裁长图例名的结构性溢出；收起态不动。托盘左键改走 expandIslandPanelFromTray()，落位屏幕顶部居中紧贴菜单栏下沿，再点隐藏，右键菜单不变；跨层推送用单调序号 + 常驻 App 订阅转发 prop，避免岛挂载卸载吞掉意图。验证：typecheck 通过、npm test 全绿、L10 守卫改坏过一次确认会红、浏览器实测 sw==cw 且 18 卡超高仅纵滚。spec 沉淀两条（辉光不许外扩出滚动容器、间歇挂载组件不得持有主进程推送订阅）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f526ae` | fix(island): 展开面板溢出归零 + 托盘左键展开定位 |
+| `7d35da9` | chore(task): add 10-13-island-open-overflow-and-tray-expand |
+| `77e098f` | docs: 添加 10-13 开发日志与索引 |
+
+### Status
+
+[OK] **Completed**
