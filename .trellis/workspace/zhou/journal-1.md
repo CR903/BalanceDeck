@@ -495,3 +495,48 @@ live 验证发现 since 走 ~48h 短期数据，周/月只回 2 天；改为周/
 ### Next Steps
 
 - F5 接线点缺静态断言；F6 dock-hide 定时竞态 flake；F4 序列求和≠meter 可另开调查
+
+
+## Session 16: 同步永久卡死与每轮 2 秒主进程阻塞修复（采集看门狗 + 本机扫描投影/增量）
+<!-- trellis-session: v=2 fp=87560f44676f6403 -->
+
+**Date**: 2026-10-18
+**Task**: 同步永久卡死与每轮 2 秒主进程阻塞修复（采集看门狗 + 本机扫描投影/增量）
+**Branch**: `main`
+
+### Summary
+
+从用户截图的「3小时前 + 刷新没反应 + 转圈」出发，用落盘文件心跳、lsof 零连接、sample 卡在 select()、重启前后对比完成根因定位，拆父任务 + 三个孩子实施与核查；A 修调度永久卡死与刷新静默丢弃，B 把本机 opencode.db 扫描从 1935ms/轮降到毫秒级。
+
+### Main Changes
+
+- A 调度：新增 collect-loop.ts（纯逻辑单持有者循环，取代 setTimeout 自重排链）+ deadline.ts（轮级预算 120s，超时不 reject）；epoch 闸门保证超时轮次迟到结果被丢弃；ui:refresh 返回 started/queued 且 queued 合并为一次补跑并保持 scanning:true
+- A 出网：request.ts 改 race+abort 双保险以覆盖 DNS/建连阶段；超时错误复用 AbortError 归类；DetailView 刷新按钮接 scanning 显示 spinning；AppState 追加可选 lastTimeoutAt
+- A 核查新修：收尾回调抛异常（webContents 已销毁时 push 会抛）会永久杀死调度循环 —— 与原始症状逐字相同，已 try/catch 并加 C9 护栏
+- B 本机扫描：新增 opencode-local.ts，SQL 侧 json_extract 投影 + provider 过滤（1935ms→761ms、零 JSON.parse）+ rowid 增量游标 + 缓存键剔除 -wal/-shm；稳态 4.7-5.7ms
+- B 同型隐患：antigravity 的 execFileSync 同步读 Keychain 改异步 + 5s 超时 + 凭据缓存；claude/codex 目录遍历改 mtime 短路（产品路径 0 次 readdir）；抽出 scan-dir.ts 共用
+- spec：新增 adapters/local-db-scan.md（七段契约）、frontend/state-management.md 新增采集循环契约与两条 Common Mistakes；knowledge 与 daily 日志落地
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c4f8ef` | fix: 修同步永久卡死与每轮 2 秒主进程阻塞 |
+
+### Testing
+
+- [OK] npm run typecheck 通过；npm test 22 段全绿 0 失败；uitest detailRefreshSpin=ok
+- [OK] 护栏自证（每条先弄坏一次）：withDeadline 超时改 reject→红；去 epoch+=1→C5f/C5i/C5j 红；闸门后插 await→C8f 红；去掉 try/catch→C9b 红；dbStamp 加回 -wal→L2c/L5b 红；合并键换 t|cost→L3x-g 红；Keychain 回 execFileSync→XSG7 红
+- [OK] 真机取证：临时预算 4000ms 逼出「轮次超时→collect stale 丢弃 7 条迟到结果→下一轮成功」；120s 真实预算连跑 13 分钟 collect done×13、超时 0；generatedAt 持续前进
+- [OK] B 真机：稳态 cache 4.7-5.7ms、增量 29-35ms；sample 主线程 0 帧 sqlite/JSON；口径与旧实现逐点等价（pts+byModel）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- AC4 的 900ms 冷启动红线在应用内未达标（重测 1222/2971/4418ms；同条件旧实现 2.31-3.37 倍）→ 已建 10-18-local-db-worker-offload（worker/utilityProcess），打包风险是它不并入本轮的原因
+- B 增量盲区有界未消除：回看 600 行 + 6 小时全量核对，窗口外改值/删行最多陈旧 6h（有断言钉住）
+- --uitest 既有 flaky 且 HEAD 基线也红（intervalFlash 约 1/2 失败），本轮未修，勿误判为新回归
+- /Applications/BalanceDeck.app 仍是旧构建，修复只在源码/提交里，需重建安装后真机复测两症状

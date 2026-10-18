@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-10-11
+- **Total Sessions**: 16
+- **Last Active**: 2026-10-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~497 | Active |
+| `journal-1.md` | ~542 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-10-18 | 同步永久卡死与每轮 2 秒主进程阻塞修复（采集看门狗 + 本机扫描投影/增量） | `0c4f8ef` | `main` |
 | 15 | 2026-10-11 | opencode 详情页修复：周/月 since 保留期缺陷 | `4226fe8` | `main` |
 | 14 | 2026-10-11 | opencode 详情页对齐新版官网：窗口序列视图与余额 | `c082501` | `main` |
 | 13 | 2026-10-11 | 岛展开面板点进详情归档 | `4b7bb22` | `main` |
