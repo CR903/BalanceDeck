@@ -205,7 +205,28 @@ export interface AppState {
   scanning: boolean
   /** 网络不可用（系统级断网，或本轮所有网络源均失败）—— UI 据此提示"数据可能过期" */
   offline?: boolean
+  /**
+   * 最近一次**采集轮次超时**的时刻（ISO 8601）。缺省 = 本进程还没超时过。
+   *
+   * 只允许**新增可选字段**：老渲染层、CLI 导出、托盘都按可选读它。
+   * 语义是「上一轮被看门狗判超时了」—— 界面上如实显示「本轮采集超时」，
+   * 而不是把超时那一轮伪装成一次正常的刷新（不伪造数据：快照沿用上一轮）。
+   */
+  lastTimeoutAt?: string
 }
+
+/**
+ * 手动刷新的结果枚举 —— `ui:refresh` 的返回类型。
+ *
+ *   started — 空闲，本轮就是这一拍
+ *   queued  — 已有轮次在飞（或已排队），本次请求**合并**进去，当轮结束后立即补跑
+ *
+ * 为什么需要它：旧通道 `Promise<void>` 让渲染层无法区分「开始了」与「被静默丢弃」——
+ * 而「丢弃」正是用户看到的「点刷新没反应」。
+ *
+ * 放在 shared 而不是某个主进程模块：preload 与渲染层都要用它，而 preload 从不 import main。
+ */
+export type RefreshOutcome = 'started' | 'queued'
 
 /** 环境变量扫描命中项 */
 export interface ScanHit {

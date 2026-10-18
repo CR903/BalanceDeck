@@ -1,8 +1,9 @@
 import { join } from 'path'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
 import { errSnap, identityOf, noDataSnap, readJson, snap } from './engine'
+import { collectFiles } from './scan-dir'
 import type { DataQuality, ProviderWindow, ProviderSnapshot } from '../../shared/types'
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -173,25 +174,13 @@ function buildWhamWindows(body: unknown, deltas: { t: number; delta: number }[],
   return windows.length > 0 ? windows : null
 }
 
-function listRollouts(dir: string, out: string[], depth = 0): void {
-  if (depth > 5 || !existsSync(dir)) return
-  let entries: string[]
-  try {
-    entries = readdirSync(dir)
-  } catch {
-    return
-  }
-  for (const e of entries) {
-    const p = join(dir, e)
-    let st
-    try {
-      st = statSync(p)
-    } catch {
-      continue
-    }
-    if (st.isDirectory()) listRollouts(p, out, depth + 1)
-    else if (e.startsWith('rollout-') && e.endsWith('.jsonl')) out.push(p)
-  }
+/**
+ * 会话 rollout 文件列表。遍历交给 `collectFiles`（目录 mtime 短路，见 scan-dir.ts）：
+ * 旧写法每轮都对每个子项 statSync（codex 的 sessions 目录按日分目录，层级深、文件杂）。
+ * 深度上限 5 与旧写法一致。
+ */
+function listRollouts(dir: string): string[] {
+  return collectFiles(dir, { maxDepth: 5, match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl') })
 }
 
 function lineTime(v: number | string | undefined): number {
@@ -326,8 +315,7 @@ export const codexAdapter: ProviderAdapter = {
 
     // ── 0. 本机 sessions 先读出来：wham 成功要拿它回填 used，失败要拿它回退 ──
     //     （下面两条路共用同一份读取结果；jsonl 的解析语义与今天逐字相同）
-    const files: string[] = []
-    listRollouts(join(codexHome(), 'sessions'), files)
+    const files = listRollouts(join(codexHome(), 'sessions'))
     // 只解析最近修改的 5 个会话
     const recent = files
       .map((f) => {

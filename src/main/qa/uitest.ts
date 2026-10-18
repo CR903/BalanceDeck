@@ -399,6 +399,29 @@ export async function runUiTest(
       r.creditRow = `skipped:open=${openName || 'unknown'}`
     }
 
+    // ── 详情页刷新按钮的「有活要干」反馈（R7 / AC8）─────────────────────────
+    // 此前 DetailView 的⟳ **零反馈**：点了什么都不变。断言的是渲染出来的类
+    // （`.icon-btn.spinning`），不是按钮的 value —— 类名是表现层真正消费的那个信号。
+    // 轮询而不是睡死：一轮采集（真实出网 + 本机库解析）通常要 1s 以上，
+    // 但机器快时可能很短，睡固定值会变成「有时红有时绿」。
+    {
+      const hasBtn = (await exec("!!document.querySelector('.card.detail button[title=立即刷新]')")) === true
+      if (!hasBtn) {
+        r.detailRefreshSpin = 'fail:no-btn'
+      } else {
+        await exec("document.querySelector('.card.detail button[title=立即刷新]')?.click()")
+        let spun = false
+        for (let i = 0; i < 30; i++) {
+          if ((await exec("!!document.querySelector('.card.detail .icon-btn.spinning')")) === true) {
+            spun = true
+            break
+          }
+          await sleep(50)
+        }
+        r.detailRefreshSpin = spun ? 'ok' : 'fail:no-spinning'
+      }
+    }
+
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
     await sleep(600)
     r.detailBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
@@ -410,6 +433,7 @@ export async function runUiTest(
     r.trendBars = 'skipped:no-card'
     r.trendSource = 'skipped:no-card'
     r.creditRow = 'skipped:no-card'
+    r.detailRefreshSpin = 'skipped:no-card'
   }
 
   // 收起（底部按钮区）

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验收判据：assertion 脚本风格、loadTs 真源码、护栏先弄坏一次、tsc 与 npm test 都要跑"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "口径核查：本机 tokens 的标注、缺失值不填 0、增量与全量必须逐点等价"}
+{"file": ".trellis/spec/adapters/opencode-console.md", "reason": "确认未触碰官方口径与端点契约，本机数据仍只作附属"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核查同型同步 IO 是否被收口到单一模块，而非三处各留一份"}

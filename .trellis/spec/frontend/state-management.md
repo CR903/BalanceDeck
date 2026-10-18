@@ -302,7 +302,81 @@ be calling the service behind their back.
 
 ---
 
+## The collection loop (main process) — budget, epoch gate, refresh semantics
+
+Written 2026-10-18 by `10-18-sync-collect-watchdog`. The failure it fixes: data froze at
+"3小时前", the refresh button did nothing at all, and **only a restart recovered it** (measured:
+`balance-export.json` frozen at 12:39 and `usage-history.json` at 12:25 while the process stayed
+alive until 15:35; kill + relaunch moved both forward immediately).
+
+**Owner**: `src/main/collect-loop.ts` — pure logic, no electron, loaded by
+`scripts/test-collect-loop.mjs` through `loadTs`. `scheduler.ts` is assembly only (adapter
+fan-out, push, tray, history sampling).
+
+Three contracts. Each one has an assertion that goes red when broken.
+
+**1. Every round has a budget.** `withDeadline` (`src/main/deadline.ts`) turns "never settles"
+into `{ ok: false, reason: 'timeout' }` rather than hanging. It deliberately **does not reject**
+on timeout (the caller needs no try/catch) but **does** re-throw a rejection that happened inside
+the budget. Constants: `COLLECT_BUDGET_MS = 120_000` (must exceed the worst *legitimate* round —
+antigravity's `postEachHost` is 3 hosts × 12s × 2 paths ≈ 72s), `SLOW_WARN_MS = 45_000` (log only).
+
+**2. The epoch gate.** Every round carries a monotonically increasing epoch. The round body must
+ask `current(epoch)` **before** writing `lastSnapshots` / `lastSync` / `push` / tray, so a
+timed-out round's late result is discarded instead of landing on top of the next round's.
+
+**3. Refresh has exactly two outcomes**: `started` (idle → run now) and `queued` (in flight →
+merged into a single pending rerun). `queued` **also** pushes `scanning: true`, because
+`scanning` means *there is work to do*, not *one particular round is running*. That is why the
+renderer needs no optimistic state of its own — `DetailView` and `CardView` just read
+`state.scanning`.
+
+Why the schedule is `while + await sleep` rather than `setTimeout`: the old shape had **two**
+independent entry points (`refreshNow().finally(scheduleLoop)` and the timer's own `.finally`),
+and both did `clearTimeout(timer)` + `setTimeout` — the first handle lost its reference and
+`stopScheduler()` could never clear it. A loop has one owner *by construction*. (The `sleep`
+itself is one tracked handle; the invariant is "at most one", asserted against
+`process.getActiveResourcesInfo()`.)
+
+**Wrong vs correct — the gate is only valid inside one synchronous block.**
+
+```ts
+// Wrong: the check and the write are separated by an await → TOCTOU.
+if (current(epoch)) { await push(s); lastSnapshots = merged }
+
+// Correct: the check and every write live in the same synchronous block.
+if (!current(epoch)) return
+lastSnapshots = merged
+push(s)
+```
+
+A microtask probe settled the timing question this design depends on: Node 22 **drains
+microtasks between two timer callbacks** (`timerA → microA → timerB`), so the epoch bump that
+follows the deadline's resolve is always ordered before the stale round's continuations. The
+remaining risk was never the scheduler — it is an `await` inserted between gate and write, which
+is why `C8f`/`C8g`/`C8h` pin that shape statically.
+
+---
+
 ## Common Mistakes
+
+### Don't: let an exception in a round's finishing callback take the schedule with it
+
+**Symptom**: rounds stop forever — the *same* user-visible failure this task set out to fix
+(data silently stops updating, no error anywhere).
+
+**Cause**: the round's finishing callback calls `push`, which reaches
+`getOverlay()?.webContents.send(...)`; that throws when the webContents has already been
+destroyed. The old loop re-armed itself *inside* that callback, so one throw ended the chain
+permanently. (`maybeWrite` swallows its own errors, which is why `push` is the only throwing
+edge.)
+
+**Fix**: wrap the round in try/catch in the loop body — the round already resets its own running
+flag internally, so the loop only has to survive. Asserted by `C9a`/`C9b`/`C9c`.
+
+**Prevention**: any self-rescheduling chain must re-arm from a position that cannot be skipped by
+a throw in the work it just ran. This is the same class as the `delayMs === null` trap in the
+reachability probe above.
 
 ### Don't: read a credential from the wrong store namespace
 

@@ -1,9 +1,11 @@
 import { join } from 'path'
-import { existsSync, readFileSync, statSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
 import { errSnap, identityOf, localSnap, noDataSnap, officialSnap, readJson } from './engine'
 import { fmtMoney } from './types'
+import { createLocalScanner } from './opencode-local'
+import type { LocalPoint, LocalStats } from './opencode-local'
 import type { ProviderSnapshot, ProviderWindow, ProviderModelRow } from '../../shared/types'
 import {
   fetchUsageViaCookie,
@@ -59,39 +61,6 @@ import type { ConsoleModelRow, ConsoleDetails, ConsoleWindowStarts } from '../op
 /** 兜底限额（美元）。仅在控制台与 API 都拿不到限额时使用。 */
 const LOCAL_LIMITS = { fiveHour: 12, weekly: 30, monthly: 60 }
 const USAGE_ENDPOINT = 'https://opencode.ai/zen/go/v1/usage'
-
-interface MsgData {
-  // 旧 schema（message 表）：role/providerID/modelID 在顶层
-  role?: string
-  providerID?: string
-  modelID?: string
-  // 新 schema（session_message 表）：model.{id,providerID}
-  model?: { id?: string; providerID?: string }
-  cost?: number
-  time?: { created?: number }
-  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }
-}
-
-interface Point {
-  t: number
-  cost: number
-  tokens: number
-  model: string
-}
-
-/** 解析一条消息记录（兼容旧 message 与新 session_message 两种 schema） */
-function parsePoint(d: MsgData): Point | null {
-  const providerID = d.providerID ?? d.model?.providerID
-  if (providerID !== 'opencode-go') return null
-  const cost = d.cost ?? 0
-  if (cost <= 0) return null
-  const t = d.time?.created ?? 0
-  if (t <= 0) return null
-  const tk = d.tokens
-  const tokens =
-    (tk?.input ?? 0) + (tk?.output ?? 0) + (tk?.reasoning ?? 0) + (tk?.cache?.read ?? 0) + (tk?.cache?.write ?? 0)
-  return { t, cost, tokens, model: d.modelID ?? d.model?.id ?? '' }
-}
 
 interface ApiWindow {
   status?: string
@@ -270,7 +239,8 @@ async function resolveCookie(
 
 // ─── 本机 opencode.db ───────────────────────────────────────────────────────
 
-function detectDbPath(): string | null {
+/** 本机 opencode.db 的候选路径（产品、诊断脚本、测量脚本共用这一处） */
+export function detectDbPath(): string | null {
   const candidates: string[] = []
   if (process.env.XDG_DATA_HOME) candidates.push(join(process.env.XDG_DATA_HOME, 'opencode', 'opencode.db'))
   candidates.push(join(homedir(), '.local', 'share', 'opencode', 'opencode.db'))
@@ -282,7 +252,7 @@ function detectDbPath(): string | null {
 }
 
 /** 5 小时窗口（块）算法：窗口自首条记录起持续 5h，结束后首条新记录开新窗 */
-function activeBlockRange(pts: Point[], now: number, spanMs = 5 * 3600_000): { start: number; end: number } | null {
+function activeBlockRange(pts: LocalPoint[], now: number, spanMs = 5 * 3600_000): { start: number; end: number } | null {
   if (pts.length === 0) return null
   let start = pts[0].t
   for (const p of pts) {
@@ -293,14 +263,14 @@ function activeBlockRange(pts: Point[], now: number, spanMs = 5 * 3600_000): { s
   return { start, end }
 }
 
-function sumSince(pts: Point[], sinceMs: number, pick: (p: Point) => number): number {
+function sumSince(pts: LocalPoint[], sinceMs: number, pick: (p: LocalPoint) => number): number {
   let s = 0
   for (const p of pts) if (p.t >= sinceMs) s += pick(p)
   return s
 }
 
 /** 在 [startMs, endMs) 区间内求 cost/tokens 总和（对齐官方窗口边界用） */
-function sumInRange(pts: Point[], startMs: number, endMs: number): { cost: number; tokens: number } {
+function sumInRange(pts: LocalPoint[], startMs: number, endMs: number): { cost: number; tokens: number } {
   let cost = 0
   let tokens = 0
   for (const p of pts) {
@@ -312,122 +282,23 @@ function sumInRange(pts: Point[], startMs: number, endMs: number): { cost: numbe
   return { cost, tokens }
 }
 
-interface LocalStats {
-  pts: Point[]
-  byModel: Map<string, { cost: number; tokens: number }>
-}
-
 /**
- * 本机 db 解析缓存。
+ * 本机用量扫描。
  *
- * 为什么需要：用户可以把手动刷新频率调到 10 秒，而 opencode.db 是几百 MB 的库，
- * 每轮全表扫 message/session_message 太浪费。SQLite 处于 WAL 模式，主库 mtime
- * 可能长时间不变（写入先落 -wal），因此 key 必须同时包含 -wal/-shm 的大小与时间。
- * 另外加 2 分钟兜底 TTL，避免任何探测不到的变化导致长期陈旧。
+ * 实现整体搬到 `opencode-local.ts`（投影 + 增量 + 变更探测，那里有为什么）。这里只做装配：
+ *   · `detectDbPath` 仍在本文件（它跟凭据/路径解析同源，诊断命令也用它）；
+ *   · 扫描器是**模块级单例** —— 行快照、rowid 游标、只读连接都要跨轮保持，
+ *     每轮新建等于每轮冷启动（实测 0.7–0.8s 全量）。
+ *   · 耗时与行数写 debugLog（R4：冷启动那一次大开销必须可观测）。
  */
-const localCache = new Map<string, { key: string; at: number; stats: LocalStats }>()
-const LOCAL_CACHE_TTL = 120_000
+const localScanner = createLocalScanner({ detectDbPath })
 
-function fileStamp(path: string): string {
-  try {
-    const s = statSync(path)
-    return `${s.size}:${Math.round(s.mtimeMs)}`
-  } catch {
-    return '-'
-  }
-}
-
-function localDbStamp(dbPath: string): string {
-  return `${fileStamp(dbPath)}|${fileStamp(`${dbPath}-wal`)}|${fileStamp(`${dbPath}-shm`)}`
-}
-
-/**
- * 读取本机 opencode.db 用量记录，兼容两代 schema：
- *   旧（opencode 0.x）：`message` 表，data 顶层含 role/providerID
- *   新（opencode 1.x）：`session_message` 表，type='assistant'，model.providerID
- * 两表按 (time, cost) 去重取并集（实测新表覆盖旧表 96%，仅旧表独有少数记录）。
- */
 async function loadLocal(nowMs: number): Promise<LocalStats | null> {
-  const dbPath = detectDbPath()
-  if (!dbPath) return null
-  const stamp = localDbStamp(dbPath)
-  const cached = localCache.get(dbPath)
-  if (cached && cached.key === stamp && nowMs - cached.at < LOCAL_CACHE_TTL) return cached.stats
-  try {
-    const { DatabaseSync } = (await import('node:sqlite')) as { DatabaseSync: new (p: string, o?: object) => {
-      prepare(sql: string): { all(...p: unknown[]): unknown[] }
-      close(): void
-    } }
-    const db = new DatabaseSync(dbPath, { readOnly: true })
-    const pts: Point[] = []
-    const byModel = new Map<string, { cost: number; tokens: number }>()
-    const seen = new Set<string>()
-    const sinceMs = nowMs - 31 * 86400_000 // 官方最长窗口 30 天，多取 1 天
-    try {
-      // 探测表结构（新老版本差异）
-      const tables = new Set<string>()
-      try {
-        const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as { name: string }[]
-        for (const r of rows) tables.add(r.name)
-      } catch {
-        // 探测失败则按老表尝试
-      }
-
-      const ingest = (rows: { data: string }[]): void => {
-        for (const row of rows) {
-          let d: MsgData
-          try {
-            d = JSON.parse(row.data)
-          } catch {
-            continue
-          }
-          const p = parsePoint(d)
-          if (!p) continue
-          const dedupKey = `${p.t}|${p.cost}`
-          if (seen.has(dedupKey)) continue
-          seen.add(dedupKey)
-          pts.push(p)
-          if (p.model) {
-            const cur = byModel.get(p.model) ?? { cost: 0, tokens: 0 }
-            cur.cost += p.cost
-            cur.tokens += p.tokens
-            byModel.set(p.model, cur)
-          }
-        }
-      }
-
-      // 新 schema：session_message（type 列区分消息类型，data 无 role）
-      if (tables.has('session_message')) {
-        try {
-          const rows = db
-            .prepare(`SELECT data FROM session_message WHERE type = 'assistant' AND time_created > ?`)
-            .all(sinceMs) as { data: string }[]
-          ingest(rows)
-        } catch {
-          // 表结构不符则跳过
-        }
-      }
-      // 旧 schema：message（data 顶层含 role）
-      if (tables.has('message')) {
-        try {
-          const rows = db
-            .prepare(`SELECT data FROM message WHERE time_created > ?`)
-            .all(sinceMs) as { data: string }[]
-          ingest(rows)
-        } catch {
-          // 表结构不符则跳过
-        }
-      }
-    } finally {
-      db.close()
-    }
-    pts.sort((a, b) => a.t - b.t)
-    const stats = { pts, byModel }
-    localCache.set(dbPath, { key: stamp, at: nowMs, stats })
-    return stats
-  } catch {
-    return null
-  }
+  const stats = await localScanner.scan(nowMs)
+  const run = localScanner.lastRun()
+  // cache 轮不打日志：那是常态（每轮都打会把日志淹掉，反而看不见 full → delta 的切换）
+  if (run && run.mode !== 'cache') debugLog(`opencode: 本机扫描 ${run.mode} ${run.ms}ms rows=${run.rows}`)
+  return stats
 }
 
 // ─── 官方窗口构建 ───────────────────────────────────────────────────────────

@@ -2418,7 +2418,7 @@ process.env.ANTIGRAVITY_TOKEN_FILE = AG_TOKEN_FILE
 process.env.HOME = AG_EMPTY
 
 eq(antigravityTokenFile(), AG_TOKEN_FILE, 'X0 ANTIGRAVITY_TOKEN_FILE 被识别（凭据探测可注入）')
-eq(readAntigravityToken(), { token: AG_TOKEN, source: 'file' }, 'X0b token 文件被读出（{ token.access_token } 形状）')
+eq(await readAntigravityToken(), { token: AG_TOKEN, source: 'file' }, 'X0b token 文件被读出（{ token.access_token } 形状）')
 delete process.env.ANTIGRAVITY_TOKEN_FILE
 eq(
   antigravityTokenFile(),
@@ -2835,8 +2835,12 @@ vok(!/setKey/.test(agCode), 'XSG4 未调用/未 import setKey（锁住不刷新�
 vok(!/1071006060591|GOCSPX-/.test(agSrc), 'XSG5 无 AGPL 字面量 client_id/secret（全文件查，注释也算）')
 eq(PROTOCOLS.antigravity, undefined, 'XSG6 Antigravity 不进 protocols.ts 声明表（N7 额外保险）')
 vok(
-  /execFileSync\('security'/.test(agCode),
-  'XSG7 Keychain 走 execFileSync security（只读，不走 shell，无注入面）'
+  !/execFileSync/.test(agCode),
+  'XSG7 Keychain **零** execFileSync：同步 spawn 一旦触发 macOS ACL 授权弹窗会永久堵死主进程（2026-10-18 修）'
+)
+vok(
+  /promisify\(execFile\)/.test(agCode) && /timeout:\s*KEYCHAIN_TIMEOUT_MS/.test(agCode) && /KEYCHAIN_TIMEOUT_MS\s*=\s*\d+/.test(agCode),
+  'XSG7b 异步 execFile 带有限超时（"永久阻塞"变成"最多等 5 秒"），且有 5 分钟凭据缓存不再每轮 spawn'
 )
 vok(!/Connect-Protocol-Version/.test(agCode), 'XSG8 不发 Connect-Protocol-Version（Cloud Code 无证据要求它）')
 vok(

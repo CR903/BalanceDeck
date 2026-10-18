@@ -6,10 +6,13 @@
 import { join } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { ProviderAdapter, CollectContext } from './types'
 import { errSnap, identityOf, noDataSnap, officialSnap, readJson } from './engine'
 import type { ProviderWindow, ProviderSnapshot } from '../../shared/types'
+
+const execFileAsync = promisify(execFile)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Google Antigravity 同步策略（统一模型）
@@ -113,29 +116,52 @@ function parseKeychainValue(raw: string): string | null {
   }
 }
 
-function readKeychainRaw(): string | null {
+/**
+ * Keychain 读取（**必须异步 + 有超时**）。
+ *
+ * 为什么不能用 `execFileSync`：同步 spawn 一旦触发 macOS 的 ACL 授权弹窗，
+ * 主进程会**永久**堵在等待上 —— 用户看到的是「鼠标转圈」，且没有任何超时能救
+ * （这正是本任务 E13 里风险最高的一条；这台机器上没爆只是因为没配 Antigravity）。
+ * 异步 `execFile` + `timeout` 把「永久阻塞」变成「最多等 5 秒，然后按读不到处理」。
+ *
+ * 5 分钟凭据缓存：旧写法**每轮采集**都 spawn 一次 `security`（几十毫秒 + 每次都
+ * 可能弹窗）。缓存同时把"授权被拒"的结果也记住 —— 否则用户拒绝一次，下一轮又会弹。
+ * 失败语义不变：读不到就继续走 token 文件 / 手动粘贴的级联。
+ */
+const KEYCHAIN_TIMEOUT_MS = 5000
+const KEYCHAIN_CACHE_TTL_MS = 5 * 60_000
+
+let keychainCache: { at: number; raw: string | null } | null = null
+
+async function readKeychainRaw(nowMs = Date.now()): Promise<string | null> {
   // ANTIGRAVITY_KEYCHAIN 是测试替身，不是正式功能：设了就用它的值代替 execFile，
-  // 别把它当第二凭据源宣传（design.md D10）。
+  // 别把它当第二凭据源宣传（design.md D10）。替身不进缓存（测试里每段都换值）。
   if (process.env.ANTIGRAVITY_KEYCHAIN !== undefined) return process.env.ANTIGRAVITY_KEYCHAIN
   if (process.platform !== 'darwin') return null
+  const hit = keychainCache
+  if (hit && nowMs - hit.at < KEYCHAIN_CACHE_TTL_MS) return hit.raw
+  let raw: string | null = null
   try {
     // 只读，不走 shell（无注入面）；条目不存在即非 0 退出，由 catch 跳过
-    const out = execFileSync('security', ['find-generic-password', '-a', 'antigravity', '-s', 'gemini', '-w'], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    return typeof out === 'string' ? out : null
+    const { stdout } = await execFileAsync(
+      'security',
+      ['find-generic-password', '-a', 'antigravity', '-s', 'gemini', '-w'],
+      { encoding: 'utf-8', timeout: KEYCHAIN_TIMEOUT_MS }
+    )
+    raw = typeof stdout === 'string' ? stdout : null
   } catch {
-    return null
+    raw = null
   }
+  keychainCache = { at: nowMs, raw }
+  return raw
 }
 
 /**
  * 凭据三源级联（只读）：macOS Keychain → 旧 token 文件。
  * 逐个 try/catch（ENOENT 安全），失败即跳过下一个来源；手动粘贴不在这里，由 collect 兜底。
  */
-export function readAntigravityToken(): { token: string; source: 'keychain' | 'file' } | null {
-  const raw = readKeychainRaw()
+export async function readAntigravityToken(): Promise<{ token: string; source: 'keychain' | 'file' } | null> {
+  const raw = await readKeychainRaw()
   if (raw !== null) {
     const t = parseKeychainValue(raw)
     if (t) return { token: t, source: 'keychain' }
@@ -293,7 +319,7 @@ export const antigravityAdapter: ProviderAdapter = {
     const me = identityOf(this)
 
     // ── 1. 凭据：本机登录态优先，手动粘贴兜底（优先级最低） ──
-    const found = readAntigravityToken()
+    const found = await readAntigravityToken()
     let token = found ? found.token : null
     let via: 'keychain' | 'file' | 'manual' | null = found ? found.source : null
     if (!token) {

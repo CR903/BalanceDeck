@@ -211,10 +211,20 @@ function WindowRow({ w, lvl, now, models }: { w: ProviderWindow; lvl: Level; now
 
 export function DetailView({
   s,
+  scanning,
   onBack,
   onRefresh
 }: {
   s: ProviderSnapshot | undefined
+  /**
+   * 是否「有活要干」（在飞或已排队）—— 来自 `AppState.scanning`。
+   *
+   * 为什么要它：详情页的⟳ 此前**零反馈**（点了什么都不变），而同一时刻 `CardView`
+   * 的⟳ 是会转的（`CardView.tsx:657`）—— 用户看到的「点了没反应」有一半是这里来的。
+   * 不引入本地乐观状态：状态由主进程推，渲染层只如实显示（hook-guidelines：
+   * 没有自定义 hook，也不另起一套状态机）。
+   */
+  scanning: boolean
   onBack: () => void
   onRefresh: () => void
 }): React.JSX.Element {
@@ -269,7 +279,12 @@ export function DetailView({
             <span> · {timeAgo(dataTime(s), now)}</span>
           </span>
         </span>
-        <IconButton name="refresh" title="立即刷新" onClick={onRefresh} />
+        <IconButton
+          name="refresh"
+          title="立即刷新"
+          className={scanning ? 'spinning' : ''}
+          onClick={onRefresh}
+        />
       </header>
 
       <div className="body-scroll">

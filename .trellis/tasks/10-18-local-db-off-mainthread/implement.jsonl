@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/adapters/index.md", "reason": "采集接缝与「测试加载真源码」「端口径不一致宁可不显示」两条纪律；本任务改的是本机数据源，必须保持口径逐字不变"}
+{"file": ".trellis/spec/adapters/opencode-console.md", "reason": "官方口径与控制台端点的既有契约：本机 tokens 只作附属，绝不可被当成官方数据"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "缺失值不填 0、数据来路必须显式声明（本机估算标注不能丢）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "新增断言脚本的风格与「先弄坏一次」门禁"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "把本机扫描抽成单一模块、避免 opencode/claude/codex 三处各写一套同型同步 IO"}

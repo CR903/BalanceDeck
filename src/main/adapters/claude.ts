@@ -1,8 +1,9 @@
 import { join } from 'path'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import type { ProviderAdapter, CollectContext } from './types'
 import { errSnap, identityOf, localSnap, noDataSnap } from './engine'
+import { collectFiles } from './scan-dir'
 import { planWindows, planModelRows, parseLimits } from './plan-utils'
 import type { PlanLimits, PlanPoint } from './plan-utils'
 import type { ProviderModelRow, ProviderSnapshot } from '../../shared/types'
@@ -71,25 +72,13 @@ export function claudeConfigDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 }
 
-function listJsonl(dir: string, out: string[], depth = 0): void {
-  if (depth > 4 || !existsSync(dir)) return
-  let entries: string[]
-  try {
-    entries = readdirSync(dir)
-  } catch {
-    return
-  }
-  for (const e of entries) {
-    const p = join(dir, e)
-    let st
-    try {
-      st = statSync(p)
-    } catch {
-      continue
-    }
-    if (st.isDirectory()) listJsonl(p, out, depth + 1)
-    else if (e.endsWith('.jsonl')) out.push(p)
-  }
+/**
+ * 会话转录文件列表。遍历本身交给 `collectFiles`（目录 mtime 短路，见 scan-dir.ts）：
+ * 旧写法每轮都对每个子项 statSync，而这里的目录里混着大量非 .jsonl 文件。
+ * 深度上限 4 与旧写法一致。
+ */
+function listJsonl(dir: string): string[] {
+  return collectFiles(dir, { maxDepth: 4, match: (n) => n.endsWith('.jsonl') })
 }
 
 interface Stats {
@@ -150,8 +139,7 @@ function parseFile(path: string): { pts: PlanPoint[]; allPts: PlanPoint[] } | nu
 }
 
 function loadAll(): Stats | null {
-  const files: string[] = []
-  listJsonl(join(claudeConfigDir(), 'projects'), files)
+  const files = listJsonl(join(claudeConfigDir(), 'projects'))
   if (files.length === 0) return null
   const pts: PlanPoint[] = []
   const allPts: PlanPoint[] = []

@@ -1,0 +1,30 @@
+{
+  "id": "sync-stall-and-mainthread-block",
+  "name": "sync-stall-and-mainthread-block",
+  "title": "采集健壮性与主进程阻塞修复（同步卡死 + 沙漏）",
+  "description": "用户报告两个症状：(1) 同步点击无反应、数据停在「3小时前」，重启才恢复；(2) 程序经常卡住、鼠标转成沙漏。已完成根因定位（含实测取证：重启前后落盘文件心跳对比、sample 主线程采样、lsof 连接数、638MB opencode.db 同步扫描计时 1.9s、-wal 缓存键 5 秒内失效）。本任务为父任务：产出需求集与两个孩子任务的验收口径，不在父任务内直接实现。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "zhou",
+  "assignee": "zhou",
+  "createdAt": "2026-10-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-18-sync-collect-watchdog",
+    "10-18-local-db-off-mainthread",
+    "10-18-local-db-worker-offload"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

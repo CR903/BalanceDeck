@@ -8,7 +8,8 @@ import type {
   CatalogEntry,
   OpencodeAuthResponse,
   PetMenuModel,
-  PetHitbox
+  PetHitbox,
+  RefreshOutcome
 } from '../shared/types'
 import type { UsagePoint } from '../shared/usage-predict'
 
@@ -24,7 +25,7 @@ const api = {
   dragStart: (grab?: { x: number; y: number }): void => ipcRenderer.send('ui:drag-start', grab),
   dragEnd: (): void => ipcRenderer.send('ui:drag-end'),
   debugDragState: (): Promise<boolean> => ipcRenderer.invoke('debug:drag-state'),
-  refreshNow: (): Promise<void> => ipcRenderer.invoke('ui:refresh'),
+  refreshNow: (): Promise<RefreshOutcome> => ipcRenderer.invoke('ui:refresh'),
   onCollapsed: (cb: (c: boolean) => void): (() => void) => {
     const l = (_e: unknown, c: boolean): void => cb(c)
     ipcRenderer.on('ui:collapsed', l)

@@ -29,3 +29,5 @@
 | 2026-10-11 | [opencode 详情页 v2：官网数据对齐与用量视图重构](daily/2026-10-11_opencode-detail-v2-sync.md) | `10-11-opencode-detail-v2-sync` |
 | 2026-10-11 | [opencode 周/月序列与模型受 since 保留期限制修复](daily/2026-10-11_opencode-detail-window-series-fix.md) | `10-11-opencode-detail-window-series-fix` |
 | 2026-10-13 | [展开面板滚动条归零 + 托盘左键展开定位（复检 pass，实机待验）](daily/2026-10-13_island-open-overflow-and-tray-expand.md) | `10-13-island-open-overflow-and-tray-expand` |
+| 2026-10-18 | [采集轮级看门狗：同步不再永久卡死 + 刷新不再静默丢弃](daily/2026-10-18_sync-collect-watchdog.md) | `10-18-sync-collect-watchdog` |
+| 2026-10-18 | [本机用量扫描移出阻塞路径：消灭每轮 2 秒沙漏 + 修缓存键](daily/2026-10-18_local-db-off-mainthread.md) | `10-18-local-db-off-mainthread` |

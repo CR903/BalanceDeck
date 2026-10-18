@@ -19,6 +19,7 @@ adjectives.
 | Spec | Covers | Status |
 |---|---|---|
 | [opencode-console.md](./opencode-console.md) | opencode.ai 控制台：授权会话、配额窗口、每模型明细 | 已填（2026-09-27，任务 `09-26-opencode-console-spa`） |
+| [local-db-scan.md](./local-db-scan.md) | 本机 `opencode.db` 用量扫描：SQL 投影、缓存三模式、rowid 游标、口径等价 | 已填（2026-10-18，任务 `10-18-local-db-off-mainthread`） |
 | 采集接缝 `CollectRequest` | method / body / Content-Type 的归属（本文下方一节） | 已填（2026-10-01，任务 `10-01-seam-post-body`） |
 
 ## The collection seam — `CollectRequest`

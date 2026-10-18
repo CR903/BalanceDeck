@@ -349,6 +349,85 @@ console.log('\nS8. POST 的非 2xx 与超时 —— 与 GET 一样「返回 stat
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// S9. 兜底超时（R3）—— 连 abort 都不理会的挂起请求也必须在 timeoutMs 量级内失败
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nS9. 兜底超时（abort 管不到也必须返回）')
+
+{
+  // ⚠ 这个桩**既不 resolve 也不听 abort**：正是真机取证里「卡在建连前阶段
+  //   （DNS / connect）」的形状（lsof 零连接、线程 99.4% 采样陷在 select()）。
+  //   加固前的实现只有 `setTimeout(() => ctrl.abort())`，在这里会**永远挂住**
+  //   —— 整轮采集再也回不来，这就是「同步 3 小时不动、只能重启」。
+  const restore = withFetch(() => new Promise(() => {}))
+  let thrown = null
+  const t0 = Date.now()
+  try {
+    await request({ url: 'https://x.test/hang-before-connect', headers: {}, timeoutMs: 60 })
+  } catch (e) {
+    thrown = e
+  } finally {
+    restore()
+  }
+  const spent = Date.now() - t0
+  ok(thrown?.name === 'AbortError', 'S9a 挂起请求在 timeoutMs 量级内失败（AbortError，复用既有网络类归类）')
+  ok(spent >= 50, `S9b 确实等到了 timeoutMs（${spent}ms ≥ 50ms）`)
+  ok(spent < 2000, `S9c 没有退回缺省的 12s（${spent}ms < 2000ms）`)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// S10. 记账不被迟到结果污染（R3 的 decided 标志）
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nS10. 判负之后迟到的成功不得改写可达性记账')
+
+{
+  // 用探针替身观测 markNetResult（request.ts 内联的是 net.ts 的私有副本，测试拿不到）
+  globalThis.__bd_net_probe = []
+  const probeRequest = (
+    await loadTs('src/main/request.ts', {
+      alias: { electron: ELECTRON_STUB },
+      replace: [{ from: './net', to: 'scripts/lib/net-probe.mjs' }]
+    })
+  ).request
+  const calls = () => globalThis.__bd_net_probe ?? []
+
+  // ① 前置：探针真的接上了（否则下面那条「没有多记一次成功」会空洞通过）
+  {
+    const restore = withFetch(async () => ({ status: 200, ok: true, text: async () => '{}' }))
+    try {
+      await probeRequest({ url: 'https://x.test/ok', headers: {} })
+    } finally {
+      restore()
+    }
+    eq(calls(), [{ ok: true, name: null }], 'S10a 前置：成功请求记了一次 markNetResult(true)（探针接上了）')
+  }
+
+  // ② 超时判负 → 迟到成功：不得再记一次成功
+  globalThis.__bd_net_probe = []
+  const late = []
+  {
+    const restore = withFetch(
+      () =>
+        new Promise((res) => {
+          late.push(res) // 攥住 resolve，等超时之后再放行（模拟建连慢但最终成功）
+        })
+    )
+    let thrown = null
+    try {
+      await probeRequest({ url: 'https://x.test/late-ok', headers: {}, timeoutMs: 40 })
+    } catch (e) {
+      thrown = e
+    } finally {
+      restore()
+    }
+    eq(thrown?.name, 'AbortError', 'S10b 先按超时判负（记一次失败）')
+    eq(calls(), [{ ok: false, name: 'AbortError' }], 'S10c 判负那一刻只记了失败')
+  }
+  late.forEach((res) => res({ status: 200, ok: true, text: async () => '{}' }))
+  await new Promise((r) => setTimeout(r, 30))
+  eq(calls(), [{ ok: false, name: 'AbortError' }], 'S10d 迟到的成功**没有**追记成功（否则离线判定被它清零）')
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // 汇总
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

@@ -1160,6 +1160,7 @@ export default function App(): React.JSX.Element {
         ) : view === 'detail' ? (
           <DetailView
             s={current}
+            scanning={state.scanning}
             onBack={() => setView('card')}
             onRefresh={() => void window.api.refreshNow()}
           />

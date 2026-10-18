@@ -627,6 +627,15 @@ export function CardView({
     .sort()
     .pop()
 
+  /**
+   * 本轮采集超时（R8 的最小展示面）。
+   *
+   * 判据是**比较而不是时钟**：超时时刻晚于最后一次成功同步 ⇒ 此后还没有一轮正常收尾，
+   * 数据停在上一轮是事实，界面就该说出来。用「距今小于一个间隔」的话，渲染层还得把
+   * 采集间隔复制一份过来（而间隔是主进程侧的设置，两份必然漂）。
+   */
+  const timedOut = !!state.lastTimeoutAt && (!state.lastSync || state.lastTimeoutAt > state.lastSync)
+
   return (
     <div className="card">
       <header className="titlebar">
@@ -644,6 +653,7 @@ export function CardView({
                 · {timeAgo(newest, now)}更新
               </span>
             )}
+            {timedOut && <span className="dim"> · 本轮采集超时</span>}
           </span>
         </span>
         <IconButton

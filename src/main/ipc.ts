@@ -131,9 +131,7 @@ export function registerIpc(): void {
   })
   ipcMain.on('ui:drag-end', () => dragStop())
 
-  ipcMain.handle('ui:refresh', async () => {
-    refreshNow()
-  })
+  ipcMain.handle('ui:refresh', () => refreshNow())
 
   // ─── 供应商实例管理 ────────────────────────────────────────────────────────
 

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "tsc 不在 npm test 里；新增断言必须先用「弄坏它一次」确认变红"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "计时器与 extras 的既有约定：调度循环是主进程侧状态，渲染层不得另起一套"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "渲染层没有自定义 hook；DetailView 的反馈只能靠 props + 既有扫描态，不得引入本地乐观状态机"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "IconButton 的既有形状与 spinning 的既有用法（与 CardView 对齐，不新增组件）"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "出网接缝 CollectRequest 的超时契约：timeoutMs 归属、method/body 语义，兜底超时不得改动接缝语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层链路：主进程轮次状态机 → AppState 可选字段 → preload 返回类型 → 渲染层可见反馈"}

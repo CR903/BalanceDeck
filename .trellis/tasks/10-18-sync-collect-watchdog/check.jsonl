@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验收判据：assertion 脚本风格、loadTs 加载真源码、护栏先弄坏一次"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "缺失值必须保持缺失、口径不得近似；超时那一轮不许伪造数据"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "接缝契约与「未知形状要有出口」纪律；超时错误要落回既有网络错误分类"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查数据流是否在层边界被静默改写（epoch 失效 / scanning 语义 / lastTimeoutAt）"}
