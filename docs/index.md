@@ -31,3 +31,4 @@
 | 2026-10-13 | [展开面板滚动条归零 + 托盘左键展开定位（复检 pass，实机待验）](daily/2026-10-13_island-open-overflow-and-tray-expand.md) | `10-13-island-open-overflow-and-tray-expand` |
 | 2026-10-18 | [采集轮级看门狗：同步不再永久卡死 + 刷新不再静默丢弃](daily/2026-10-18_sync-collect-watchdog.md) | `10-18-sync-collect-watchdog` |
 | 2026-10-18 | [本机用量扫描移出阻塞路径：消灭每轮 2 秒沙漏 + 修缓存键](daily/2026-10-18_local-db-off-mainthread.md) | `10-18-local-db-off-mainthread` |
+| 2026-10-18 | [本机用量首轮全量移出主线程：worker 化 + 全量核对间隔 6h → 1h](daily/2026-10-18_local-db-worker-offload.md) | `10-18-local-db-worker-offload` |

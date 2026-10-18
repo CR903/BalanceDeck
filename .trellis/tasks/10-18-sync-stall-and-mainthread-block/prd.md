@@ -60,6 +60,38 @@
 - [ ] AC5：`docs/daily/2026-10-18_<slug>.md` 各一篇 + `docs/index.md` 追加（AGENTS.md 门禁）；可沉淀坑位同步 `docs/knowledge/`。
 - [ ] AC6：不新增"看起来在动"的假象：超时那一轮**不伪造数据**，界面继续显示上一轮（`shared/quality.ts` 的 cached 语义），时间戳如实继续变老。
 
+## 装机后真机复测取证（2026-10-18，窗口 10 分钟）
+
+**前提**：`/Applications/BalanceDeck.app` 于 19:12 重建装机，`dist/mac` 与 `/Applications` 的 `app.asar` 哈希一致（`4b4d11f4…`）；解包核对新代码在包里（`COLLECT_BUDGET_MS` / `current(epoch)` / `lastTimeoutAt` / `requestRefresh` / `dbStamp` / `execFile` 全部命中）。19:53:58 以 `BALANCEDECK_DEBUG=1` 启动（pid 69845）观察。
+
+**采集轮次**（`/tmp/balancedeck-scheduler.log`）：
+
+```
+epoch 1   本机扫描 full  736ms rows=4697
+epoch 2-10 本机扫描 delta 22/26/43/23/30/28/26/49/45 ms rows≈565-571
+collect done 次数 = 10        轮次超时 = 0        collect stale（迟到丢弃）= 0
+cached=0 × 10（官方口径全程正常，无降级）
+usage snapshot 恢复记录（故障期停在 12:25 的那条链重新在跑）
+```
+
+**心跳**（`balance-export.json` 的 `updatedAt`，每轮重铸 ⇒ 必须每次前进）：
+`11:53:58 → 11:55:02 → 11:56:04 → 11:57:07 → 11:58:11 → 11:59:15 → 12:00:18 → 12:01:21 → 12:02:23 → 12:03:25`（10/10 轮全部前进，无冻结）
+
+**主线程采样**（`sample 69845`，8s）：`sqlite` 帧 **7**；对照故障期旧样本 **22** 帧且有一个线程 99.4% 采样陷在 `select()`；新样本主线程深叶停在 CoreFoundation/libobjc 的 runloop 空转，无 sqlite/JSON 热点。
+
+**AC 判定（如实）**：
+
+| AC | 结论 |
+|---|---|
+| AC1（两孩子 typecheck + npm test 全绿、护栏先弄坏一次） | ✅ 证据见各自 `prd.md` 的变异红集 |
+| AC2（挂起一轮不重启自愈，日志可见超时与复位） | ✅ 用临时 4000ms 预算实测：`轮次超时 → collect stale 丢弃 7 条迟到结果 → 下一轮成功` |
+| AC3（连续两轮同步阻塞 < 100ms/轮、无 > 200ms 主线程热点） | ✅ 稳态 22–49ms/轮（首轮 736ms 除外）；采样无热点 |
+| AC4（连续 ≥ 30 分钟两症状复测） | ⚠️ **部分**：窗口按用户要求从 30 分钟缩短为 **10 分钟**（10/10 轮推进、0 超时）。30 分钟窗口未跑 |
+| AC5（`docs/daily/` + `docs/index.md` 门禁） | ✅ A/B 各一篇日志 + 索引行，已随归档提交 |
+| AC6（超时轮不伪造数据） | ✅ 超时只推 `scanning:false` + `lastTimeoutAt`；`bodyHash` 不含 `generatedAt` ⇒ 超时推送不写盘，快照与 `lastSync` 原样 |
+
+**未收口**：① AC4 的 30 分钟窗口未跑（用户明确要求缩短）；② 首轮全量 736ms 在应用内仍高于孩子 B 的 900ms 红线（三次隔离重测 1222/2971/4418ms），已单开 `10-18-local-db-worker-offload`；③ `--uitest` 既有 flaky 未修（HEAD 基线也红）。
+
 ## Out of Scope
 
 - 不改数据诚实口径（`shared/quality.ts` 的 cached/local 语义、缺失值不填 0）。

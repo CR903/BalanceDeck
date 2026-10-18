@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/adapters/local-db-scan.md", "reason": "B 的既定契约：投影 SQL、三种缓存模式、rowid 游标、口径等价与诚实要求 —— 本任务只改「在哪跑」，不许改口径"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "层纪律：测试加载真源码、未知形状要有出口、端口径不一致宁可不显示"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "采集循环既有契约（轮级预算、超时、迟到结果必须丢弃）—— 宿主必须沿用同一纪律，不新造第二套"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "tsc 不在 npm test 里；每条护栏先弄坏一次确认变红"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "worker 是新的进程/线程边界：消息契约、结构化克隆、超时与降级的跨层语义都要显式声明"}

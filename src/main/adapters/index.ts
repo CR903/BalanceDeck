@@ -69,3 +69,6 @@ export function buildAdapters(instances: ProviderInstance[]): ProviderAdapter[] 
  * 这里再导出一次，保持调用方（scheduler）的 import 不变。
  */
 export { collectAll } from './collect'
+
+/** 停机：终止本机用量扫描的全量 worker（幂等）。见 `./opencode` 与 `./local-scan-host` */
+export { stopLocalScan } from './opencode'

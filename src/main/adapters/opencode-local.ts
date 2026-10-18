@@ -25,7 +25,7 @@
 //      （实测 94.4% < 1 分钟、99.3% < 10 分钟）。
 //      ⚠ 窗口是**范围**不是"最后 N 行"：区间是 `(上次表尾 - 600, 本次表尾]`，所以
 //      期间**新插入**的行永远在窗口里（哪怕间隔很久、插了几千行）。窗口只影响
-//      "老行的迟到回写"能不能被看见 —— 而那有 6 小时的全量核对兜底。
+//      "老行的迟到回写"能不能被看见 —— 而那有全量核对兜底。
 //      单轮成本有上界：增量的 WHERE 与全量同款、只是 rowid 范围更窄 ⇒ 永远不会比
 //      一次全量更贵（长间隔后那一轮最多退化成一次全量，不会更糟）。
 //
@@ -40,13 +40,29 @@
 //   ① 某行的 `data` 在**离表尾 > 600 行之后**才被回写（实测 lag ≥ 1h 的只有 30 行，
 //      占 0.07%，离表尾最远 811 行 ⇒ 其中一部分落在 600 行窗口外）；
 //   ② 远离表尾的行被删除（例如用户删掉一个旧会话）。
-// 两者都在下一次全量核对时消失。全量核对的间隔是 `FULL_RESCAN_MAX_AGE_MS`（6 小时）：
-// 它是一次 ~0.7s 的同步阻塞（真机实测），**不能**做成 10 分钟一次 —— 那等于把
-// "每轮 2 秒沙漏"换成"每 10 分钟卡一次"，症状只是变稀而不是消失。
-// 进程每次启动也天然是全量，所以真实会话里核对远比 6 小时频繁。
+// 两者都在下一次全量核对时消失。全量核对的间隔是 `FULL_RESCAN_MAX_AGE_MS`。
+// 进程每次启动也天然是全量，所以真实会话里核对远比那个间隔频繁。
+//
+// ─── 2026-10-18（任务 10-18-local-db-worker-offload）：全量移出主线程 ───────────
+//
+// 上面 ①②③ 把稳态压到了 22–49ms，但**首次全量仍是主线程上的同步阻塞**：
+// 隔离热页冷启动三次重测 1222 / 2971 / 4418 ms（应用内 1075–2858 ms）。剩下的成本是
+// ~265MB `data` 页读取 —— `json_extract` 省掉了 JS 堆与 2.6 万次 `JSON.parse`，
+// 但省不掉读页，而 `node:sqlite` **只有同步 API**（`DatabaseSync`）⇒ 主线程内无解。
+//
+// 所以 `mode === 'full'` 委托给 `local-scan-host.ts`（子线程），`cache`/`delta` 留在主线程。
+// 三条不变式：
+//   · **口径只有一份**：worker 与主线程降级路径都调本文件的 `openLocalDb` /
+//     `scanFullSnapshot`（同一个投影 SQL、同一个判据、同一个派生）。这里**没有**第二份实现。
+//   · **行快照必须回传**：增量游标按 rowid 累积，`pts` 里没有 rowid —— 只回传派生结果
+//     会让下一轮增量失去快照（见 `local-scan-host.ts` 的 `ScanResult` 注释）。
+//   · **降级必须留痕**：worker 起不来/抛错/超时都回退主线程同步全量，并把原因记进
+//     `LocalRun.degradedReason`（静默降级 = 用户看到的还是秒级卡顿，而没人知道为什么）。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { statSync } from 'fs'
+import { createScanHost } from './local-scan-host'
+import type { ScanHost } from './local-scan-host'
 
 export interface LocalPoint {
   t: number
@@ -67,13 +83,32 @@ export interface LocalRun {
   mode: LocalScanMode
   ms: number
   rows: number
+  /** full 轮走的哪条路：`worker` = 已移出主线程；`main` = 主线程同步（含降级）。cache/delta 无此字段 */
+  via?: 'worker' | 'main'
+  /** `via='main'` 且**是降级**时的原因；正常的主线程全量（无 host）不带这个字段 */
+  degradedReason?: string
 }
 
 export interface LocalScanner {
   /** 扫描（自动在 cache / full / delta 之间择一）。db 不存在时返回 null */
   scan(nowMs: number): Promise<LocalStats | null>
-  /** 诊断用：上一次实际做了什么（模式 / 耗时 / 读到的原始行数） */
+  /** 诊断用：上一次实际做了什么（模式 / 耗时 / 读到的原始行数 / 全量走的哪条路） */
   lastRun(): LocalRun | null
+  /** 停机：终止全量扫描的 worker 并关闭只读连接（幂等）。app 退出 / stopScheduler() 调用 */
+  stop(): Promise<void>
+}
+
+export interface LocalScannerOpts {
+  detectDbPath: () => string | null
+  /**
+   * worker 入口路径（产品由 `opencode.ts` 注入 `defaultWorkerPath`）。
+   * **缺省 = 不起 worker**：纯 node 测试环境与「无 host」分支逐字同旧行为。
+   */
+  workerPath?: () => string
+  /** 降级 / 丢弃迟到结果的留痕出口（产品注入 `debugLog`） */
+  log?: (msg: string) => void
+  /** 整次全量扫描的超时（测试用短超时；缺省见 local-scan-host.ts） */
+  workerTimeoutMs?: number
 }
 
 // ─── 常量（导出以便测试与诊断引用，不复制第二份）──────────────────────────────
@@ -84,8 +119,20 @@ export const LOCAL_WINDOW_MS = 31 * 86400_000
 /** 增量回看的行数（按 rowid）。见文件头 ② 与"诚实边界"的实测依据 */
 export const DELTA_LOOKBACK_ROWS = 600
 
-/** 全量核对的最长间隔。见文件头"诚实边界" */
-export const FULL_RESCAN_MAX_AGE_MS = 6 * 3600_000
+/**
+ * 全量核对的最长间隔。
+ *
+ * 2026-10-18 从 **6 小时收紧到 1 小时**（任务 `10-18-local-db-worker-offload`，R6）。
+ * 判据是实测而不是口味：全量现在跑在子线程上，主线程阻塞从 1075–2858ms 降到
+ * **< 50ms**（AC1 实测，见 `docs/daily/2026-10-18_local-db-worker-offload.md`），
+ * 所以「收紧 = 每 10 分钟卡一次」这条当初否决短间隔的理由已经不成立。
+ * 代价是有界的：每轮全量读 ~265MB 页（多为页缓存命中）+ ~0.7–3s 的**子线程** CPU，
+ * 24 轮/天 ≈ 6.4GB/天页读取、~36s/天 CPU；收益是「窗口外改值/删行」的最大陈旧度
+ * 从 6h 收到 **1h**。
+ * ⚠ 降级时（worker 不可用）这条间隔意味着**每小时**一次 0.7–3s 的主线程冻结，
+ *   而不是每 6 小时 —— 这是降级必须留痕、必须尽快修的另一个理由。
+ */
+export const FULL_RESCAN_MAX_AGE_MS = 3600_000
 
 // ─── node:sqlite 的最小类型（动态 import：本模块在纯 node 里也要能被 loadTs 加载）──
 
@@ -94,9 +141,21 @@ interface SqliteStmt {
   get(...params: unknown[]): unknown
 }
 
-interface SqliteDb {
+export interface LocalDb {
   prepare(sql: string): SqliteStmt
   close(): void
+}
+
+/** 一行的快照：`tc` 是 `time_created` **列**，`p` 是投影后的点 */
+export interface LocalRow {
+  tc: number
+  p: LocalPoint
+}
+
+/** 一张表的行快照（`local-scan-host.ts` 的跨线程消息用的就是这个形状） */
+export interface LocalTable {
+  name: string
+  rows: Map<number, LocalRow>
 }
 
 // ─── SQL ─────────────────────────────────────────────────────────────────────
@@ -141,7 +200,7 @@ const PREFILTER = `
     AND json_extract(data, '$.time.created') > 0
     AND COALESCE(json_extract(data, '$.providerID'), json_extract(data, '$.model.providerID')) = 'opencode-go'`
 
-interface ProjRow {
+export interface ProjRow {
   rowid: number
   id: string
   tc: number
@@ -192,17 +251,15 @@ export function dbStamp(dbPath: string): string {
 
 // ─── 单表状态 ────────────────────────────────────────────────────────────────
 
-interface TableState {
+export interface TableDef {
   name: string
   /** 表类型过滤（旧 `message` 表没有 type 列） */
   typeWhere: string
-  /** rowid → 该行的点。**只放"解析后有效"的行**：无效行由窗口清扫负责移除 */
-  rows: Map<number, { tc: number; p: LocalPoint }>
 }
 
-interface TableDef {
-  name: string
-  typeWhere: string
+interface TableState extends TableDef {
+  /** rowid → 该行的点。**只放"解析后有效"的行**：无效行由窗口清扫负责移除 */
+  rows: Map<number, LocalRow>
 }
 
 /** 两表的探测与判据顺序与旧实现逐字一致（先新表后旧表，各自独立 try/catch） */
@@ -213,12 +270,147 @@ const TABLE_DEFS: TableDef[] = [
 
 interface Conn {
   path: string
-  db: SqliteDb
+  db: LocalDb
+}
+
+// ─── 投影与派生（**worker 与主线程降级路径共用这一份**）───────────────────────
+
+/**
+ * 打开本机库（只读）。`node:sqlite` 不可用 / 打开失败 ⇒ **抛**（由调用方决定容忍方式：
+ * 主线程的 `scanOnce` 吞掉并返回 null，worker 回 `{ ok: false }` 由宿主降级）。
+ * 抛而不是返回 null，是为了让"打不开"这件事在两条路上都只有一个出口。
+ */
+export async function openLocalDb(dbPath: string): Promise<LocalDb> {
+  const mod = (await import('node:sqlite')) as {
+    DatabaseSync: new (p: string, o?: object) => LocalDb
+  }
+  return new mod.DatabaseSync(dbPath, { readOnly: true })
+}
+
+/** 探测存在的表（一次连接只做一次；表结构不符的表整个跳过，与旧实现同款容忍） */
+export function detectTables(db: LocalDb): TableDef[] {
+  const present = new Set<string>()
+  try {
+    const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as { name: string }[]
+    for (const r of rows) present.add(r.name)
+  } catch {
+    // 探测失败则按老表尝试（旧实现同款）
+  }
+  return TABLE_DEFS.filter((def) => present.has(def.name))
+}
+
+/** 全量投影：保留 `time_created > since` 条件 —— 它是**索引范围**（31 天），不是可选优化 */
+export function projectFull(db: LocalDb, t: TableDef, sinceMs: number): ProjRow[] {
+  try {
+    return db
+      .prepare(`SELECT ${PROJECTION} FROM ${t.name} WHERE ${t.typeWhere} AND time_created > ? AND ${PREFILTER}`)
+      .all(sinceMs) as ProjRow[]
+  } catch {
+    // 表结构不符（缺列等）则跳过该表：另一张表的结果仍然有效
+    return []
+  }
+}
+
+/**
+ * 增量投影：`rowid` 范围（b-tree 原生键，O(N)）+ `time_created` 下限。
+ *
+ * 为什么要带 `time_created > since`：它**不会**把查询计划挤到索引上（实测 EXPLAIN：
+ * 仍走 `SEARCH ... USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)`），但能挡掉
+ * 那些"落在 rowid 窗口里、却早已出 31 天窗口"的行 —— 真库的旧 `message` 表就是
+ * 这种（5663 行全在窗口外，不挡的话每轮白读一整个窗口的行、白解析其中 ~790 行 JSON）。
+ */
+export function projectDelta(db: LocalDb, t: TableDef, low: number, high: number, sinceMs: number): ProjRow[] {
+  try {
+    return db
+      .prepare(
+        `SELECT ${PROJECTION} FROM ${t.name} WHERE ${t.typeWhere} AND time_created > ? AND rowid > ? AND rowid <= ? AND ${PREFILTER}`
+      )
+      .all(sinceMs, low, high) as ProjRow[]
+  } catch {
+    return []
+  }
+}
+
+/** 投影行 → `rowid → 行` 快照（**只放解析后有效的行**：无效行由窗口清扫负责移除） */
+export function absorbRows(rows: ProjRow[]): Map<number, LocalRow> {
+  const out = new Map<number, LocalRow>()
+  for (const r of rows) {
+    const p = pointFromProjection(r)
+    if (p) out.set(r.rowid, { tc: r.tc, p })
+  }
+  return out
+}
+
+/**
+ * 全量扫描（探测 → 投影 → 行快照）。**worker 入口与主线程降级路径调的就是它**，
+ * 所以「两条路的结果逐点相等」不是靠约定，而是靠只有一份实现。
+ */
+export function scanFullSnapshot(db: LocalDb, sinceMs: number): { tables: LocalTable[]; rows: number } {
+  const tables: LocalTable[] = []
+  let rows = 0
+  for (const def of detectTables(db)) {
+    const projected = projectFull(db, def, sinceMs)
+    rows += projected.length
+    tables.push({ name: def.name, rows: absorbRows(projected) })
+  }
+  return { tables, rows }
+}
+
+/**
+ * 由行快照派生结果。三条纪律与旧实现逐字对齐（AC2 的等价性全靠它）：
+ *   · 表顺序：session_message 在前、message 在后（旧实现的 ingest 顺序）；
+ *   · 表内顺序：rowid 升序（旧实现无 ORDER BY，顺序是"未定义"的；这里取确定的那一个）；
+ *   · 去重键：`t|cost`（旧实现原样），**不是** rowid —— 两表按它去重取并集。
+ *     同一键只保留先遇到的那行（模型归属因此是确定的）。
+ *
+ * ⚠ **唯一一处已知的"口径不逐点等价"边界**（2026-10-18 核查代理实测，不要再花时间"修"它）：
+ * 旧实现的返回顺序**是查询计划的副产品，两张表还不一样** —— 实测
+ * `session_message` 走 `SEARCH … USING INDEX session_message_time_created_idx`（**time_created
+ * 升序**），而 `message` 走 `SCAN message`（**rowid 升序**）。所以"旧顺序"本身没有单一答案，
+ * 对齐其中一张表必然与另一张错开。分歧只在一种输入下可见：**同一张表内两行共享 `(t, cost)`
+ * 但 `time_created` 次序与 rowid 次序相反**（此时"先遇到的那行"不同 ⇒ 保留的 `model`/`tokens`
+ * 不同）。真库实测 **0 组**这样的重复键（4248 个去重键里重复 0 个），因此当前不可观测；
+ * 旧行为本身也不可依赖（换统计信息就可能换成表扫描）。这里取 rowid 升序 = 确定、可复现。
+ *
+ * 顺带返回**入选行的最小 `time_created`**：窗口随 now 前移，只要这个值还在窗口内，
+ * 下一次 cache 轮就没有任何行会掉出去 ⇒ 可以直接复用上次的派生结果（见 scanOnce）。
+ */
+export function deriveStats(
+  tablesIn: { rows: Map<number, LocalRow> }[],
+  sinceMs: number
+): { stats: LocalStats; minTc: number } {
+  const seen = new Set<string>()
+  const pts: LocalPoint[] = []
+  const byModel = new Map<string, { cost: number; tokens: number }>()
+  let minTc = Infinity
+  for (const t of tablesIn) {
+    const keys = [...t.rows.keys()].sort((a, b) => a - b)
+    for (const k of keys) {
+      const row = t.rows.get(k)
+      if (!row) continue
+      // 与旧 `WHERE time_created > since` 同义（严格大于）。窗口随 now 前移，旧行自然掉出
+      if (!(row.tc > sinceMs)) continue
+      if (row.tc < minTc) minTc = row.tc
+      const p = row.p
+      const dedupKey = `${p.t}|${p.cost}`
+      if (seen.has(dedupKey)) continue
+      seen.add(dedupKey)
+      pts.push(p)
+      if (p.model) {
+        const cur = byModel.get(p.model) ?? { cost: 0, tokens: 0 }
+        cur.cost += p.cost
+        cur.tokens += p.tokens
+        byModel.set(p.model, cur)
+      }
+    }
+  }
+  pts.sort((a, b) => a.t - b.t)
+  return { stats: { pts, byModel }, minTc }
 }
 
 // ─── 实现 ────────────────────────────────────────────────────────────────────
 
-export function createLocalScanner(opts: { detectDbPath: () => string | null }): LocalScanner {
+export function createLocalScanner(opts: LocalScannerOpts): LocalScanner {
   let conn: Conn | null = null
   let tables: TableState[] = []
   let tableNames = ''
@@ -232,6 +424,9 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
   let derivedMinTc = 0
   let run: LocalRun | null = null
   let inFlight: Promise<LocalStats | null> | null = null
+  /** 全量扫描的 worker 宿主（懒建；`stop()` 之后不再起） */
+  let host: ScanHost | null = null
+  let hostOff = false
 
   function closeConn(): void {
     try {
@@ -251,13 +446,10 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
   }
 
   async function openConn(path: string): Promise<Conn> {
-    const mod = (await import('node:sqlite')) as {
-      DatabaseSync: new (p: string, o?: object) => SqliteDb
-    }
-    return { path, db: new mod.DatabaseSync(path, { readOnly: true }) }
+    return { path, db: await openLocalDb(path) }
   }
 
-  function dataVersion(db: SqliteDb): number | null {
+  function dataVersion(db: LocalDb): number | null {
     try {
       const r = db.prepare('PRAGMA data_version').get() as { data_version?: number } | undefined
       return typeof r?.data_version === 'number' ? r.data_version : null
@@ -266,117 +458,92 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
     }
   }
 
-  function maxRowid(db: SqliteDb, table: string): number {
+  function maxRowid(db: LocalDb, table: string): number {
     const r = db.prepare(`SELECT MAX(rowid) AS m FROM ${table}`).get() as { m?: number | null } | undefined
     return typeof r?.m === 'number' ? r.m : 0
   }
 
-  /** 探测存在的表（一次连接只做一次；表结构不符的表整个跳过，与旧实现同款容忍） */
-  function buildTables(db: SqliteDb): TableState[] {
-    const present = new Set<string>()
-    try {
-      const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as { name: string }[]
-      for (const r of rows) present.add(r.name)
-    } catch {
-      // 探测失败则按老表尝试（旧实现同款）
-    }
-    const out: TableState[] = []
-    for (const def of TABLE_DEFS) {
-      if (!present.has(def.name)) continue
-      out.push({ name: def.name, typeWhere: def.typeWhere, rows: new Map() })
-    }
-    return out
-  }
-
-  /** 全量投影：保留 `time_created > since` 条件 —— 它是**索引范围**（31 天），不是可选优化 */
-  function queryFull(db: SqliteDb, t: TableState, sinceMs: number): ProjRow[] {
-    try {
-      return db
-        .prepare(`SELECT ${PROJECTION} FROM ${t.name} WHERE ${t.typeWhere} AND time_created > ? AND ${PREFILTER}`)
-        .all(sinceMs) as ProjRow[]
-    } catch {
-      // 表结构不符（缺列等）则跳过该表：另一张表的结果仍然有效
-      return []
-    }
+  /** 宿主懒建：`workerPath()` 返回空（纯 node 环境）⇒ 不起 worker，全部走主线程 */
+  function ensureHost(): ScanHost | null {
+    if (hostOff) return null
+    if (host) return host
+    const path = opts.workerPath?.() ?? ''
+    if (!path) return null
+    host = createScanHost({
+      workerPath: path,
+      timeoutMs: opts.workerTimeoutMs,
+      log: opts.log ?? (() => {})
+    })
+    return host
   }
 
   /**
-   * 增量投影：`rowid` 范围（b-tree 原生键，O(N)）+ `time_created` 下限。
+   * 全量：优先委托 worker（主线程阻塞 ≈ 0），起不来/抛错/超时 ⇒ 主线程同步。
+   * **两条路调的是同一个 `scanFullSnapshot`**，所以降级不改变结果，只改变耗时。
    *
-   * 为什么要带 `time_created > since`：它**不会**把查询计划挤到索引上（实测 EXPLAIN：
-   * 仍走 `SEARCH ... USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)`），但能挡掉
-   * 那些"落在 rowid 窗口里、却早已出 31 天窗口"的行 —— 真库的旧 `message` 表就是
-   * 这种（5663 行全在窗口外，不挡的话每轮白读一整个窗口的行、白解析其中 ~790 行 JSON）。
+   * ⚠ 回包**不只是形状**要检查，**内容**也要：见下面 `expectedTables` 那一段。
    */
-  function queryDelta(db: SqliteDb, t: TableState, low: number, high: number, sinceMs: number): ProjRow[] {
-    try {
-      return db
-        .prepare(
-          `SELECT ${PROJECTION} FROM ${t.name} WHERE ${t.typeWhere} AND time_created > ? AND rowid > ? AND rowid <= ? AND ${PREFILTER}`
-        )
-        .all(sinceMs, low, high) as ProjRow[]
-    } catch {
-      return []
+  async function fullSnapshot(
+    dbPath: string,
+    db: LocalDb,
+    sinceMs: number,
+    expectedTables: string[]
+  ): Promise<{ tables: LocalTable[]; rows: number; via: 'worker' | 'main'; degradedReason?: string }> {
+    const h = ensureHost()
+    if (!h) {
+      const s = scanFullSnapshot(db, sinceMs)
+      return { ...s, via: 'main' }
     }
-  }
-
-  function absorb(t: TableState, rows: ProjRow[]): number {
-    let n = 0
-    for (const r of rows) {
-      n++
-      const p = pointFromProjection(r)
-      if (p) t.rows.set(r.rowid, { tc: r.tc, p })
-    }
-    return n
-  }
-
-  /**
-   * 由行快照派生结果。三条纪律与旧实现逐字对齐（AC2 的等价性全靠它）：
-   *   · 表顺序：session_message 在前、message 在后（旧实现的 ingest 顺序）；
-   *   · 表内顺序：rowid 升序（旧实现无 ORDER BY，顺序是"未定义"的；这里取确定的那一个）；
-   *   · 去重键：`t|cost`（旧实现原样），**不是** rowid —— 两表按它去重取并集。
-   *     同一键只保留先遇到的那行（模型归属因此是确定的）。
-   *
-   * ⚠ **唯一一处已知的"口径不逐点等价"边界**（2026-10-18 核查代理实测，不要再花时间"修"它）：
-   * 旧实现的返回顺序**是查询计划的副产品，两张表还不一样** —— 实测
-   * `session_message` 走 `SEARCH … USING INDEX session_message_time_created_idx`（**time_created
-   * 升序**），而 `message` 走 `SCAN message`（**rowid 升序**）。所以"旧顺序"本身没有单一答案，
-   * 对齐其中一张表必然与另一张错开。分歧只在一种输入下可见：**同一张表内两行共享 `(t, cost)`
-   * 但 `time_created` 次序与 rowid 次序相反**（此时"先遇到的那行"不同 ⇒ 保留的 `model`/`tokens`
-   * 不同）。真库实测 **0 组**这样的重复键（4248 个去重键里重复 0 个），因此当前不可观测；
-   * 旧行为本身也不可依赖（换统计信息就可能换成表扫描）。这里取 rowid 升序 = 确定、可复现。
-   *
-   * 顺带返回**入选行的最小 `time_created`**：窗口随 now 前移，只要这个值还在窗口内，
-   * 下一次 cache 轮就没有任何行会掉出去 ⇒ 可以直接复用上次的派生结果（见 scanOnce）。
-   */
-  function derive(tablesIn: TableState[], sinceMs: number): { stats: LocalStats; minTc: number } {
-    const seen = new Set<string>()
-    const pts: LocalPoint[] = []
-    const byModel = new Map<string, { cost: number; tokens: number }>()
-    let minTc = Infinity
-    for (const t of tablesIn) {
-      const keys = [...t.rows.keys()].sort((a, b) => a - b)
-      for (const k of keys) {
-        const row = t.rows.get(k)
-        if (!row) continue
-        // 与旧 `WHERE time_created > since` 同义（严格大于）。窗口随 now 前移，旧行自然掉出
-        if (!(row.tc > sinceMs)) continue
-        if (row.tc < minTc) minTc = row.tc
-        const p = row.p
-        const dedupKey = `${p.t}|${p.cost}`
-        if (seen.has(dedupKey)) continue
-        seen.add(dedupKey)
-        pts.push(p)
-        if (p.model) {
-          const cur = byModel.get(p.model) ?? { cost: 0, tokens: 0 }
-          cur.cost += p.cost
-          cur.tokens += p.tokens
-          byModel.set(p.model, cur)
-        }
+    const r = await h.runFull({ dbPath, sinceMs }, async () => scanFullSnapshot(db, sinceMs))
+    const snap = r.result
+    // ── 「可信的空」与「丢表的空」必须分开 ──────────────────────────────────
+    // 判据是**表名集合**，不是行数：31 天没用过 opencode ⇒ 0 行是真相，允许；
+    // **缺表**不是真相 —— worker 侧的 `detectTables` 把 `sqlite_master` 探测失败
+    // 也容忍成「没有表」（与旧实现同款容忍），于是一次瞬时错误会回一个
+    // `tables: []` 的**成功**回包。
+    // 打包态实测（核查代理植入 `tables: []` 的坏 worker，2026-10-18）：
+    //   `本机扫描 full 658ms rows=0 pts=0 via=worker` —— 界面上的本机数字**静默归零**，
+    //   而下一轮是 delta（只补回看窗口内的行），要等下一次全量核对才可能恢复。
+    // 这正是 R4「不得因此丢数据、让界面空白」与 quality-guidelines「不许把未知填成
+    // 可信的零」要消灭的东西 ⇒ 当成**降级**处理，回退主线程同步扫描（口径同一份）。
+    if (r.via === 'worker') {
+      const got = new Set((snap?.tables ?? []).map((t) => t.name))
+      const missing = expectedTables.filter((n) => !got.has(n))
+      if (missing.length > 0) {
+        const reason = `worker 回传的快照缺少表 ${missing.join('、')}（主线程看到 ${expectedTables.length} 张）`
+        opts.log?.(`本机扫描降级：${reason} ⇒ 回退主线程同步扫描`)
+        const s = scanFullSnapshot(db, sinceMs)
+        return { ...s, via: 'main', degradedReason: reason }
       }
     }
-    pts.sort((a, b) => a.t - b.t)
-    return { stats: { pts, byModel }, minTc }
+    return {
+      tables: snap?.tables ?? [],
+      rows: snap?.rows ?? 0,
+      via: r.via,
+      degradedReason: r.via === 'main' ? h.lastRun()?.degradedReason : undefined
+    }
+  }
+
+  /**
+   * 把一份全量行快照装回主线程的表状态。**按表名对齐**（worker 与主线程各自
+   * `detectTables` 的是同一张库，顺序相同）；名字对不上就留空并留痕 ——
+   * 「未知形状要有出口」：静默丢掉一张表等于静默少一半数据。
+   */
+  function installSnapshot(ts: TableState[], snap: LocalTable[]): void {
+    const byName = new Map(snap.map((s) => [s.name, s.rows]))
+    for (const t of ts) {
+      const rows = byName.get(t.name)
+      if (rows) {
+        t.rows = rows
+        byName.delete(t.name)
+      } else {
+        t.rows = new Map()
+        opts.log?.(`本机扫描：全量快照里没有表 ${t.name}，该表本轮为空`)
+      }
+    }
+    for (const name of byName.keys()) {
+      opts.log?.(`本机扫描：全量快照里有主线程不认识的表 ${name}，已忽略`)
+    }
   }
 
   async function scanOnce(nowMs: number): Promise<LocalStats | null> {
@@ -395,7 +562,9 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
         conn = await openConn(dbPath)
       }
       const db = conn.db
-      if (tables.length === 0) tables = buildTables(db)
+      if (tables.length === 0) {
+        tables = detectTables(db).map((d) => ({ ...d, rows: new Map<number, LocalRow>() }))
+      }
 
       const names = tables.map((t) => t.name).join(',')
       const stamp = dbStamp(dbPath)
@@ -421,11 +590,15 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
       else mode = 'cache'
 
       let rows = 0
+      let via: 'worker' | 'main' | undefined
+      let degradedReason: string | undefined
       if (mode === 'full') {
-        for (const t of tables) {
-          t.rows.clear()
-          rows += absorb(t, queryFull(db, t, sinceMs))
-        }
+        // `tables.map(name)` 是「这张库应当有哪些表」的判据来源（同一个连接探测出来的）
+        const snap = await fullSnapshot(dbPath, db, sinceMs, tables.map((t) => t.name))
+        rows = snap.rows
+        via = snap.via
+        degradedReason = snap.degradedReason
+        installSnapshot(tables, snap.tables)
         lastFullAt = nowMs
         haveSnapshot = true
       } else if (mode === 'delta') {
@@ -435,7 +608,9 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
           const low = Math.max(0, (lastMax.get(t.name) ?? mx) - DELTA_LOOKBACK_ROWS)
           // 先清窗口内的旧行：被删掉的行不会出现在查询结果里，不清就会变成幽灵数据
           for (const k of [...t.rows.keys()]) if (k > low) t.rows.delete(k)
-          rows += absorb(t, queryDelta(db, t, low, mx, sinceMs))
+          const projected = projectDelta(db, t, low, mx, sinceMs)
+          rows += projected.length
+          for (const [rowid, row] of absorbRows(projected)) t.rows.set(rowid, row)
         }
       }
       // cache：三探针全等 ⇒ 另一个连接没提交过、表尾没动，上次的派生结果就是结果（0 次查询）
@@ -452,12 +627,12 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
       if (mode === 'cache' && derived && derivedMinTc > sinceMs) {
         stats = derived
       } else {
-        const d = derive(tables, sinceMs)
+        const d = deriveStats(tables, sinceMs)
         derived = d.stats
         derivedMinTc = d.minTc
         stats = d.stats
       }
-      run = { mode, ms: Math.round(performance.now() - t0), rows }
+      run = { mode, ms: Math.round(performance.now() - t0), rows, via, degradedReason }
       return stats
     } catch {
       // 打开失败 / 库被换掉 / PRAGMA 抛错：丢掉连接，下一轮按冷启动重来。
@@ -479,6 +654,13 @@ export function createLocalScanner(opts: { detectDbPath: () => string | null }):
     },
     lastRun(): LocalRun | null {
       return run
+    },
+    async stop(): Promise<void> {
+      hostOff = true
+      const h = host
+      host = null
+      if (h) await h.stop()
+      closeConn()
     }
   }
 }

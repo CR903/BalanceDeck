@@ -6,6 +6,7 @@ import { errSnap, identityOf, localSnap, noDataSnap, officialSnap, readJson } fr
 import { fmtMoney } from './types'
 import { createLocalScanner } from './opencode-local'
 import type { LocalPoint, LocalStats } from './opencode-local'
+import { defaultWorkerPath } from './local-scan-host'
 import type { ProviderSnapshot, ProviderWindow, ProviderModelRow } from '../../shared/types'
 import {
   fetchUsageViaCookie,
@@ -290,15 +291,35 @@ function sumInRange(pts: LocalPoint[], startMs: number, endMs: number): { cost: 
  *   · 扫描器是**模块级单例** —— 行快照、rowid 游标、只读连接都要跨轮保持，
  *     每轮新建等于每轮冷启动（实测 0.7–0.8s 全量）。
  *   · 耗时与行数写 debugLog（R4：冷启动那一次大开销必须可观测）。
+ *
+ * 2026-10-18（任务 10-18-local-db-worker-offload）：**全量**那一次不再阻塞主线程 ——
+ * 委托给 `local-scan-host.ts` 的 worker（增量仍在本线程，它只有 1–30ms）。
+ * `workerPath` 用 `defaultWorkerPath()`：与本模块同目录的 `out/main/local-scan-worker.js`。
+ * 纯 node 测试环境拿不到 `__dirname` ⇒ 返回空串 ⇒ 宿主不起 worker，行为与从前逐字相同。
  */
-const localScanner = createLocalScanner({ detectDbPath })
+const localScanner = createLocalScanner({
+  detectDbPath,
+  workerPath: defaultWorkerPath,
+  log: debugLog
+})
 
 async function loadLocal(nowMs: number): Promise<LocalStats | null> {
   const stats = await localScanner.scan(nowMs)
   const run = localScanner.lastRun()
   // cache 轮不打日志：那是常态（每轮都打会把日志淹掉，反而看不见 full → delta 的切换）
-  if (run && run.mode !== 'cache') debugLog(`opencode: 本机扫描 ${run.mode} ${run.ms}ms rows=${run.rows}`)
+  if (run && run.mode !== 'cache') {
+    // `via` / `degradedReason` 是「首轮全量到底走没走 worker」的**唯一**外部证据
+    // （scripts/verify-worker-packaged.mjs 的正/负向验证就靠这两行）。
+    const via = run.via ? ` via=${run.via}` : ''
+    const degraded = run.degradedReason ? ` degraded=${run.degradedReason}` : ''
+    debugLog(`opencode: 本机扫描 ${run.mode} ${run.ms}ms rows=${run.rows} pts=${stats?.pts.length ?? 0}${via}${degraded}`)
+  }
   return stats
+}
+
+/** 停机：终止全量扫描的 worker（幂等）。app 退出 / `stopScheduler()` 调用 */
+export async function stopLocalScan(): Promise<void> {
+  await localScanner.stop()
 }
 
 // ─── 官方窗口构建 ───────────────────────────────────────────────────────────

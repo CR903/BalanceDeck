@@ -15,6 +15,7 @@
 //      / AC5 的 claude-codex 部分（目录 mtime 短路：目录未变时 readdir 不被调用）
 
 import { loadTs } from './lib/load-ts.mjs'
+import { buildWorker } from './lib/build-worker.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -576,6 +577,12 @@ function stripComments(src) {
   eq(dbStamp(fx.dbPath), `${st.size}:${Math.round(st.mtimeMs)}`, 'L5g dbStamp = 主库 size:round(mtime)')
   ok(/^-$|^\d+:\d+$/.test(dbStamp(`${fx.dbPath}-wal`)), 'L5h dbStamp 是单值（不是三段拼接 —— 老 localDbStamp 的形状）')
   eq([LOCAL_WINDOW_MS, DELTA_LOOKBACK_ROWS], [31 * D, 600], 'L5i 窗口 31 天 / 回看 600 行（口径常量与实测选定的窗口）')
+  // R6（任务 10-18-local-db-worker-offload）：全量核对间隔从 6h 收紧到 1h 是**实测决策**，
+  // 不是口味 —— 判据是"全量已在子线程，主线程阻塞 0ms"。改成 6h 必须重新论证。
+  ok(
+    FULL_RESCAN_MAX_AGE_MS <= 3600_000,
+    `L5j 全量核对间隔 ≤ 1h（R6 收紧的判据：主线程 sqlite 采样 0ms，见 docs/daily/2026-10-18_local-db-worker-offload.md）—— 当前 ${FULL_RESCAN_MAX_AGE_MS}ms`
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -723,7 +730,168 @@ function makeTree(files) {
   rmSync(cfg, { recursive: true, force: true })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// L7. 全量移出主线程（AC2 的另一半）：worker 路径与主线程路径**逐点等价**
+// ═══════════════════════════════════════════════════════════════════════════════
+// 为什么这一段必须在这里：口径等价是整套件的总闸门，而「搬到子线程」是新的一条路。
+// worker 入口是真源码打出来的真文件（scripts/lib/build-worker.mjs），跑的是真子线程 ——
+// 打包态能不能加载是另一件事，由 scripts/verify-worker-packaged.mjs 在打包态验证。
+console.log('\nL7. worker 全量 == 主线程全量（AC2）')
+
+const workerDir = mkdtempSync(joinPath(tmpdir(), 'bd-local-scan-worker-'))
+{
+  const workerFile = await buildWorker(joinPath(workerDir, 'local-scan-worker.js'))
+  const withWorker = (dbPath, path) =>
+    createLocalScanner({ detectDbPath: () => dbPath, workerPath: () => path, log: () => {} })
+
+  const mainScan = scannerOf(fx.dbPath)
+  const workerScan = withWorker(fx.dbPath, workerFile)
+  const a = await mainScan.scan(NOW)
+  const b = await workerScan.scan(NOW)
+  eq(mainScan.lastRun().via, 'main', 'L7a 不配 workerPath ⇒ 主线程（缺省行为与从前逐字相同）')
+  ok(mainScan.lastRun().degradedReason === undefined, 'L7a2 不配 worker 时**不是降级**（没有 degradedReason）')
+  eq(workerScan.lastRun().via, 'worker', 'L7b 配了 workerPath ⇒ 全量走 worker（真子线程，不是 mock）')
+  eq(workerScan.lastRun().mode, 'full', 'L7c 首次仍是 full（只是换了个线程跑）')
+  eq(shape(b), shape(a), 'L7d worker 全量结果 == 主线程全量结果（逐点，pts + byModel）')
+  eq(shape(b), shape(baselineScan(fx.dbPath, NOW)), 'L7e worker 全量结果 == 冻结的旧口径基准（口径没漂）')
+  eq(workerScan.lastRun().rows, mainScan.lastRun().rows, 'L7e2 两条路读到的原始行数相同（诊断口径也一致）')
+
+  // 增量仍在主线程：它只有 1–30ms，移出去只多一次往返与一条新的失败路径
+  insertRows(fx.db, [
+    ['r-l7', 'session_message', 'assistant', NOW - 600_000, dataNew({ cost: 3.5, model: { id: 'l7-new', providerID: 'opencode-go' }, time: { created: NOW - 600_000 } })]
+  ])
+  const b2 = await workerScan.scan(NOW + 60_000)
+  eq(workerScan.lastRun().mode, 'delta', 'L7f 增量仍走主线程（mode=delta）')
+  eq(workerScan.lastRun().via, undefined, 'L7g 增量轮不带 via（via 只描述 full 走哪条路）')
+  eq(
+    shape(b2),
+    shape(baselineScan(fx.dbPath, NOW + 60_000)),
+    'L7h **行快照真的装回来了**：走完 worker 之后增量累积仍与旧口径逐点相等（只回传 pts 会让这里空掉 —— 这是 design.md §3 初稿形状的致命处）'
+  )
+  ok(b2.byModel.has('l7-new'), 'L7i 走 worker 之后新插入的行仍能被增量看见')
+  await workerScan.stop()
+
+  // ⚠ 上面这几条**看不出「行快照有没有装回来」**：夹具表只有十几行，远小于回看窗口
+  //   （600 行），下一轮增量顺手就把整张表重读了一遍 —— 缺陷被掩盖（实测：拿掉
+  //   installSnapshot 后 L7f–L7i 全绿）。要看出这件事，表必须**大于回看窗口**：
+  //   只有那样，"窗口外的行"才只能来自快照。
+  {
+    const big2 = makeDb('local-scan-worker-big')
+    const N = DELTA_LOOKBACK_ROWS + 300
+    big2.db.exec('BEGIN')
+    for (let i = 0; i < N; i++) {
+      const t = NOW - 20 * D + i * 60_000
+      insertRows(big2.db, [
+        [`w${i}`, 'session_message', 'assistant', t, dataNew({ cost: 0.01, model: { id: 'bulk', providerID: 'opencode-go' }, time: { created: t } })]
+      ])
+    }
+    big2.db.exec('COMMIT')
+
+    const s = withWorker(big2.dbPath, workerFile)
+    const cold = await s.scan(NOW)
+    eq(s.lastRun().via, 'worker', 'L7o 大表：全量同样走 worker')
+    eq(s.lastRun().rows, N, `L7p 大表：worker 读到了全部 ${N} 行`)
+    eq(shape(cold), shape(baselineScan(big2.dbPath, NOW)), 'L7q 大表：worker 全量 == 旧口径（逐点）')
+
+    // 表尾插一行（新行）—— 下一轮是增量，窗口外的 N-600 行**只能**来自装回来的快照
+    insertRows(big2.db, [
+      ['w-new', 'session_message', 'assistant', NOW - 60_000, dataNew({ cost: 0.5, model: { id: 'newcomer', providerID: 'opencode-go' }, time: { created: NOW - 60_000 } })]
+    ])
+    const after = await s.scan(NOW + 1000)
+    eq(s.lastRun().mode, 'delta', 'L7r 大表：有变更 ⇒ 增量')
+    ok(s.lastRun().rows <= DELTA_LOOKBACK_ROWS + 5, `L7s 增量只读窗口内的行（${s.lastRun().rows} ≤ ${DELTA_LOOKBACK_ROWS} + 5）`)
+    ok(
+      after.pts.length > DELTA_LOOKBACK_ROWS,
+      `L7t 前置（负向断言的地板）：结果里有窗口外的行（${after.pts.length} > ${DELTA_LOOKBACK_ROWS}）`
+    )
+    eq(
+      shape(after),
+      shape(baselineScan(big2.dbPath, NOW + 1000)),
+      'L7u **行快照真的装回来了**：大表上"窗口外靠快照、窗口内靠重读"仍与旧口径逐点相等（不装快照这里必然少掉几百个点）'
+    )
+    ok(after.byModel.has('newcomer'), 'L7v 新插入的行进来了')
+    await s.stop()
+    big2.db.close()
+    rmSync(big2.dir, { recursive: true, force: true })
+  }
+
+  // 降级集成（AC4）：worker 路径坏掉 ⇒ 结果与走通时**逐点相等**
+  const broken = withWorker(fx.dbPath, joinPath(workerDir, 'does-not-exist.js'))
+  const r = await broken.scan(NOW + 120_000)
+  eq(broken.lastRun().via, 'main', 'L7j worker 路径坏掉 ⇒ 回退主线程')
+  ok(
+    typeof broken.lastRun().degradedReason === 'string' && broken.lastRun().degradedReason.length > 0,
+    'L7k 降级留痕：degradedReason 有值（静默降级 = 用户还在卡而没人知道为什么）'
+  )
+  eq(shape(r), shape(baselineScan(fx.dbPath, NOW + 120_000)), 'L7l 降级路径的结果与旧口径逐点相等（AC4：不丢数据）')
+  await broken.stop()
+
+  // ── 「可信的空」vs「丢表的空」（2026-10-18 核查代理**在打包态**实测到的洞）─────────
+  // worker 回 `ok:true` 但快照里缺表 ⇒ 必须当成降级。实测（打包态植入 `tables: []`）：
+  //   `本机扫描 full 658ms rows=0 pts=0 via=worker` —— 本机数字**静默归零**，
+  //   而下一轮是 delta（只补回看窗口内的行），要等下一次全量核对才可能恢复。
+  // 判据必须是**表名集合**而不是行数：31 天没用过 opencode ⇒ 0 行是真相，不许因此降级。
+  {
+    const mkFixture = (name, body) => {
+      const p = joinPath(workerDir, name)
+      writeFileSync(p, `import { parentPort } from 'node:worker_threads'\n${body}\n`)
+      return p
+    }
+    const emptyTables = mkFixture(
+      'bad-empty-tables.mjs',
+      `parentPort.on('message', (m) => parentPort.postMessage({ seq: m.seq, ok: true, rows: 0, tables: [] }))`
+    )
+    const noTablesField = mkFixture(
+      'bad-no-tables-field.mjs',
+      `parentPort.on('message', (m) => parentPort.postMessage({ seq: m.seq, ok: true }))`
+    )
+    const oneTable = mkFixture(
+      'bad-one-table.mjs',
+      `parentPort.on('message', (m) => parentPort.postMessage({ seq: m.seq, ok: true, rows: 0, tables: [{ name: 'session_message', rows: new Map() }] }))`
+    )
+    const trustedEmpty = mkFixture(
+      'ok-empty-rows.mjs',
+      `parentPort.on('message', (m) => parentPort.postMessage({ seq: m.seq, ok: true, rows: 0, tables: [{ name: 'session_message', rows: new Map() }, { name: 'message', rows: new Map() }] }))`
+    )
+
+    const badEmpty = withWorker(fx.dbPath, emptyTables)
+    const rEmpty = await badEmpty.scan(NOW + 240_000)
+    eq(badEmpty.lastRun().via, 'main', 'L7w worker 回 tables:[] ⇒ 降级（不许把「缺表」当成「可信的空」）')
+    ok(
+      (badEmpty.lastRun().degradedReason ?? '').includes('缺少表'),
+      `L7x 缺表降级同样留痕（${badEmpty.lastRun().degradedReason ?? '无'}）`
+    )
+    eq(shape(rEmpty), shape(baselineScan(fx.dbPath, NOW + 240_000)), 'L7y 缺表时数据仍完整（与旧口径逐点相等，不是零）')
+    await badEmpty.stop()
+
+    const badNoField = withWorker(fx.dbPath, noTablesField)
+    const rNoField = await badNoField.scan(NOW + 300_000)
+    eq(badNoField.lastRun().via, 'main', 'L7w2 连 tables 字段都没有 ⇒ 同样降级（缺字段也是缺表）')
+    eq(shape(rNoField), shape(baselineScan(fx.dbPath, NOW + 300_000)), 'L7y2 缺字段时数据仍完整')
+    await badNoField.stop()
+
+    const badOne = withWorker(fx.dbPath, oneTable)
+    const rOne = await badOne.scan(NOW + 360_000)
+    eq(badOne.lastRun().via, 'main', 'L7w3 少一张表 ⇒ 降级（静默丢一张表 = 静默少一半数据）')
+    eq(shape(rOne), shape(baselineScan(fx.dbPath, NOW + 360_000)), 'L7y3 少表时数据仍完整')
+    await badOne.stop()
+
+    // 负向前提：判据不能退化成「永远降级」—— 表名齐、行数为 0 是**可信的空**
+    const okEmpty = withWorker(fx.dbPath, trustedEmpty)
+    await okEmpty.scan(NOW + 420_000)
+    eq(okEmpty.lastRun().via, 'worker', 'L7z 表名齐但 0 行 ⇒ **仍走 worker**（31 天没用过 opencode 是真相，不是异常）')
+    ok(okEmpty.lastRun().degradedReason === undefined, 'L7z2 可信的空不带 degradedReason')
+    await okEmpty.stop()
+  }
+
+  // 停机后再扫：不许再起线程，行为回到纯主线程
+  const afterStop = await workerScan.scan(NOW + 180_000)
+  eq(workerScan.lastRun().via, 'main', 'L7m stop() 之后不再起 worker（回到主线程）')
+  eq(shape(afterStop), shape(baselineScan(fx.dbPath, NOW + 180_000)), 'L7n 停机后结果仍与旧口径相等')
+}
+
 // ─── 收尾 ────────────────────────────────────────────────────────────────────
+rmSync(workerDir, { recursive: true, force: true })
 fx.db.close()
 rmSync(fx.dir, { recursive: true, force: true })
 

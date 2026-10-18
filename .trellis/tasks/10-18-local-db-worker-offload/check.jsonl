@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/adapters/local-db-scan.md", "reason": "核查口径零漂移：worker 与主线程两条路的结果必须逐点等价（pts + byModel）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验收判据：assertion 脚本风格、真源码加载、先弄坏一次"}
+{"file": ".trellis/spec/adapters/index.md", "reason": "核查「测试加载真源码」与静态守卫纪律，以及本机数据不得被当成官方数据"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核查新边界的失败语义：降级必须留痕、迟到结果必须丢弃、退出必须清理"}

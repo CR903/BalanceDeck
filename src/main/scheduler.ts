@@ -1,4 +1,4 @@
-import { buildAdapters, collectAll } from './adapters'
+import { buildAdapters, collectAll, stopLocalScan } from './adapters'
 import { getKey, getExtra, setKey } from './keystore'
 import { envValueFor, envExtraFor } from './scanner'
 import { listInstances, listProviders } from './providers'
@@ -232,6 +232,10 @@ export function debugPush(snapshots: ProviderSnapshot[], offline = false): void 
 
 export function stopScheduler(): void {
   loop.stop()
+  // 本机扫描的全量 worker 是**进程内的线程**，但它持有 db 句柄与一个超时定时器。
+  // 停机时显式终止（`terminate()` 是异步的，这里**不阻塞退出** —— 线程本就随进程消亡，
+  // 显式终止是为了让 QA 的 `process.getActiveResourcesInfo()` 断言为真、并立刻释放句柄）。
+  void stopLocalScan().catch(() => {})
 }
 
 // ─── 用量历史快照（P0-2）─────────────────────────────────────────────────────
