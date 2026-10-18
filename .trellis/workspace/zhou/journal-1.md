@@ -584,3 +584,46 @@ live 验证发现 since 走 ~48h 短期数据，周/月只回 2 天；改为周/
 - 父任务 10-18-sync-stall-and-mainthread-block 仍未归档：AC4 的连续 30 分钟窗口未跑（本轮按用户要求缩短为 10 分钟），可在用户常驻使用后读 balance-export.json 的推进记录来判
 - AGENTS.md 仍提到 docs/ 下的 domain context/ 目录，本轮核对未找到（只有 adr/baseline/daily/knowledge）；与其它陈旧表述一起留待下次对齐
 - --uitest 的既有 flaky（intervalFlash/dockSettings/grpUnknownBucket 等，HEAD 基线也红）本轮仍未修，勿误判为新回归
+
+
+## Session 18: uitest 时序脆弱断言收口：52 处瞬时判据归零，翻转键 1 → 0
+<!-- trellis-session: v=2 fp=6e5592cdc0c5cdc2 -->
+
+**Date**: 2026-10-19
+**Task**: uitest 时序脆弱断言收口：52 处瞬时判据归零，翻转键 1 → 0
+**Branch**: `main`
+
+### Summary
+
+uitest 是所有任务的验收工具却自身 flaky（intervalFlash 在 HEAD 基线也约 1/2 失败），等于每次验收都打折。本任务只改测试与测试工具：把 52 处单点取值的瞬时判据收口到唯一有界轮询原语，建立可复跑的 flaky 基线，并用棘轮守卫防止坏写法回流。
+
+### Main Changes
+
+- 断言判据：唯一原语 pollCheck(condJs,{mode,budgetMs,stepMs,diagJs})，waitFor/dockWait/waitIdle/waitCollectIdle 收敛为薄壳；52 处按①轮询40/②可瞬时5/③负向7 三类收口；失败带当时 DOM 诊断
+- 基线工具：新增 scripts/uitest-baseline.mjs —— N 轮逐键通过率 + 跨轮翻转键 + 每轮耗时 + 失败诊断；每轮超时上界 + 进程组清理（抗跑完不退）；含 --selftest 构造自检
+- 棘轮守卫：test-structure 增 N1–N8（瞬时判据形状同行/换行、剥注释后计数、absent 预算下限、死循环守卫）
+- 机制纠正：.saved-flash 实测 1–2ms 就出现、~1600ms 消失，失败是取样点越过窗口 ⇒ 轮询必须从 t=0 起并先清上一动作残留；原先猜的「慢到 900ms 还没出现」被推翻
+- 核查新修真缺陷：pollCheck 的 absent 预算判据挂成 else if ⇒ 条件恒真时死循环（一条负向断言失败会整轮挂死，而 --uitest 不设退出码）；已改为每条路判定 + N8a/N8b
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b1c7230` | test(uitest): 时序脆弱断言收口：瞬时判据改有界轮询 + flaky 基线可复跑 |
+
+### Testing
+
+- [OK] 修复前基线 3 轮：翻转 1 键（grpUnknownBucket）；修复后 5 轮 + 核查 3 轮：翻转 0；171 键集合逐键差异为空集（172 = 171 + uitest 标志）；intervalFlash 5/5 ok（waited 3–6ms）
+- [OK] 墙钟中位 2m26s → 2m14s（0.92×），最保守口径 1.38× ≤ 1.5× 红线；diff 中新增 sleep 只有轮询步长与一处有注释的落定窗口，无「加大 sleep 换绿」
+- [OK] npm run typecheck 通过；npm test 24 套件 0 失败；test-structure 479/0；护栏变异 N1(同行/换行)/N6/N7/N8b 各红 1 项
+- [OK] 产品代码零改动（git status 只含 qa/uitest.ts、scripts/**、docs/**、.trellis/**）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 「跑完 app.quit() 不退」经 HEAD A/B 证明为既有间歇问题（spec quality-guidelines.md:601 早有记载，归因磁盘 ~4GB；核查观测到 23:12 后出现率升高），建议单开任务先量 10 轮出现率再定位
+- N1 只认形状：const x = await exec(...); r.X = x ? ... 可绕过；文件里仍有 30 处前置瞬时读（只会 skipped，不会假绿），棘轮是防回流不是证明
+- 10-07 的 .trend-cell/.trend-head 断言确认从未存在（真实类名 .trend-chart/.trend-bar/.trend-records-*），10-07 收尾时需据此改判据或改为截图走查
