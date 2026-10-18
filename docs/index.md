@@ -34,3 +34,5 @@
 | 2026-10-18 | [本机用量首轮全量移出主线程：worker 化 + 全量核对间隔 6h → 1h](daily/2026-10-18_local-db-worker-offload.md) | `10-18-local-db-worker-offload` |
 | 2026-10-18 | [补齐 AGENTS.md 引用的门禁文档（三个从未落地的文件）](daily/2026-10-18_docs-gate-files.md) | `10-18-docs-gate-files` |
 | 2026-10-18 | [uitest 时序脆弱断言收口：52 处瞬时判据归零，翻转键 1 → 0](daily/2026-10-18_uitest-timing-hardening.md) | `10-18-uitest-timing-hardening` |
+| 2026-10-18 | [采集健壮性与主进程阻塞修复（父任务收尾：2.6 小时无断点）](daily/2026-10-18_sync-stall-and-mainthread-block.md) | `10-18-sync-stall-and-mainthread-block` |
+| 2026-10-18 | [uitest 时序脆弱断言收口：52 处瞬时判据归零，翻转键 1 → 0](daily/2026-10-18_uitest-timing-hardening.md) | `10-18-uitest-timing-hardening` |

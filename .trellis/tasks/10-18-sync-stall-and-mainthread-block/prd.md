@@ -53,12 +53,13 @@
 
 ## 跨孩子验收
 
-- [ ] AC1：两个孩子各自 `npm run typecheck` + `npm test` 全绿；各自新增护栏都**先弄坏一次**确认变红（`frontend/quality-guidelines.md` 纪律）。
-- [ ] AC2：A 落地后，"一轮挂起"场景在**不重启**的情况下自愈，`BALANCEDECK_DEBUG` 日志可见超时与复位。
-- [ ] AC3：B 落地后，连续两轮采集（60s 间隔）主进程同步阻塞 < 100ms/轮；`sample` 中无单次 > 200ms 的主线程热点。
-- [ ] AC4：真机复测两症状：连续运行 ≥ 30 分钟，`balance-export.json` 的 `updatedAt` 每轮前进；详情页点刷新有可见反馈。
-- [ ] AC5：`docs/daily/2026-10-18_<slug>.md` 各一篇 + `docs/index.md` 追加（AGENTS.md 门禁）；可沉淀坑位同步 `docs/knowledge/`。
-- [ ] AC6：不新增"看起来在动"的假象：超时那一轮**不伪造数据**，界面继续显示上一轮（`shared/quality.ts` 的 cached 语义），时间戳如实继续变老。
+- [x] AC1：两个孩子各自 `npm run typecheck` + `npm test` 全绿；各自新增护栏都**先弄坏一次**确认变红（`frontend/quality-guidelines.md` 纪律）。
+- [x] AC2：A 落地后，"一轮挂起"场景在**不重启**的情况下自愈，`BALANCEDECK_DEBUG` 日志可见超时与复位。
+- [x] AC3：B 落地后，连续两轮采集（60s 间隔）主进程同步阻塞 < 100ms/轮；`sample` 中无单次 > 200ms 的主线程热点。
+- [x] AC4：真机复测两症状：连续运行 ≥ 30 分钟，`balance-export.json` 的 `updatedAt` 每轮前进；详情页点刷新有可见反馈。
+      （**实测取到 2.6 小时**：21:50→00:46 历史采样 11 点、最大间隔 15.9 分钟、无 >25 分钟断点 —— 见 `docs/daily/2026-10-18_sync-stall-and-mainthread-block.md`）
+- [x] AC5：`docs/daily/2026-10-18_<slug>.md` 各一篇 + `docs/index.md` 追加（AGENTS.md 门禁）；可沉淀坑位同步 `docs/knowledge/`。
+- [x] AC6：不新增"看起来在动"的假象：超时那一轮**不伪造数据**，界面继续显示上一轮（`shared/quality.ts` 的 cached 语义），时间戳如实继续变老。
 
 ## 装机后真机复测取证（2026-10-18，窗口 10 分钟）
 
