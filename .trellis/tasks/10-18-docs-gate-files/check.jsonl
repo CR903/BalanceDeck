@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核查口径：断言脚本风格、先弄坏一次、tsc 与 npm test 都要跑"}

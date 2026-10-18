@@ -10,6 +10,7 @@
 | 端 | 说明 |
 |---|---|
 | [`agents/`](agents/index.md) | AI 协作纪律（子代理校验、Trellis 任务产物优先等） |
+| [`common/`](common/index.md) | 跨端约定与流程门禁（daily → knowledge 沉淀门禁） |
 | [`frontend/`](frontend/index.md) | 渲染层：图表几何、皮肤 token、React 纪律 |
 | [`main/`](main/index.md) | 主进程：采集调度、出网超时与可达性记账 |
 
