@@ -540,3 +540,47 @@ live 验证发现 since 走 ~48h 短期数据，周/月只回 2 天；改为周/
 - B 增量盲区有界未消除：回看 600 行 + 6 小时全量核对，窗口外改值/删行最多陈旧 6h（有断言钉住）
 - --uitest 既有 flaky 且 HEAD 基线也红（intervalFlash 约 1/2 失败），本轮未修，勿误判为新回归
 - /Applications/BalanceDeck.app 仍是旧构建，修复只在源码/提交里，需重建安装后真机复测两症状
+
+
+## Session 17: 本机用量首轮全量 worker 化 + 补齐 AGENTS.md 门禁文档（含装机复测收尾）
+<!-- trellis-session: v=2 fp=ec1054d5a05a03ff -->
+
+**Date**: 2026-10-18
+**Task**: 本机用量首轮全量 worker 化 + 补齐 AGENTS.md 门禁文档（含装机复测收尾）
+**Branch**: `main`
+
+### Summary
+
+接上一轮的两个 bug 修复：先把装机后真机复测按用户要求缩短为 10 分钟窗口取证，再把任务 C（首轮全量移出主线程）规划、实施、核查、打包态验证、装机完成；顺手把 AGENTS.md 引用的三个从未落地的门禁文档补齐。
+
+### Main Changes
+
+- C 宿主：新增 local-scan-host.ts（纯传输层：超时按整次扫描计、降级必留痕、迟到结果按 seq 丢弃、stop 幂等）与 local-scan-worker.ts；full 走 worker，增量仍留主线程（22-49ms，移出去只多一次往返与失败面）
+- C 本机扫描：opencode-local.ts 抽出共用投影/快照函数（worker 与降级同一份实现）；回包按表名集合做内容校验（缺表即降级，防静默归零）；R6 全量核对间隔 6h → 1h
+- C 打包：electron.vite.config.ts 增加 worker 入口；新增 verify-worker-packaged.mjs（正向 + 负向）；实测 asar 内可直接加载 worker，不需要 asarUnpack
+- 门禁文档：新增 docs/template.md、docs/README.md、docs/knowledge/common/best-practices/daily-to-knowledge.md + common/index.md，并同步两级索引（此前三处引用从未存在）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6b9bb6d` | perf(main): 本机用量首轮全量移出主线程（worker 宿主 + 打包态验证） |
+| `ead5b38` | docs: 补齐 AGENTS.md 引用的门禁文档（template/README/daily-to-knowledge） |
+
+### Testing
+
+- [OK] npm run typecheck 通过；npm test 24 段全绿；test-local-scan-host 49 断言；test-local-scan 132 断言
+- [OK] 打包态：装机产物上 verify-worker-packaged 17/0 —— 主线程 sqlite 0 帧/0ms（红线 200ms）、worker 线程最长连续 1276ms；负向 via=main degraded=Cannot find module 且 rows=pts 完整
+- [OK] 8 组变异全部实测变红（degrade 不写 reason 8 红 / 超时回调空转 8 红 / 丢回传 tables 5 红 / 间隔回 6h 1 红 等）
+- [OK] 真机复测（10 分钟窗口）：10 轮 0 超时、10/10 cached=0、首轮 full 736ms 后 delta 22-49ms、updatedAt 每轮前进；主线程 sample sqlite 帧 7（故障期旧样本 22）
+- [OK] 核查代理新修缺陷：worker 回 ok:true 但缺表会把本机数字静默归零（违反不得丢数据），已按表名集合校验 + 补 8 条断言
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 父任务 10-18-sync-stall-and-mainthread-block 仍未归档：AC4 的连续 30 分钟窗口未跑（本轮按用户要求缩短为 10 分钟），可在用户常驻使用后读 balance-export.json 的推进记录来判
+- AGENTS.md 仍提到 docs/ 下的 domain context/ 目录，本轮核对未找到（只有 adr/baseline/daily/knowledge）；与其它陈旧表述一起留待下次对齐
+- --uitest 的既有 flaky（intervalFlash/dockSettings/grpUnknownBucket 等，HEAD 基线也红）本轮仍未修，勿误判为新回归
