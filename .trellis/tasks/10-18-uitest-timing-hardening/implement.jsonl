@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "本仓无 linter 无 CI：断言脚本是唯一验收手段；护栏必须先用「弄坏它一次」确认变红；tsc 不在 npm test 里"}
+{"file": "docs/knowledge/agents/subagent-verify.md", "reason": "核查纪律：见到 flaky 必须先证明「不是我引入的」（用 HEAD 基线对照）—— 本任务的基线脚本正是这条纪律的工具化"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "uitest 断言跨主进程 ↔ 渲染层（exec 注入），时序竞态本质是跨层边界问题：要判断「该等什么谓词」而不是「该睡多久」"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "渲染层的 effect 与清理纪律：判断一个谓词是否「等得到」需要理解组件的挂载、动效与卸载生命周期"}

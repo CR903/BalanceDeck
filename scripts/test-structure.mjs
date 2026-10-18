@@ -2980,5 +2980,73 @@ console.log('\nM. opencode 详情页 v2：序列视图 / 余额块 / 测试接�
     'M14 seriesView 是纯模块（无 React / electron / DOM）')
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// N. uitest 的时序判据（10-18-uitest-timing-hardening）：断言必须「等条件成立」，
+//    不许「睡固定值 → 单点取一次 DOM」。这是**棘轮**：只许往下收，不许长回来。
+// ═══════════════════════════════════════════════════════════════════════════════
+console.log('\nN. uitest 断言只许走轮询判据（不许单点取值）')
+{
+  // ⚠ 全部按**剥掉注释后的代码**数（用文件里已有的 `stripTsComments`）：
+  //   本仓栽过「断言的是注释里的文案」（quality-guidelines.md「Don't: assert on text you
+  //   found in a comment」）—— 注释里提到 `budgetMs: 0` / 写出瞬时判据的旧写法，
+  //   都不该影响这里的计数（正向会假绿、负向会假红）。
+  const code = stripTsComments(qa)
+  // ⚠ 还要**归一化空白**再数：「瞬时判据」有两种写法 ——
+  //   `r.x = (await exec(…)) ? 'ok' : …`（同行）与
+  //   `r.x =\n    (await exec(…)) ? 'ok' : …`（换行）。
+  //   按行匹配只数得到前者（取证时数出的 39 处就是这一种），换行写法**漏了 12 处** ——
+  //   而它们是同一个缺陷：判据仍是「某一瞬间的 DOM」。所以守卫按归一化文本数。
+  const flat = code.replace(/\s+/g, ' ')
+  const instant = (flat.match(/r\.\w+ = \(await exec\(/g) ?? []).length
+  ok(instant === 0, `N1 瞬时判据（断言键直接拿一次 exec 结果做三元判断）必须 0 处（当前 ${instant} 处）`)
+
+  ok(/const pollCheck = async/.test(code), 'N2 单一轮询助手 pollCheck 存在（appear/absent + 预算上界）')
+  ok(/const pollAssert = async/.test(code), 'N2b 断言串包装 pollAssert 存在（失败带 diag）')
+  const polled = (code.match(/await pollAssert\(|await pollCheck\(/g) ?? []).length
+  ok(polled >= 55, `N3 轮询判据已铺开（当前 ${polled} 处；低于 55 说明被整体回退了）`)
+  // 「一个轮询实现」是这套纪律的地基：第二套 for 循环迟早与第一套漂开（本仓
+  // `waitFor` 曾经就是第二套）。这里把助手清单钉成闭集，多一个就红。
+  const helpers = code.match(/const (pollCheck|pollAssert|waitFor|waitIdle|waitCollectIdle|dockWait) = /g) ?? []
+  ok(
+    helpers.length === 6,
+    `N4 轮询助手只有 pollCheck/pollAssert/waitIdle/waitCollectIdle/waitFor/dockWait 六处（当前 ${helpers.join(' / ') || '无'}）`
+  )
+  ok(
+    !/const waitFor = async \(cond: string, tries = 80\): Promise<boolean> => \{\s*for/.test(code),
+    'N5 waitFor 不再自带 for 循环（必须复用 pollCheck，不许第二套实现）'
+  )
+  // 负向断言必须走 `mode: 'absent'`（出现过又消失 / 等满预算），不许写 `!querySelector(...)`
+  // 这种「某一瞬间没看到」。③ 类共 7 处（vrsHiddenWhenOff / vrsRoutineHidden /
+  // vrsNotifyHidden / settingsRemoveCustom / petCardRemoved / petSectionGone / grpDupCleanup）；
+  // 另有 1 处 `absent` 是 `intervalFlash` 派发前的前置清理（等上一动作的 flash 自灭），不是断言键。
+  // ⚠ 下限钉在 **8**（= 7 + 1）而不是 7：核查时实测，下限写成 7 的话「把任意一处 absent
+  //   退回 appear」仍然绿（8→7 还在下限之上）—— 棘轮就漏了。多出来的那 1 处也是 `absent`
+  //   用法，一起钉住；真要减少必须先改这里并说明理由。
+  const absent = (code.match(/mode: 'absent'/g) ?? []).length
+  ok(absent >= 8, `N6 负向断言走 absent 语义（当前 ${absent} 处 ≥ 8 = ③ 类 7 处 + 1 处前置清理）`)
+  // 「稳定结构」的瞬时取值必须显式标成 budgetMs: 0（= 只取一次样），而不是绕过助手。
+  // ② 类共 5 处（titleRefreshBtn / vrsSection / vrsGradeNote / vrsNotifyVisible / dockDefaultOn）
+  // + 1 处 `intervalFlash` 派发前的 stale 检查。⚠ 只数代码：注释里的 2 处不算 ——
+  // 不然注释会把下限从 5 顶到 7，删掉 2 处真实调用守卫仍然是绿的。
+  const zero = (code.match(/budgetMs: 0/g) ?? []).length
+  ok(zero >= 5, `N7 ② 类的「挂载即存在」判据显式写 budgetMs: 0（当前 ${zero} 处，② 类共 5 处）`)
+  // `absent` 的预算判据**不许**挂在 `sawTrue` 分支下：条件恒真（该消失的东西一直没消失）时
+  // 那条分支永远走不到 → 循环永不退出。于是「一条负向断言失败」会变成「整轮挂死」——
+  // 比它想修的 flaky 更糟（一次失败吃掉整轮，且 `--uitest` 不设退出码，调用方一起卡住）。
+  // 10-18 核查代理实测：把预算判据挂回 `else if` 下，条件恒真时 8s 不退出（被 SIGKILL）。
+  const absentBlock = code.slice(
+    code.indexOf('let sawTrue = false'),
+    code.indexOf('const waitedMs = Date.now() - t0')
+  )
+  ok(
+    absentBlock.length > 0 && /if \(Date\.now\(\) - t0 >= budgetMs\)/.test(absentBlock),
+    'N8a 前置：能定位 pollCheck 的 absent 分支，且它带预算判据'
+  )
+  ok(
+    !/else if \(Date\.now\(\) - t0 >= budgetMs\)/.test(absentBlock),
+    'N8b absent 的预算判据不挂在 sawTrue 分支下（挂上去 = 条件恒真时死循环）'
+  )
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 process.exit(fail === 0 ? 0 : 1)

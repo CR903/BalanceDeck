@@ -630,6 +630,35 @@ control's value.**
 surfaces only in the aggregate `execErrors` field — every other assertion in the run still
 reports `ok`, so it reads as a flake. Use `.then(...)` and let `exec` await the promise.
 
+**A DOM assertion is a predicate to wait for, not a sample to take.** Written 2026-10-19 by
+`10-18-uitest-timing-hardening`, after `--uitest` was found to be flaky *as a tool* (so every task's
+acceptance was discounted). Measured: 52 assertions took a **single-sample** reading
+(`r.X = (await exec(...)) ? 'ok' : 'fail'`), and the flake was the *assertion*, not the product —
+`intervalFlash` was red ~1/2 of runs even on a HEAD baseline.
+
+Four rules, each with a mechanism that was paid for:
+
+1. **Poll with a bounded budget; never sample once.** One primitive — `pollCheck(condJs, {mode:
+   'appear'|'absent', budgetMs, stepMs, diagJs})` — with `waitFor` / `dockWait` / `waitIdle` /
+   `waitCollectIdle` as thin shells over it. Do **not** add a second polling helper.
+2. **The budget verdict must sit on *every* path.** The first version put the `absent` verdict in an
+   `else if` under "never appeared", so a condition that was *always true* never exited the loop: a
+   failing negative assertion **hung the whole round** (worse than flaky — and `--uitest` sets no
+   exit code, so nobody noticed). Fixed to `hit = !sawTrue` on all paths; guarded by `N8a/N8b`.
+3. **A short-lived element must be polled from t=0, and the previous action's residue cleared
+   first.** `.saved-flash` appears within 1–2 ms and disappears inside ~1600 ms; sampling after
+   `sleep(900)` fails whenever load stretches the sleep — *raising* the sleep makes it worse. The
+   rule "wait for it" is not enough; the wait has to start before the transient exists.
+4. **`absent` needs the full budget to conclude** ("not seen yet" ≠ "will never appear"). Prefer
+   "wait for it to appear, then wait for it to go" over a bare absence check.
+
+`test-structure.mjs` ratchets the shape (`N1`–`N8`): same-line and wrapped instant forms both count,
+comments are stripped before counting, and the `absent`-budget count has a **lower** bound so
+"retreat one assertion back to `appear`" goes red. Known bypass, stated rather than hidden: the
+regex matches `r.X = (await exec(`, so a prefixed read (`const ok1 = await exec(…); r.X = ok1 ? …`)
+slips past the static guard — 30 such reads remain, they can only make an assertion `skipped`, never
+falsely green. That is why the guard is a ratchet, not a proof.
+
 ### Proving an assertion can fail — break-once, with an exact red set
 
 An assertion that cannot be broken is a **fake guard**. The proof is mandatory, per assertion:

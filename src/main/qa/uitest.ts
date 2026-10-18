@@ -45,6 +45,123 @@ export async function runUiTest(
       return null
     }
   }
+  // ─── 轮询判据（本文件**唯一**的「等条件成立」实现）──────────────────────────
+  //
+  // 为什么必须有：本文件长期用「睡固定值 → 单点取一次 DOM」当判据。固定值在快机器上是
+  // 浪费，在慢机器（或一轮真实采集正在出网时）上就是**假红** —— `intervalFlash` 实测
+  // 约 1/2 概率红，而它在 HEAD 基线也红（不是谁改坏的，见 10-18-sync-collect-watchdog）。
+  // 判据必须是「等谓词成立」，不是「等够时间」。
+  //
+  // 纪律三条（design.md §2）：
+  //   ① `absent` 的两条路都要走通：元素**出现过又消失** = 真的没了（立即成立）；元素
+  //      **一直没出现** = 必须等满预算才可判成立（「现在没看到」不等于「不会出现」）。
+  //   ② 失败必须带诊断：默认抓「哪一屏 + 卡片数 + 可见文案」，写成 `fail:xxx | diag=…`。
+  //      只写 `fail` 的断言复现一次就得手工再跑一遍 —— 那是 flaky 排查成本高的另一半。
+  //   ③ 不许用「加大 sleep」换绿：那只是把概率降低，判据仍是「某一瞬间」。
+  const DEFAULT_DIAG_JS = `(()=>{try{return JSON.stringify({
+    view: document.querySelector('.settings')?'settings':(document.querySelector('.card.detail')?'detail':(document.querySelector('.pcard-grid')?'card':(document.querySelector('.isl-body')?'island':'?'))),
+    cards: document.querySelectorAll('[data-card-id]').length,
+    skin: document.querySelector('.app')?.getAttribute('data-skin') ?? '',
+    txt: (document.body?.innerText ?? '').replace(/\\s+/g,' ').slice(0,90)
+  })}catch(e){return 'diag-failed:'+e}})()`
+
+  interface PollOpts {
+    /** `appear`（默认）= 等谓词成立；`absent` = 等谓词不再成立（负向断言用） */
+    mode?: 'appear' | 'absent'
+    /** 预算**上界**（ms）。命中即早退；`0` = 只取一次样（②类「挂载即存在」的稳定结构） */
+    budgetMs?: number
+    /** 轮询步长（ms） */
+    stepMs?: number
+    /** 失败时抓的诊断表达式；缺省抓「哪一屏 + 卡片数 + 可见文案」 */
+    diagJs?: string
+  }
+  const pollCheck = async (
+    condJs: string,
+    opts: PollOpts = {}
+  ): Promise<{ ok: boolean; waitedMs: number; diag: string }> => {
+    const mode = opts.mode ?? 'appear'
+    const budgetMs = opts.budgetMs ?? 600
+    const stepMs = opts.stepMs ?? 50
+    const t0 = Date.now()
+    let hit = false
+    if (mode === 'appear') {
+      for (;;) {
+        if ((await exec(condJs)) === true) {
+          hit = true
+          break
+        }
+        if (Date.now() - t0 >= budgetMs) break
+        await sleep(stepMs)
+      }
+    } else {
+      let sawTrue = false
+      for (;;) {
+        const v = await exec(condJs)
+        if (v === true) sawTrue = true
+        else if (sawTrue) {
+          hit = true // 出现过又消失 = 真的没了
+          break
+        }
+        // ⚠ 预算判据必须落在**每一条路**上，不能只写在「一直没出现」那条分支里：
+        //   条件恒真（该消失的东西一直没消失）时那条分支永远走不到 → 循环永不退出，
+        //   于是一条负向断言的**失败**会变成整轮挂死 —— 比它想修的 flaky 更糟：
+        //   一次失败吃掉整轮，而 `--uitest` 不设退出码，调用方会一起卡住。
+        //   （10-18 核查代理实测：把预算判据挂回 `else if` 下，条件恒真时 8s 不退出。）
+        if (Date.now() - t0 >= budgetMs) {
+          hit = !sawTrue // 一直没出现 = 成立；出现过却没消失 = 不成立
+          break
+        }
+        await sleep(stepMs)
+      }
+    }
+    const waitedMs = Date.now() - t0
+    const diag = hit ? '' : String((await exec(opts.diagJs ?? DEFAULT_DIAG_JS)) ?? '').slice(0, 200)
+    return { ok: hit, waitedMs, diag }
+  }
+  /** 断言串形态：轮询 → `ok` / `fail:<label> | diag=… | waited=…`。失败一定带现场。 */
+  const pollAssert = async (condJs: string, label: string, opts: PollOpts = {}): Promise<string> => {
+    const { ok: good, diag, waitedMs } = await pollCheck(condJs, opts)
+    if (good) return 'ok'
+    return `fail:${label}${waitedMs > 0 ? ` | waited=${waitedMs}ms` : ''}${diag ? ` | diag=${diag}` : ''}`
+  }
+  /**
+   * 等**当前**采集结束（不假设有新一轮）。注入夹具前必须先把在飞的那轮放完 ——
+   * 否则真实轮次会落在注入之后，把夹具冲掉。
+   */
+  const waitIdle = async (budgetMs = 15_000): Promise<boolean> =>
+    (await pollCheck('window.api.getState().then(s=>!s.scanning)', { budgetMs, stepMs: 250 })).ok
+  /**
+   * 等一轮**采集收尾**（先等它开始，再等 `scanning` 为假）。
+   *
+   * ⚠ 为什么不能只 `sleep(2500)`：真实一轮要出网（本机 3 家供应商），慢时超过 2.5s，
+   *   于是那一轮会落在夹具注入**之后**，把 `debugPush` 的夹具冲掉 —— `grpUnknownBucket`
+   *   实测就是这样红的（`fail:{"at":null}`：断言瞬间卡片已被真实轮次覆盖）。
+   *   `refreshNow()` 排队时主进程**当场**推 `scanning: true`（scheduler.ts），所以
+   *   「先等它出现」这一步是可靠的，不会空等。
+   */
+  const waitCollectIdle = async (startBudgetMs = 3000, budgetMs = 60_000): Promise<boolean> => {
+    const started = await pollCheck('window.api.getState().then(s=>!!s.scanning)', {
+      budgetMs: startBudgetMs,
+      stepMs: 100
+    })
+    if (!started.ok) return true // 没有新一轮要等（无活可干）
+    const done = await waitIdle(budgetMs)
+    // 采集落定 ≠ 渲染层已重画：状态经 IPC 推过去还要一帧，给一个很小的落定窗口
+    await sleep(150)
+    return done
+  }
+  /**
+   * 轮询直到 cond 为真（默认 ~20s 上限）。采集是异步的，固定 sleep 会偶发读到上一帧。
+   *
+   * ⚠ 上限不是随手的：默认 10s 时，本机（有 3 个真实供应商在出网）一轮 collect 就能超过它，
+   *   于是**第二个**同名实例的卡片迟迟不出现、`grpDupCardName` 必红 —— 那是探针的时序假设
+   *   比被测行为还不确定。所以要先 `forceCollect()` 再等，且给足预算。
+   *   （10-18-uitest-timing-hardening：收敛成 `pollCheck` 的一层薄壳 —— 本文件只许有一个
+   *   轮询实现，第二套迟早与第一套漂开。）
+   */
+  const waitFor = async (cond: string, tries = 80): Promise<boolean> =>
+    (await pollCheck(cond, { budgetMs: tries * 250, stepMs: 250 })).ok
+
   const bounds = (): Electron.Rectangle => win.getBounds()
   /** 收起态窗口很大（灵动岛 560×480），主体在顶部：点击 = 点命中层中心 */
   const islandCenterJs = `(()=>{
@@ -289,10 +406,17 @@ export async function runUiTest(
       patchedOk = false
     }
     try {
-      await exec(`(()=>{const b=document.querySelector('.isl-hit'); if(!b) return 'no-hit'
-        const rc=b.getBoundingClientRect()
-        b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
-        return 'ok'})()`)
+      // ① 类：右键菜单的入口是 `.isl-hit`，它随收起态岛一起挂载/卸载。此前是「睡 600ms 后
+      // 直接派发」—— 若那一刻岛 DOM 还没挂上，派发被 `if(!b) return 'no-hit'` 吞掉，
+      // `captured` 就停在哨兵 `<not-called>`，`petRingRemoved` 报 `fail:menu=<not-called>`。
+      // 实测就是岛上夹具簇里那一条红。先等入口出现再派发，剩下的交给 `sleep(600)` 等菜单回调。
+      const hitReady = await pollCheck("!!document.querySelector('.isl-hit')", { budgetMs: 3000 })
+      if (hitReady.ok) {
+        await exec(`(()=>{const b=document.querySelector('.isl-hit')
+          const rc=b.getBoundingClientRect()
+          b.dispatchEvent(new MouseEvent('contextmenu',{clientX:rc.x+rc.width/2,clientY:rc.y+rc.height/2,bubbles:true}))
+          return 'ok'})()`)
+      }
       await sleep(600)
     } finally {
       if (patchedOk) {
@@ -319,16 +443,23 @@ export async function runUiTest(
   // 归零：强制展开（历史持久化可能是收起态）
   await exec('window.api.expand()')
   await sleep(900)
-  r.card = (await exec("!!document.querySelector('.card .titlebar')")) ? 'ok' : 'fail:no-card'
-  r.cardGrid = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail:no-grid'
+  // ① 类（必须轮询）：`expand()` 之后视图切换是异步的，单点取值在慢机上就是假红
+  r.card = await pollAssert("!!document.querySelector('.card .titlebar')", 'no-card')
+  r.cardGrid = await pollAssert(
+    "!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')",
+    'no-grid'
+  )
 
   // 卡片点击 → 详情（div 卡片：onClick 打开）
   const hasCard = (await exec("!!document.querySelector('[data-card-id]')")) as boolean
   if (hasCard) {
     await exec("document.querySelector('[data-card-id]')?.click()")
     await sleep(700)
-    r.detailOpen = (await exec("!!document.querySelector('.card.detail')")) ? 'ok' : 'fail'
-    r.detailWindows = (await exec("!!document.querySelector('.dwin') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
+    r.detailOpen = await pollAssert("!!document.querySelector('.card.detail')", 'no-detail')
+    r.detailWindows = await pollAssert(
+      "!!document.querySelector('.dwin') || !!document.querySelector('.empty-state')",
+      'no-dwin'
+    )
 
     // ── 用量趋势（2026-10-11 改为窗口驱动序列视图）──────────────────────────
     // 两态互斥，**不要**写成「有 chart 或没 chart 都算过」：
@@ -424,7 +555,10 @@ export async function runUiTest(
 
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
     await sleep(600)
-    r.detailBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
+    r.detailBack = await pollAssert(
+      "!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')",
+      'no-grid'
+    )
   } else {
     r.detailOpen = 'skipped:no-card'
     r.detailWindows = 'skipped:no-card'
@@ -445,9 +579,10 @@ export async function runUiTest(
   await sleep(900)
   const b1 = bounds()
   r.collapse = b1.width === ISLAND_VIEW.width && b1.height === ISLAND_VIEW.height ? 'ok' : `fail:${b1.width}x${b1.height}`
-  r.dotDom = (await exec("!!document.querySelector('.isl-body') && !!document.querySelector('.isl-hit')"))
-    ? 'ok'
-    : 'fail'
+  r.dotDom = await pollAssert(
+    "!!document.querySelector('.isl-body') && !!document.querySelector('.isl-hit')",
+    'no-island-dom'
+  )
   // 诊断串：岛上各家 kind/lvl（收起态平铺，无名称无轮询）
   r.ballValue = String(
     await exec(
@@ -478,13 +613,25 @@ export async function runUiTest(
   r.dragWindowFixed =
     after.width === ISLAND_VIEW.width && after.height === ISLAND_VIEW.height ? 'ok' : `fail:${after.width}x${after.height}`
   // 位置落盘（AC4）：extras ui:islandX 与组件 posX 一致
-  const savedX = (await exec("window.api.getExtras(['ui:islandX']).then(e=>e['ui:islandX'])")) as string
+  // ① 类：`ui:islandX` 的写入是异步的（整文件重写 store），旧写法单点读一次 —— 读到 ''
+  // 时 `Number('')=0` 与 posX 差 0.55 → `fail:extras= posX=0.553…` 假红。
+  // 实测（2026-10-18 临时探针跑）：3 轮里红过 1 次，`extras=` 为空串。
+  // 判据改成「等落盘值追上来」（在预算内轮询），失败时把实际读到的那份带出来。
+  const wantIslandX = islDrag1.posX
+  const posSaved = await pollCheck(
+    // ⚠ 空串必须**先排除**：`Number('') === 0` 且 `Number.isFinite(0)` 为真，
+    //   而「没落盘」（空串）与「落盘成 0」是两件事 —— 后者才是合法值。
+    //   （本仓反复记的一条：不许把 plausible zero 当成未知。）
+    `window.api.getExtras(['ui:islandX']).then(e=>{const raw=e['ui:islandX'];if(!raw)return false;const v=Number(raw);return Number.isFinite(v)&&Math.abs(v-${wantIslandX})<0.005})`,
+    { budgetMs: 2000 }
+  )
+  const savedX = String(await exec("window.api.getExtras(['ui:islandX']).then(e=>e['ui:islandX'])"))
   r.islandPosSaved =
     islDrag1.err
       ? `fail:probe=${islDrag1.err}`
-      : Math.abs(Number(savedX) - islDrag1.posX) < 0.005
+      : posSaved.ok
         ? 'ok'
-        : `fail:extras=${savedX} posX=${islDrag1.posX}`
+        : `fail:extras=${savedX} posX=${wantIslandX} waited=${posSaved.waitedMs}ms`
   // 中部真落点拖动（AC4：起点在中央 combo 本体 —— 真实按压的 target 口径；
   // 与 islDragJs（打 .isl-hit）互补，target 相关断裂只红这里）。往回拖 -60：
   // 上一步 +60 已右移，此时左拖回中部，钳制边界饱和误红不了
@@ -636,7 +783,13 @@ export async function runUiTest(
   // 失败时带现场（岛还在不在、是不是隐藏态 pill）—— 裸 'fail' 分不清「双击没切走」
   // 与「切走了但卡片没渲染」；卡在 dockHidden 跳过双击那条历史上正是这样查了很久。
   const cb2 = await islandProbe()
-  r.cardBack2 = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')"))
+  // ① 类：双击后回卡片视图是异步的。失败串保留原有的现场（岛还在 = 双击没切走），
+  // 那是查「卡在 dockHidden 跳过双击」那条历史 bug 的唯一线索，不能被通用 diag 取代。
+  const cardBack2 = await pollCheck(
+    "!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')",
+    { budgetMs: 1500 }
+  )
+  r.cardBack2 = cardBack2.ok
     ? 'ok'
     : `fail:no-card mode=${cb2.mode} pill=${cb2.pill} open=${cb2.open}（岛还在 = 双击没切走）`
   // 回到岛上，后续岛断言以它为基准
@@ -661,13 +814,24 @@ export async function runUiTest(
   setDockHideEnabled(true)
   await exec('window.api.expand()')
   await sleep(800)
-  r.logoBadge = (await exec("!!document.querySelector('.brand-badge img')")) ? 'ok' : 'fail:no-img'
-  r.gridAfterRefresh = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
+  r.logoBadge = await pollAssert("!!document.querySelector('.brand-badge img')", 'no-img')
+  r.gridAfterRefresh = await pollAssert(
+    "!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')",
+    'no-grid'
+  )
 
   // 刷新压力（标题栏 ⟳ 与底部主按钮两个入口）+ 收起回岛（窗口固定为岛尺寸）
-  r.titleRefreshBtn = (await exec("!!document.querySelector('button[title=立即刷新]')")) ? 'ok' : 'fail:no-titlebar-refresh'
+  // ② 类（可保持瞬时）：`button[title=立即刷新]` 是标题栏的静态标记，随卡片视图挂载即存在，
+  // 且上面 `r.card` / `r.gridAfterRefresh` 已经轮询确认过卡片视图就位 —— 再等一遍没有新信息。
+  // 用 `budgetMs: 0`（只取一次样）显式表达「这里不需要等」，而不是绕过轮询助手。
+  r.titleRefreshBtn = await pollAssert("!!document.querySelector('button[title=立即刷新]')", 'no-titlebar-refresh', {
+    budgetMs: 0
+  })
   await exec("document.querySelector('button[title=立即刷新]')?.click()")
   await exec('window.api.refreshNow(); window.api.refreshNow()')
+  // ⚠ 这个 sleep **不是判据**，故意不等 `scanning` 为假：本段测的是「刷新进行中收起来，
+  //   窗口尺寸与状态不被刷新的余波带歪」——等它收尾反而把要测的那个窗口等没了。
+  //   R7 只禁「用 sleep 代替判据」，这里的判据是下面的窗口尺寸断言，sleep 是压力的一部分。
   await sleep(2500)
   await exec(footerClick('收起'))
   await sleep(700)
@@ -683,9 +847,9 @@ export async function runUiTest(
   // 设置：打开 → 供应商列表存在 → 添加自定义供应商 → 删除 → 偏好保存 → 返回
   await exec(footerClick('设置'))
   await sleep(700)
-  r.settingsOpen = (await exec("!!document.querySelector('.settings')")) ? 'ok' : 'fail'
-  r.settingsProviders = (await exec("!!document.querySelector('.prow')")) ? 'ok' : 'fail:no-prow'
-  r.settingsAddBtns = (await exec("document.querySelectorAll('.add-btn').length === 2")) ? 'ok' : 'fail'
+  r.settingsOpen = await pollAssert("!!document.querySelector('.settings')", 'no-settings')
+  r.settingsProviders = await pollAssert("!!document.querySelector('.prow')", 'no-prow')
+  r.settingsAddBtns = await pollAssert("document.querySelectorAll('.add-btn').length === 2", 'no-add-btns')
 
   // 添加内置供应商（目录选择 → 生成实例 → 删除）
   await exec("[...document.querySelectorAll('.add-btn')].find(b=>b.textContent.includes('添加提供方'))?.click()")
@@ -732,7 +896,9 @@ export async function runUiTest(
     await sleep(200)
     await exec("[...document.querySelectorAll('.custom-form .btn-primary')].find(b=>b.textContent.includes('添加'))?.click()")
     await sleep(1000)
-    r.settingsAddCustom = (await exec("document.body.innerText.includes('uitest-provider')")) ? 'ok' : 'fail:not-added'
+    r.settingsAddCustom = await pollAssert("document.body.innerText.includes('uitest-provider')", 'not-added', {
+      budgetMs: 1500
+    })
     await exec(`(()=>{
       const row=[...document.querySelectorAll('.prow')].find(r=>r.textContent.includes('uitest-provider'))
       row?.querySelector('.mini-btn.danger')?.click()
@@ -743,7 +909,13 @@ export async function runUiTest(
       row?.querySelector('.mini-btn.danger')?.click()
     })()`)
     await sleep(900)
-    r.settingsRemoveCustom = (await exec("!document.body.innerText.includes('uitest-provider')")) ? 'ok' : 'fail:not-removed'
+    // ③ 类（负向断言）：判据是「行真的没了」。谓词写成**正向**（innerText 含它），
+    // `mode:'absent'` 承担「出现过又消失 = 成立」/「一直没出现 = 等满预算才成立」两条路 ——
+    // 直接写 `!includes(...)` 是「某一瞬间没看到」，与「真的删掉了」不是一回事。
+    r.settingsRemoveCustom = await pollAssert("document.body.innerText.includes('uitest-provider')", 'not-removed', {
+      mode: 'absent',
+      budgetMs: 1500
+    })
   } else {
     r.settingsAddCustom = 'fail:no-form'
     r.settingsRemoveCustom = 'fail:no-form'
@@ -763,13 +935,36 @@ export async function runUiTest(
       sel.dispatchEvent(new Event('change',{bubbles:true}))
       return 'set'
     })()`)
+  // ① 类（本任务最典型的坏例）：`.saved-flash` 是**瞬时**元素（1600ms 后自己消失）。
+  // 实测（临时探针 3 轮，见日志 §5）：它其实 **1–2ms 就出现**了 —— 所以失败**不是**「读早了」，
+  // 而是**取样点落到了 1.6s 窗口之外**：旧写法是「固定睡 900ms → 单点取一次样」，而
+  // `sleep(900)` 的**实际**耗时会被当时的负载拉长（同机轮间墙钟差可达 50s），一旦越过
+  // 1600ms，元素已自灭 → `fail:no-flash`。前任务的核查代理实测约 1/2 失败（HEAD 基线也红）。
+  //
+  // ⚠ 两个顺序约束，都来自「只活 1600ms」这一个事实：
+  //   ① 轮询必须**从 t=0 起**（紧接派发、在 `sleep(900)` **之前**）。从 sleep 之后才开始的话，
+  //      一旦取样点晚于自灭时刻，重试再多次也等不到 —— **重试只能救「还没出现」，救不了
+  //      「已经没了」**。所以「从 t=0 起 + 命中即早退」两头都不会错过（实测 waited ≤ 2ms）。
+  //   ② 派发前必须先确认**上一动作**留下的 flash 已经自灭：上面刚删的 `uitest-provider` 走
+  //      `remove()`，它**也** `flash()`，而它离这里只差 ~1.1s（< 1600ms 存活窗口）。不等它的话，
+  //      下面从 t=0 起的轮询会读到它的残留，把「这次没闪」判成绿。
+  // 预算 2500ms 覆盖「渲染层慢到 2.5s 才闪」这一侧；把**实测等待时长**写进 ok 串，
+  // 让预算有依据（不是随手给一个够大的数）。
+  const stale = await pollCheck("!!document.querySelector('.saved-flash')", { budgetMs: 0 })
+  if (stale.ok) await pollCheck("!!document.querySelector('.saved-flash')", { mode: 'absent', budgetMs: 2000 })
   const intervalSet = String(await setRefreshInterval('10'))
+  const flash = await pollCheck("!!document.querySelector('.saved-flash')", { budgetMs: 2500, stepMs: 50 })
   await sleep(900)
   r.intervalSelect = intervalSet === 'set' ? 'ok' : `fail:${intervalSet}`
-  r.intervalSaved = (await exec("window.api.getExtras(['refreshInterval']).then(e=>e.refreshInterval==='10')"))
-    ? 'ok'
-    : 'fail:not-saved'
-  r.intervalFlash = (await exec("!!document.querySelector('.saved-flash')")) ? 'ok' : 'fail:no-flash' // 即改即存反馈
+  // ① 类：落盘回读是 IPC 往返 + 整文件重写，900ms 的固定窗口在慢机上不够 → 等它变成 '10'
+  r.intervalSaved = await pollAssert(
+    "window.api.getExtras(['refreshInterval']).then(e=>e.refreshInterval==='10')",
+    'not-saved',
+    { budgetMs: 2000 }
+  )
+  r.intervalFlash = flash.ok
+    ? `ok(waited=${flash.waitedMs}ms)`
+    : `fail:no-flash | waited=${flash.waitedMs}ms | diag=${flash.diag}`
   r.intervalDiag = String(await exec("document.querySelector('.settings-foot')?.innerText?.slice(0,60) + ' | sel=' + [...document.querySelectorAll('select')].map(s=>s.value).join(',')"))
   // 还原默认（避免影响后续轮次）
   await setRefreshInterval('60')
@@ -797,11 +992,13 @@ export async function runUiTest(
       return 'set'
     })()`)
 
-  // 分区标题常在（不受总开关控制）
-  r.vrsSection =
-    (await exec("[...document.querySelectorAll('.section-title')].some(e=>e.textContent==='语音提醒')"))
-      ? 'ok'
-      : 'fail:no-section-title'
+  // 分区标题常在（不受总开关控制）。② 类：`.section-title` 是设置页的静态结构，
+  // 且此刻设置页已渲染多时（上面 settingsOpen 已轮询确认）—— 只取一次样。
+  r.vrsSection = await pollAssert(
+    "[...document.querySelectorAll('.section-title')].some(e=>e.textContent==='语音提醒')",
+    'no-section-title',
+    { budgetMs: 0 }
+  )
   // ⚠ **先把开关归位再断言**。这一段测的是「总开关关着时配置区不渲染」，前提是**进来时
   //   它就是关的** —— 而它不成立：用户自己开着（真实存在的状态），或上一轮 run 崩在中途
   //   没把它关回去。实测 2026-10-01：`ui:ttsOn='1'` 时下面第一条直接报
@@ -815,19 +1012,24 @@ export async function runUiTest(
     await sleep(700)
   }
   // 总开关关着时，**整块配置都不该渲染**（默认关 = 默认不发声、不发请求）
-  r.vrsHiddenWhenOff = (await exec("!!document.querySelector('.vrs-preset') || !!document.querySelector('.vrs-power')?.classList.contains('on')"))
-    ? 'fail:shown-while-off'
-    : 'ok'
+  // ③ 类（负向断言）：谓词写成正向（配置区在 **或** 开关是 on），等它不再成立。
+  r.vrsHiddenWhenOff = await pollAssert(
+    "!!document.querySelector('.vrs-preset') || !!document.querySelector('.vrs-power')?.classList.contains('on')",
+    'shown-while-off',
+    { mode: 'absent', budgetMs: 800 }
+  )
   // 开 → 配置区出现，且总开关落盘 ui:ttsOn
   await exec("document.querySelector('.vrs-power')?.click()")
   await sleep(700)
-  r.vrsPowerOn = (await exec("!!document.querySelector('.vrs-preset') && !!document.querySelector('.vrs-threshold')"))
-    ? 'ok'
-    : 'fail:no-controls'
-  r.vrsPowerSaved =
-    (await exec("window.api.getExtras(['ui:ttsOn']).then(e=>e['ui:ttsOn']==='1')")) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsPowerOn = await pollAssert(
+    "!!document.querySelector('.vrs-preset') && !!document.querySelector('.vrs-threshold')",
+    'no-controls',
+    { budgetMs: 1500 }
+  )
+  // ① 类：落盘回读（IPC 往返 + 整文件重写）—— 等它变成期望值
+  r.vrsPowerSaved = await pollAssert("window.api.getExtras(['ui:ttsOn']).then(e=>e['ui:ttsOn']==='1')", 'not-saved', {
+    budgetMs: 1500
+  })
 
   // AC2：预设下拉给出「免费服务」与「自定义服务」两项。
   //
@@ -844,19 +1046,24 @@ export async function runUiTest(
   // 新用户（没有 ui:ttsPreset）必须**默认落在免费服务**上：落在「自定义」的话地址是空的，
   // 等于没配 TTS，播报整体不工作（AC3 的反面）。反向验证实测：把 App 里的默认值改回
   // `typeof e['ui:ttsPreset'] === 'string' ? … : 'mytts'` 只有这一条变红。
-  r.vrsEndpoint = (await exec("!!document.querySelector('.vrs-endpoint')?.value?.includes('mytts')"))
-    ? 'ok'
-    : 'fail:no-endpoint'
+  r.vrsEndpoint = await pollAssert(
+    "!!document.querySelector('.vrs-endpoint')?.value?.includes('mytts')",
+    'no-endpoint',
+    { budgetMs: 1500 }
+  )
   // 切到「自定义服务」→ 可编辑的地址 / 音色 / 语速三项出现
   r.vrsPresetSet = String(await vrsSelect('.vrs-preset', 'custom'))
   await sleep(600)
-  r.vrsCustom = (await exec("!!document.querySelector('.vrs-url') && !!document.querySelector('.vrs-voice') && !!document.querySelector('.vrs-speed')"))
-    ? 'ok'
-    : 'fail:no-custom-fields'
-  r.vrsPresetSaved =
-    (await exec("window.api.getExtras(['ui:ttsPreset']).then(e=>e['ui:ttsPreset']==='custom')")) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsCustom = await pollAssert(
+    "!!document.querySelector('.vrs-url') && !!document.querySelector('.vrs-voice') && !!document.querySelector('.vrs-speed')",
+    'no-custom-fields',
+    { budgetMs: 1500 }
+  )
+  r.vrsPresetSaved = await pollAssert(
+    "window.api.getExtras(['ui:ttsPreset']).then(e=>e['ui:ttsPreset']==='custom')",
+    'not-saved',
+    { budgetMs: 1500 }
+  )
   // 自定义模式下**不能**把 token 写进 extras（密钥只走主进程加密 IPC）。
   // ⚠ 写法：executeJavaScript 不是模块，顶层 await 会直接 "Script failed to execute"。
   //   一律用 .then() 把 promise 化掉，再由 exec 自己 await。
@@ -869,12 +1076,11 @@ export async function runUiTest(
   // 切回预设必须**同时**把 url 写进 ui:ttsConfig（否则界面显示的端点与真正发请求的地址不一致）
   r.vrsPresetBack = String(await vrsSelect('.vrs-preset', 'mytts'))
   await sleep(600)
-  r.vrsPresetUrlSynced =
-    (await exec(
-      "window.api.getExtras(['ui:ttsConfig']).then(e=>(JSON.parse(e['ui:ttsConfig']||'{}').url||'').includes('mytts'))"
-    )) === true
-      ? 'ok'
-      : 'fail:url-not-synced'
+  r.vrsPresetUrlSynced = await pollAssert(
+    "window.api.getExtras(['ui:ttsConfig']).then(e=>(JSON.parse(e['ui:ttsConfig']||'{}').url||'').includes('mytts'))",
+    'url-not-synced',
+    { budgetMs: 1500 }
+  )
 
   // 5 个触发场景的阈值输入都在，且带 data-trigger 供定位
   r.vrsTriggers = String(
@@ -887,10 +1093,11 @@ export async function runUiTest(
   // 播报内容格式（简洁 / 详细）
   r.vrsFormatSet = String(await vrsSelect('.vrs-text-format', 'detailed'))
   await sleep(500)
-  r.vrsFormatSaved =
-    (await exec("window.api.getExtras(['ui:ttsTextFormat']).then(e=>e['ui:ttsTextFormat']==='detailed')")) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsFormatSaved = await pollAssert(
+    "window.api.getExtras(['ui:ttsTextFormat']).then(e=>e['ui:ttsTextFormat']==='detailed')",
+    'not-saved',
+    { budgetMs: 1500 }
+  )
 
   // AC5：兜底间隔**默认不渲染**（定时兜底默认关），打开开关后才出现，且档位含 60（默认 1 小时）
   // ⚠ 先把开关归位再断言（与上面的 vrsPowerOn 同一教训：上一轮 run 若停在"兜底开着"，
@@ -901,12 +1108,19 @@ export async function runUiTest(
       rows.find(x=>/定时兜底播报/.test(x.textContent||''))?.querySelector('button.switch')?.click()})()`)
     await sleep(700)
   }
-  r.vrsRoutineHidden = (await exec("!!document.querySelector('.vrs-routine-interval')")) ? 'fail:shown-while-off' : 'ok'
+  // ③ 类（负向断言）：等「兜底间隔」这项不再出现（出现过又消失 = 成立；一直没出现 = 等满预算）
+  r.vrsRoutineHidden = await pollAssert("!!document.querySelector('.vrs-routine-interval')", 'shown-while-off', {
+    mode: 'absent',
+    budgetMs: 800
+  })
   await exec(`(()=>{const rows=[...document.querySelectorAll('.vrs-sec .enable-row')]
     rows.find(x=>/定时兜底播报/.test(x.textContent||''))?.querySelector('button.switch')?.click()})()`)
   await sleep(700)
-  r.vrsRoutineOn =
-    (await exec("window.api.getExtras(['ui:ttsRoutine']).then(e=>e['ui:ttsRoutine']==='1')")) === true ? 'ok' : 'fail:not-saved'
+  r.vrsRoutineOn = await pollAssert(
+    "window.api.getExtras(['ui:ttsRoutine']).then(e=>e['ui:ttsRoutine']==='1')",
+    'not-saved',
+    { budgetMs: 1500 }
+  )
   r.vrsRoutineSteps = String(
     await exec(`(()=>{const s=document.querySelector('.vrs-routine-interval')
       return s ? [...s.options].map(o=>o.value).join('|') : 'no-select'})()`)
@@ -914,27 +1128,29 @@ export async function runUiTest(
   r.vrsRoutineSteps = r.vrsRoutineSteps.includes('|60|') ? 'ok' : `fail:${r.vrsRoutineSteps}`
   r.vrsRoutineSet = String(await vrsSelect('.vrs-routine-interval', '30'))
   await sleep(500)
-  r.vrsRoutineSaved =
-    (await exec("window.api.getExtras(['ui:ttsRoutineEvery']).then(e=>e['ui:ttsRoutineEvery']==='30')")) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsRoutineSaved = await pollAssert(
+    "window.api.getExtras(['ui:ttsRoutineEvery']).then(e=>e['ui:ttsRoutineEvery']==='30')",
+    'not-saved',
+    { budgetMs: 1500 }
+  )
 
   // AC13：历史上限输入存在，且**不是** 0（0 会让历史立刻清空、异常检测永久失效）
   const capRaw = String(await exec("(()=>{const i=document.querySelector('.vrs-history-cap');return i?String(i.value):'no-input'})()"))
   r.vrsHistoryCap = Number(capRaw) > 0 ? 'ok' : `fail:${capRaw}`
 
   // AC14/AC15 的分级说明必须**写在界面上**（用户在改阈值之前就该知道展开态只播紧急）
-  r.vrsGradeNote = (await exec("/分级/.test(document.querySelector('.vrs-foot')?.textContent||'')"))
-    ? 'ok'
-    : 'fail:no-grading-note'
+  // ② 类（可保持瞬时）：`.vrs-foot` 是配置区里的静态文案，上面 vrsPowerOn 已经轮询确认
+  // 配置区就位 —— 再等一遍没有新信息。`budgetMs: 0` = 只取一次样。
+  r.vrsGradeNote = await pollAssert("/分级/.test(document.querySelector('.vrs-foot')?.textContent||'')", 'no-grading-note', {
+    budgetMs: 0
+  })
 
   // 还原：关掉播报，免得后面的轮次被 30s 轮询带着跑
   await exec("document.querySelector('.vrs-power')?.click()")
   await sleep(600)
-  r.vrsPowerOff =
-    (await exec("window.api.getExtras(['ui:ttsOn']).then(e=>e['ui:ttsOn']==='0')")) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsPowerOff = await pollAssert("window.api.getExtras(['ui:ttsOn']).then(e=>e['ui:ttsOn']==='0')", 'not-saved', {
+    budgetMs: 1500
+  })
 
   // P0-1 系统通知：总开关 + 三个阈值输入。
   //
@@ -942,9 +1158,11 @@ export async function runUiTest(
   //   `{ttsOn && …}` 之外，正是因为「关掉语音」的理由往往正是「我只想收通知，不想它出声」
   //   —— 放进去的话连开关都找不到。第一条就是这个设计的**实测**版本
   //   （test-alert-orchestration.mjs 的 M29 只静态比了位置）。
-  r.vrsNotifyVisible = (await exec("!!document.querySelector('.vrs-notify-on')"))
-    ? 'ok'
-    : 'fail:hidden-while-tts-off'
+  // ② 类（可保持瞬时）：系统通知分组刻意放在 `{ttsOn && …}` 之外，是设置页的静态结构
+  // （关掉语音后它一定在），与 vrsPowerOff 的落盘轮询无关 —— 只取一次样。
+  r.vrsNotifyVisible = await pollAssert("!!document.querySelector('.vrs-notify-on')", 'hidden-while-tts-off', {
+    budgetMs: 0
+  })
   // 判据读**输入框的值**而不是文案：三个默认值是 prd.md 需求 2 的约定（80 / 95 / 1 小时）
   const notifyDefaults = String(
     await exec(`(()=>{const w=document.querySelector('.vrs-notify-warn')
@@ -955,13 +1173,15 @@ export async function runUiTest(
   // 开关往返：判据是**落盘值**（extras 往返），不是控件上有没有 class（K15 同款纪律）
   await exec("document.querySelector('.vrs-notify-on')?.click()")
   await sleep(600)
-  r.vrsNotifyOff =
-    (await exec("window.api.getExtras(['ui:notifyOn']).then(e=>e['ui:notifyOn']==='0')")) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsNotifyOff = await pollAssert("window.api.getExtras(['ui:notifyOn']).then(e=>e['ui:notifyOn']==='0')", 'not-saved', {
+    budgetMs: 1500
+  })
   // 关掉之后阈值输入收起来（同 vrsRoutineHidden：配置项跟着开关走）
-  r.vrsNotifyHidden =
-    (await exec("!!document.querySelector('.vrs-notify-warn')")) ? 'fail:shown-while-off' : 'ok'
+  // ③ 类（负向断言）：谓词正向写，等它不再成立
+  r.vrsNotifyHidden = await pollAssert("!!document.querySelector('.vrs-notify-warn')", 'shown-while-off', {
+    mode: 'absent',
+    budgetMs: 800
+  })
   await exec("document.querySelector('.vrs-notify-on')?.click()")
   await sleep(600)
   // 阈值改一个：必须经 JSON 往返落到 ui:notifyConfig，而不是只停在组件的 useState
@@ -974,19 +1194,22 @@ export async function runUiTest(
     })()`)
   await setNotifyWarn('85')
   await sleep(600)
-  r.vrsNotifyCfg =
-    (await exec(
-      "window.api.getExtras(['ui:notifyConfig']).then(e=>{try{return JSON.parse(e['ui:notifyConfig']).pctWarn===85}catch{return false}})"
-    )) === true
-      ? 'ok'
-      : 'fail:not-saved'
+  r.vrsNotifyCfg = await pollAssert(
+    "window.api.getExtras(['ui:notifyConfig']).then(e=>{try{return JSON.parse(e['ui:notifyConfig']).pctWarn===85}catch{return false}})",
+    'not-saved',
+    { budgetMs: 1500 }
+  )
   // 还原成 80：这一轮改过的配置不许带进后面的断言
   await setNotifyWarn('80')
   await sleep(500)
 
   await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
   await sleep(600)
-  r.settingsBack = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')")) ? 'ok' : 'fail'
+  r.settingsBack = await pollAssert(
+    "!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')",
+    'no-grid',
+    { budgetMs: 1500 }
+  )
 
   // 下面的托盘等级断言要自己推夹具；**先把真实快照存下来**，测完原样推回去 ——
   // 紧跟其后的余额卡 / 套餐卡 / 窗口胶囊断言全都依赖真实数据。
@@ -1150,9 +1373,11 @@ export async function runUiTest(
     // 收尾：手动展开回卡片（窗口保持可见，托盘标记同时失效），把状态交回后续断言
     await exec('window.api.expand()')
     await sleep(800)
-    r.trayExpandRestore = (await exec("!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')"))
-      ? 'ok'
-      : 'fail:no-card'
+    r.trayExpandRestore = await pollAssert(
+      "!!document.querySelector('.pcard-grid') || !!document.querySelector('.empty-state')",
+      'no-card',
+      { budgetMs: 1500 }
+    )
   }
 
   // 主面板余额显隐（眼睛按钮：打码 + 偏好持久化 + 可还原）
@@ -1223,12 +1448,21 @@ export async function runUiTest(
   // uitest 运行时测不到，这里只断言形态死键：偏好值不再决定任何形态 —— 写 '1'
   // 也变不出人物，窗口恒岛尺寸（ISLAND_VIEW）、无 canvas、无人物 DOM。
   // 面板不再常驻宠物卡（用户要求）：确认已移除
-  r.petCardRemoved = (await exec("!!document.querySelector('.pet-card')")) ? 'fail:still-there' : 'ok'
+  // ③ 类（负向断言）：`.pet-card` 已从产品里删除 —— 谓词正向写，等它不再成立
+  // （一直没出现 → 等满预算后才判 ok，这正是「现在没看到 ≠ 不会出现」）。
+  r.petCardRemoved = await pollAssert("!!document.querySelector('.pet-card')", 'still-there', {
+    mode: 'absent',
+    budgetMs: 600
+  })
 
   // 设置页「数字助理」分区已随人物形态下线：整个 .pet-sec 不许存在
   await exec(footerClick('设置'))
   await sleep(700)
-  r.petSectionGone = (await exec("!!document.querySelector('.pet-sec')")) ? 'fail:still-there' : 'ok'
+  // ③ 类（负向断言）：整个「数字助理」分区已下线，`.pet-sec` 不许存在
+  r.petSectionGone = await pollAssert("!!document.querySelector('.pet-sec')", 'still-there', {
+    mode: 'absent',
+    budgetMs: 600
+  })
   // R1（AC1.1）设置侧：那个已删除的用量环开关整行必须已经拆掉。**只记串不报键** ——
   // petRingRemoved 是「设置页 + 右键菜单」两半合成的一条断言（拆开就把 14 条对不上），
   // 菜单那一半要到球上才截得到（菜单标签在主进程现拼，渲染层读不到），最后统一合报。
@@ -1279,7 +1513,9 @@ export async function runUiTest(
       : `fail:${bounds().width}x${bounds().height}`
   // 复位：把探测写的值还原（primePrefs 也会在下次启动时做同样的迁移）
   await exec("window.api.setExtras({\"ui:pet\":\"0\"})")
-  r.petToggleOff = (await exec("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')")) === true ? 'ok' : 'fail:not-saved'
+  r.petToggleOff = await pollAssert("window.api.getExtras(['ui:pet']).then(e=>e['ui:pet']==='0')", 'not-saved', {
+    budgetMs: 1200
+  })
 
   // ── 灵动岛形态：窗口恒 560×480（ISLAND_VIEW），纯 2D（无 canvas，有岛 DOM），无人物 DOM ──
   r.petBallWindow = bounds().width === ISLAND_VIEW.width && bounds().height === ISLAND_VIEW.height ? 'ok' : `fail:${bounds().width}x${bounds().height}`
@@ -1348,6 +1584,9 @@ export async function runUiTest(
   ]
   await pushFix(FIX_ISLAND4)
   const islA = await islandProbe()
+  // ① 类：夹具推下去后渲染层要重画一帧。先等「4 个 combo 都挂上」再读 ——
+  // 否则读到上一帧（真实数据或更少的家数），`petBallCenterValue` 会以 `fail:count=…` 假红。
+  await pollCheck("document.querySelectorAll('.isl-combo').length === 4", { budgetMs: 2000 })
   const islDom = String(
     await exec(`(()=>{
       const combos=[...document.querySelectorAll('.isl-combo')].map(c=>({
@@ -1398,17 +1637,19 @@ export async function runUiTest(
   r.petBallRingDiag = islDom
   // 禁用某家后该家消失（AC2 后半：子集推送 → 岛上只剩子集；注册表 enabled 口径见 IslandView ordered）
   await pushFix([FIX_ISLAND4[0], FIX_ISLAND4[3]])
-  await sleep(400)
+  // ① 类：等「只剩 2 家」这个谓词成立，而不是睡 400ms 后取一次
+  const onlyTwo = await pollCheck("document.querySelectorAll('.isl-combo').length === 2", { budgetMs: 2000 })
   const islB = await islandProbe()
   r.islandDisable =
     islB.err
       ? `fail:probe=${islB.err}`
-      : islB.count === 2 && islB.combos.every((c) => c.id === 'fix-i1' || c.id === 'fix-bal')
+      : onlyTwo.ok && islB.count === 2 && islB.combos.every((c) => c.id === 'fix-i1' || c.id === 'fix-bal')
         ? 'ok'
-        : `fail:count=${islB.count} combos=${JSON.stringify(islB.combos.map((c) => c.id))}`
+        : `fail:count=${islB.count} waited=${onlyTwo.waitedMs}ms combos=${JSON.stringify(islB.combos.map((c) => c.id))}`
   // 无比例不断言假数（AC2 诚实表达：灰环 + 无金额环；中心不编 0%）
   await pushFix(FIX_NOLIMIT)
-  await sleep(400)
+  // ① 类：等该家的 combo 挂上再量环色（读的是 computed style，节点不在就什么都没有）
+  await pollCheck("!!document.querySelector('.isl-combo[data-supplier=\"fix-nolimit\"]')", { budgetMs: 2000 })
   const islC = String(
     await exec(`(()=>{
       const c=document.querySelector('.isl-combo[data-supplier="fix-nolimit"]')
@@ -1429,16 +1670,21 @@ export async function runUiTest(
     noPctWhy = `fail:probe=${islC.slice(0, 80)}`
   }
   r.islandNoPct = noPctWhy || 'ok'
-  // 收尾：把真实数据拉回来（refreshNow 重采集；后面 grp/dock 段依赖真实注册表与快照）
+  // 收尾：把真实数据拉回来（refreshNow 重采集；后面 grp/dock 段依赖真实注册表与快照）。
+  // ⚠ 等的是**采集真的收尾**而不是 `sleep(2500)` —— 实测一轮要出网，慢时超过 2.5s，
+  //   于是「命中区」与后面 grp 段的夹具都会读到「真实轮次还没落地」的中间态。
   await exec('window.api.refreshNow()')
-  await sleep(2500)
+  await waitCollectIdle()
   // 命中区：岛上报的矩形必须落在岛窗口内（W7 同款纪律：退回整窗就是隐形可点击区）
-  const hitRect = String(await exec(`(()=>{
+  // ① 类：真实轮次落地后渲染层要重画一帧，`.isl-body` 可能还没挂回来 —— 等它出现再量。
+  const hitReady = await pollCheck("!!document.querySelector('.isl-body')", { budgetMs: 3000 })
+  const hitRect = hitReady.ok
+    ? String(await exec(`(()=>{
       const h=document.querySelector('.isl-body')
-      if(!h) return 'fail:no-island'
       const b=h.getBoundingClientRect()
       return JSON.stringify({w:Math.round(b.width),h:Math.round(b.height)})
     })()`))
+    : 'fail:no-island'
   r.petBallHitRect =
     hitRect.startsWith('fail:')
       ? hitRect
@@ -1602,12 +1848,7 @@ export async function runUiTest(
       }
     ])
   // 等待当前采集结束再注入（否则真实采集的结果会覆盖注入状态）
-  const waitIdle = async (): Promise<void> => {
-    for (let i = 0; i < 60; i++) {
-      if (!(await exec('window.api.getState().then(s=>!!s.scanning)'))) return
-      await sleep(250)
-    }
-  }
+  // （`waitIdle` 已收敛到文件顶部的轮询助手处，这里不再有第二份实现）
   await waitIdle()
   await exec(`window.api.debugPush(${fakeSnap('cached')}, true)`)
   await sleep(600)
@@ -1616,29 +1857,39 @@ export async function runUiTest(
       "[...document.querySelectorAll('.pcard')].map(e=>e.className).join('|') + ' :: ' + (document.body.innerText||'').slice(0,140).split(String.fromCharCode(10)).join(' ')"
     )
   )
-  r.cachedCard = (await exec("!!document.querySelector('.pcard.stale') && !!document.querySelector('.qchip.cached')"))
-    ? 'ok'
-    : `fail:no-badge[${cachedDom}]`
-  r.offlineBanner = (await exec("document.querySelector('.status-line')?.textContent?.includes('离线')"))
-    ? 'ok'
-    : 'fail:no-offline-text'
+  // ① 类：注入后要等渲染层重画。失败串保留原来的 `[cachedDom]`（卡片 class + 可见文案），
+  // 那是区分「没打角标」与「整张卡都没渲染」的唯一线索。
+  const cachedHit = await pollCheck(
+    "!!document.querySelector('.pcard.stale') && !!document.querySelector('.qchip.cached')",
+    { budgetMs: 1500 }
+  )
+  r.cachedCard = cachedHit.ok ? 'ok' : `fail:no-badge[${cachedDom}]`
+  r.offlineBanner = await pollAssert("document.querySelector('.status-line')?.textContent?.includes('离线')", 'no-offline-text', {
+    budgetMs: 1500
+  })
   await exec("document.querySelector('[data-card-id]')?.click()")
   await sleep(600)
-  r.cachedBanner = (await exec("!!document.querySelector('.qbanner.cached') && !!document.querySelector('.qbanner-retry')"))
-    ? 'ok'
-    : 'fail:no-banner'
+  r.cachedBanner = await pollAssert(
+    "!!document.querySelector('.qbanner.cached') && !!document.querySelector('.qbanner-retry')",
+    'no-banner',
+    { budgetMs: 1500 }
+  )
   await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
   await sleep(500)
   await waitIdle()
   await exec(`window.api.debugPush(${fakeSnap('local')}, false)`)
   await sleep(500)
-  r.localChip = (await exec("!!document.querySelector('.qchip.local')")) ? 'ok' : 'fail:no-chip'
+  r.localChip = await pollAssert("!!document.querySelector('.qchip.local')", 'no-chip', { budgetMs: 1500 })
   await waitIdle()
   await exec(`window.api.debugPush(${fakeSnap('error')}, false)`)
   await sleep(500)
-  r.errorState = (await exec("document.querySelector('.status-line')?.textContent?.includes('出错')")) ? 'ok' : 'fail'
+  r.errorState = await pollAssert("document.querySelector('.status-line')?.textContent?.includes('出错')", 'no-error-text', {
+    budgetMs: 1500
+  })
+  // 收尾：拉回真实数据。⚠ 等的是**采集真的收尾**（而不是睡 2500ms）——
+  // 下一段「拖拽排序」依赖真实卡片回来了，睡死会在慢机上读到夹具只剩 1 张卡的状态。
   await exec('window.api.refreshNow()')
-  await sleep(2500)
+  await waitCollectIdle()
 
   // ─── 拖拽排序 ─────────────────────────────────────────────────────────────
   // 回归两个实机 bug：
@@ -1731,10 +1982,14 @@ export async function runUiTest(
   // ─── 设置：供应商增删（删除二次确认）＋ 刷新频率（单一入口、即改即存）─────
   await exec(footerClick('设置'))
   await sleep(700)
-  r.settingsOpen = (await exec("!!document.querySelector('.settings')")) ? 'ok' : 'fail'
-  r.settingsProviders = (await exec("!!document.querySelector('.prow')")) ? 'ok' : 'fail:no-prow'
-  r.settingsIcons = (await exec("document.querySelectorAll('.prow .pmark').length > 0")) ? 'ok' : 'fail:no-mark'
-  r.settingsAddBtns = (await exec("document.querySelectorAll('.add-btn').length === 2")) ? 'ok' : 'fail'
+  r.settingsOpen = await pollAssert("!!document.querySelector('.settings')", 'no-settings', { budgetMs: 1500 })
+  r.settingsProviders = await pollAssert("!!document.querySelector('.prow')", 'no-prow', { budgetMs: 1500 })
+  r.settingsIcons = await pollAssert("document.querySelectorAll('.prow .pmark').length > 0", 'no-mark', {
+    budgetMs: 1500
+  })
+  r.settingsAddBtns = await pollAssert("document.querySelectorAll('.add-btn').length === 2", 'no-add-btns', {
+    budgetMs: 1500
+  })
 
   // 添加内置供应商（目录选择 → 生成实例 → 二次确认删除）
   await exec("[...document.querySelectorAll('.add-btn')].find(b=>b.textContent.includes('添加提供方'))?.click()")
@@ -1754,11 +2009,13 @@ export async function runUiTest(
       // 删除需二次确认（防误删凭据）
       await exec(`document.querySelector('[data-provider-id="${addedId}"] .mini-btn.danger')?.click()`)
       await sleep(300)
-      r.settingsDeleteConfirm = (await exec(
-        `!!document.querySelector('[data-provider-id="${addedId}"] .mini-btn.danger[data-confirm="1"]')`
-      ))
-        ? 'ok'
-        : 'fail:no-confirm-step'
+      // ① 类：二次确认态（`data-confirm="1"`）是点击后的异步重渲染结果 —— 等它出现，
+      // 而不是睡 300ms 后单点取值（慢机上就是 `fail:no-confirm-step` 的假红）
+      r.settingsDeleteConfirm = await pollAssert(
+        `!!document.querySelector('[data-provider-id="${addedId}"] .mini-btn.danger[data-confirm="1"]')`,
+        'no-confirm-step',
+        { budgetMs: 1200 }
+      )
       await exec(`document.querySelector('[data-provider-id="${addedId}"] .mini-btn.danger')?.click()`)
       await sleep(1000)
       const finalIds = (await exec("[...document.querySelectorAll('.prow')].map(r=>r.dataset.providerId)")) as string[]
@@ -1784,20 +2041,7 @@ export async function runUiTest(
     await exec("[...document.querySelectorAll('.icon-btn')].find(b=>b.title==='返回')?.click()")
     await sleep(700)
   }
-  /**
-   * 轮询直到 cond 为真（默认 ~20s 上限）。采集是异步的，固定 sleep 会偶发读到上一帧。
-   *
-   * ⚠ 上限不是随手的：默认 10s 时，本机（有 3 个真实供应商在出网）一轮 collect 就能超过它，
-   *   于是**第二个**同名实例的卡片迟迟不出现、`grpDupCardName` 必红 —— 那是探针的时序假设
-   *   比被测行为还不确定。所以要先 `forceCollect()` 再等，且给足预算。
-   */
-  const waitFor = async (cond: string, tries = 80): Promise<boolean> => {
-    for (let i = 0; i < tries; i++) {
-      if ((await exec(cond)) === true) return true
-      await sleep(250)
-    }
-    return false
-  }
+  // （`waitFor` 已收敛到文件顶部的轮询助手处：本文件只许有一个轮询实现）
   /**
    * 主动点标题栏的「立即刷新」，强制跑一轮 collect。
    *
@@ -1953,8 +2197,11 @@ export async function runUiTest(
       //    ⚠ 先把采集周期挪到 5 分钟：自然采集（60s）若落进注入窗口会把 ghost 冲掉，
       //    报一条与被测行为无关的假红。写 `refreshInterval`（非 `ui:` 前缀）会触发一次
       //    recollect，所以先写、**等它落定**再注入；读完立刻还原。
+      //    「等它落定」必须是 waitCollectIdle（等那一轮真的收尾）而不是 sleep(2500)：
+      //    实测一轮要出网，慢时超过 2.5s，于是那一轮落在注入**之后**把 ghost 冲掉 ——
+      //    `grpUnknownBucket` 报 `fail:{"at":null}` 正是这样来的。
       await exec("window.api.setExtras({refreshInterval:'300'})")
-      await sleep(2500)
+      await waitCollectIdle()
       const cur = String(await exec('window.api.getState().then(s=>JSON.stringify(s.snapshots))'))
       const snaps = JSON.parse(cur) as unknown[]
       const ghost = {
@@ -1970,8 +2217,17 @@ export async function runUiTest(
         updatedAt: new Date().toISOString()
       }
       await exec(`window.api.debugPush(${JSON.stringify([...snaps, ghost])}, false)`)
-      await sleep(700)
-      const ghostReady = await waitFor('!!document.querySelector(\'[data-card-id="uitest-unknown"]\')')
+      // ① 类：判据本身是一个**复合谓词**（在未分组块 + 无组标签 + aria 不带组名后缀），
+      // 而不是「先等卡片出现、再单点读三个字段」—— 后者在「卡片出现后又被真实轮次换掉」
+      // 的窗口里会读到 `{"at":null}`（实测就是这条红）。等整条谓词成立，预算给足。
+      const ghostReady = await waitFor(`(()=>{
+        const c=document.querySelector('[data-card-id="uitest-unknown"]')
+        if(!c) return false
+        const sec=c.closest('.pcard-section')
+        return (sec?.querySelector('.pcard-section-name')?.textContent ?? '') === '未分组'
+          && !c.querySelector('.pcard-group')
+          && !(c.getAttribute('aria-label') ?? '').includes('（')
+      })()`)
       const ghostProbe = String(
         await exec(`(()=>{
           const c=document.querySelector('[data-card-id="uitest-unknown"]')
@@ -1984,14 +2240,10 @@ export async function runUiTest(
           })
         })()`)
       )
-      const g = JSON.parse(ghostProbe) as { at: string | null; tag: string | null; aria: string }
       // aria 不含组名后缀：不知道 ≠ 未分组，读屏也不许替用户断言归属。
-      r.grpUnknownBucket =
-        ghostReady && g.at === '未分组' && g.tag === null && !g.aria.includes('（')
-          ? 'ok'
-          : `fail:${ghostProbe}`
+      r.grpUnknownBucket = ghostReady ? 'ok' : `fail:${ghostProbe}`
       await exec('window.api.refreshNow()')
-      await sleep(2500)
+      await waitCollectIdle()
       await forceCollect()
       await waitFor(`!!document.querySelector('[data-card-id="${visId}"]')`)
       await exec("window.api.setExtras({refreshInterval:'60'})")
@@ -2064,12 +2316,13 @@ export async function runUiTest(
   for (const id of [...dupIds, ...(visId ? [visId] : []), ...(dryId ? [dryId] : [])]) {
     await removeProvider(id)
   }
-  r.grpDupCleanup =
-    (await exec(
-      "window.api.listProviders().then(p=>!p.providers.some(x=>x.name==='uitest-dup'||x.name==='uitest-vis'||x.name==='uitest-dry'))"
-    )) === true
-      ? 'ok'
-      : 'fail:not-cleaned'
+  // ③ 类（负向断言）：清理必须真的生效 —— 谓词正向写（还存在），等它不再成立。
+  // 两次点击删除 + 落盘是异步的，所以预算给足（删不掉会真的把用户目录堆满测试实例）。
+  r.grpDupCleanup = await pollAssert(
+    "window.api.listProviders().then(p=>p.providers.some(x=>x.name==='uitest-dup'||x.name==='uitest-vis'||x.name==='uitest-dry'))",
+    'not-cleaned',
+    { mode: 'absent', budgetMs: 1500, stepMs: 150 }
+  )
   await backToCards()
 
   // ── 贴边自动隐藏（10-03-dock-autohide）────────────────────────────────────
@@ -2090,10 +2343,13 @@ export async function runUiTest(
       ? 'ok'
       : `fail:${dockB0.width}x${dockB0.height}（仅收起态岛形态参与）`
   // 开关默认开（extras 缺失键给 ''，判 !== '0'；与主进程 primePrefs 同口径）
-  r.dockDefaultOn =
-    ((await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']!=='0')")) as boolean) === true
-      ? 'ok'
-      : 'fail:default-off'
+  // ② 类：这里读的是**没被任何动作改过**的偏好（本段之前的 ui:dockHide 写入只有 primePrefs），
+  // 谓词稳定 —— 只取一次样。
+  r.dockDefaultOn = await pollAssert(
+    "window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']!=='0')",
+    'default-off',
+    { budgetMs: 0 }
+  )
   // 右键菜单有「贴边自动隐藏」入口（菜单标签主进程现拼，只能在这里截）
   const dockMenuLabels = await runPetMenu()
   r.dockMenu = dockMenuLabels.includes('贴边自动隐藏')
@@ -2109,15 +2365,34 @@ export async function runUiTest(
   const dockWasOn =
     ((await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']!=='0')")) as boolean) === true
   const clickDockSwitch = (): Promise<unknown> => exec("document.querySelector('.dock-hide')?.click()")
-  await clickDockSwitch()
-  await sleep(500)
-  const dockFlip1 = await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide'])")
-  await clickDockSwitch()
-  await sleep(500)
-  const dockFlip2 = await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide'])")
-  // 开关必须真的翻转两次（关 → 开回来，不把用户配置带走）
+  /**
+   * 点一下开关，然后**等落盘值变成期望**。
+   *
+   * ⚠ 旧写法是「点 → sleep(500) → 单点读 extras」：`.dock-hide` 的写入是异步 IPC
+   * （还要整文件重写 store），500ms 在慢机上不够 → 读到旧值 → `dockSettings` 假红
+   * （实机红过，注释里也记着上一次是「先展开再点」那条）。判据是**落盘值**，
+   * 所以直接等它变成期望值；失败时把实际读到的那份带出来。
+   */
+  const flipDockTo = async (want: string): Promise<string> => {
+    await clickDockSwitch()
+    const hit = await pollCheck(
+      `window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide']===${JSON.stringify(want)})`,
+      { budgetMs: 2500, stepMs: 100 }
+    )
+    if (hit.ok) return want
+    const got = String(await exec("window.api.getExtras(['ui:dockHide']).then(e=>e['ui:dockHide'])"))
+    return `unchanged(实际=${got || "''"},waited=${hit.waitedMs}ms)`
+  }
+  // ② 前置：`.dock-hide` 是设置页静态结构，但「设置页已渲染」这件事必须先成立 ——
+  //    上面 `footerClick('设置')` 之后已经 sleep(700)，这里再确认一次元素在（一次 exec）。
+  const dockSwitchReady = await pollCheck("!!document.querySelector('.dock-hide')", { budgetMs: 1500 })
+  const dockFlip1 = dockSwitchReady.ok ? await flipDockTo(dockWasOn ? '0' : '1') : 'no-switch'
+  const dockFlip2 = dockSwitchReady.ok ? await flipDockTo(dockWasOn ? '1' : '0') : 'no-switch'
+  // 开关必须真的翻转两次（关 → 开回来，不把用户配置带走）。
+  // ⚠ 判据写成「等于期望的**还原值**」而不是原来的 `!== '0'`：后者只在 `dockWasOn` 为真时
+  //   成立（用户本来关着贴边隐藏时，还原值**就是** '0'，原判据会把正确行为判红）。
   r.dockSettings =
-    dockFlip1 === (dockWasOn ? '0' : '1') && dockFlip2 !== '0'
+    dockFlip1 === (dockWasOn ? '0' : '1') && dockFlip2 === (dockWasOn ? '1' : '0')
       ? 'ok'
       : `fail:was=${dockWasOn} flip1=${dockFlip1} flip2=${dockFlip2}`
   // 开关状态要同步进主进程（setExtras 本身不通知主进程，生产走 ui:dock-hide 即时生效）
