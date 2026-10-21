@@ -72,3 +72,25 @@ CP1 过：Aria 有肤色与西装配色）、步骤 2（`pet3d/viewfit.ts` 二�
 ### Status
 
 [OK] **Completed**
+
+## Session 2: 系统通知自验通路（测试按钮 + 发起≠已显示）
+<!-- trellis-session: v=2 fp=notify-test-20261021 -->
+
+**Date**: 2026-10-21
+**Task**: `.trellis/tasks/archive/2026-10/10-21-test-notify-and-hint`
+**Branch**: `main`
+
+### Summary
+
+用户报「昨天 80% 未提醒」，排查实锤：提醒逻辑正确（判定单测 73 全绿、`ui:notifyOn=1`、落盘配置全对、当天 15:58 本月窗口 80.5% 越线应有告警），根因在 macOS 权限层 —— ncprefs flags 缺 bit28（「允许通知」位，macOS 15.7.7 实测；社区旧解码 bit25 已过时；对比微信 276832270 vs 本应用 8396814）。Electron `Notification` 权限被关时**静默成功**、无应用内探测 API，锁存把该键当「弹过」整天不重试。顺带核查 OpenCode Go 额度：按模型给月度额度，多数 $60；DeepSeek V4.1 Flash 近期 $60→$80（单模型调整，非整体提额）。实现：测试通知按钮走真实链路（notifyShow + testNotifyPayload 纯函数），不受 notifyOn 约束，反馈文案写明「发起≠已显示」+ 系统设置路径；check 阶段自修 2 处（全文正则断言被无关调用点喂绿→函数切片 J11 守卫；vrs-notify-test-note.ok 同族 CSS 缺失）。重构复盘会精选哪些对话进入日志。<br><br>验证：typecheck 0 error、npm test 24 套件全绿（J 区 12 条）、--uitest 174 断言 0 失败、变异验证有牙。spec 沉淀 2 条（quality：切片守卫法；component：通知静默成功 gotcha），knowledge 沉淀 frontend 一条（归因四步法 + bit28 取证）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `109cfdc` | feat(notify): 系统通知自验通路——测试按钮走真实链路 + 「发起≠已显示」引导 |
+| `c2f5e8e` | chore(task): archive 10-21-test-notify-and-hint |
+
+### Status
+
+[OK] **Completed**（点击系统设置 → 通知 → BalanceDeck 打开「允许通知」后即可用，可用新加的测试按钮自验）
