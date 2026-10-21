@@ -142,6 +142,16 @@ Two more things, each cost a round:
 `PetSection.tsx:57-66` sets `let alive = true` and checks it in a **synchronous** loop body —
 always true. It looks like unmount protection and is not.
 
+### Don't: anchor a behavior assertion on a whole-file regex when an unrelated call site can feed it green
+
+`test-system-notify.mjs` J9/J10（2026-10-21）首版用全文 `appSrc.includes("notifyShow(")`
+断言「测试通知走真实链路」—— 但 `App.tsx` 的 `evaluateAlerts` 本来就调
+`window.api.notifyShow`，那个调用点把断言喂绿了，`testNotify` 内联 payload 时守卫照样绿
+（空洞通过）。修法：先用
+`appSrc.indexOf('const testNotify =')` 切出**函数体片段**再断言，并补一条前置断言
+（J11「切片可定位」）防止将来函数改名导致切片变空、J 区退成 0 条有效断言仍全绿。
+每次新增这种守卫都要做变异验证：内联真值 → J10 变红 → 还原 → 全绿。
+
 ### Don't: put a real credential literal in source, examples, or tests
 
 Stated twice: `main/store.ts:13` and `main/keystore.ts:6`. Read credentials through

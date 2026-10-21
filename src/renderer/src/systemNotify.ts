@@ -231,6 +231,29 @@ export function checkNotify(
   return out
 }
 
+// ─── 测试通知（10-21-test-notify-and-hint：设置页「测试通知」按钮的 payload）──
+//
+// 为什么放纯函数模块而不内联进组件：这条 payload 必须**逐字段**能过主进程
+// `notify:show` 的校验（title/body 非空、level ∈ NOTIFY_LEVELS），这个约束由
+// scripts/test-system-notify.mjs 加载同一份源码钉住 —— 内联进 App.tsx 就没有
+// 任何套件看得到它。level 用 'warn' 而不是编一个新档位：与真实提醒共用同一张
+// 措辞风格，主进程白名单也只认这三个。
+//
+// 正文自标「测试」并*示例*真实提醒的格式（引号内是格式示意，不是真实用量数据）：
+// 探查结论是 macOS 权限被关时 Electron 静默失败、发起后应用也探测不到，所以
+// payload 本身不承诺「已显示」，那条实话由点击后的反馈文案负责（App.tsx）。
+
+/** 「测试通知」payload：与真实提醒同构（id/name/title/body/level），不含任何真实用量数据 */
+export function testNotifyPayload(): NotifyPayload {
+  return {
+    id: 'test-notify',
+    name: 'BalanceDeck',
+    title: 'BalanceDeck 测试通知',
+    body: '这是一条测试通知（非真实数据）· 真实提醒的正文形如「本月已用 85% · 官方数据」 · 测试样本',
+    level: 'warn'
+  }
+}
+
 // ─── 去重锁存（prd.md 需求 4：同一供应商 + 窗口 + 阈值只提醒一次）────────────
 
 /**

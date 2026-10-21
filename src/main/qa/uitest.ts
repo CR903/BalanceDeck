@@ -1182,6 +1182,25 @@ export async function runUiTest(
     mode: 'absent',
     budgetMs: 800
   })
+
+  // E2「测试通知」按钮 + 常驻引导（10-21-test-notify-and-hint）：**此刻开关刚被关掉** ——
+  // 按钮与引导都必须不受 notifyOn 约束，用户正是在「开关关着 / 收不到」的状态下排查
+  // 系统权限的。② 类（可保持瞬时）：两个都是 `{notifyOn && …}` 之外的静态结构。
+  r.vrsNotifyTestVisible = await pollAssert(
+    "!!document.querySelector('.vrs-notify-test') && /允许通知/.test(document.querySelector('.vrs-notify-guide')?.textContent||'')",
+    'test-btn-or-guide-missing',
+    { budgetMs: 0 }
+  )
+  // 点击走**真实链路**：反馈里的「已发起」只在 notify:show 返回 true（payload 过了
+  // 主进程逐字段校验 + isSupported）时渲染 —— 这一条同时钉住 AC5 的链路。
+  // ⚠ 会真的往系统通知中心弹一条「BalanceDeck 测试通知」横幅，属预期行为。
+  await exec("document.querySelector('.vrs-notify-test')?.click()")
+  r.vrsNotifyTestFired = await pollAssert(
+    "/已发起/.test(document.querySelector('.vrs-notify-test-note')?.textContent||'')",
+    'no-test-note',
+    { budgetMs: 2500 }
+  )
+
   await exec("document.querySelector('.vrs-notify-on')?.click()")
   await sleep(600)
   // 阈值改一个：必须经 JSON 往返落到 ui:notifyConfig，而不是只停在组件的 useState

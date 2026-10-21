@@ -35,4 +35,5 @@
 | 2026-10-18 | [补齐 AGENTS.md 引用的门禁文档（三个从未落地的文件）](daily/2026-10-18_docs-gate-files.md) | `10-18-docs-gate-files` |
 | 2026-10-18 | [uitest 时序脆弱断言收口：52 处瞬时判据归零，翻转键 1 → 0](daily/2026-10-18_uitest-timing-hardening.md) | `10-18-uitest-timing-hardening` |
 | 2026-10-18 | [采集健壮性与主进程阻塞修复（父任务收尾：2.6 小时无断点）](daily/2026-10-18_sync-stall-and-mainthread-block.md) | `10-18-sync-stall-and-mainthread-block` |
+| 2026-10-21 | [系统通知自验通路：测试按钮 + 「发起≠已显示」引导（根因：macOS 吞弹）](daily/2026-10-21_10-21-test-notify-and-hint.md) | `10-21-test-notify-and-hint` |
 | 2026-10-18 | [uitest 时序脆弱断言收口：52 处瞬时判据归零，翻转键 1 → 0](daily/2026-10-18_uitest-timing-hardening.md) | `10-18-uitest-timing-hardening` |

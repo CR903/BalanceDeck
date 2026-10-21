@@ -28,7 +28,11 @@ import { MAX_RETENTION_DAYS } from '../../shared/usage-predict'
 // 其中 vrs-preset / vrs-url / vrs-voice / vrs-style / vrs-secret / vrs-endpoint /
 // vrs-text-format / vrs-routine-interval 在 skins.css 里**没有专属规则** ——
 // 外观由 .field 里的既有规则给，这些 class 是给 --uitest 用的定位钩子
-// （同 refresh-interval 的性质）。vrs-power 之所以必须有：智能播报开关与分区里另外 6 个开关共用
+// （同 refresh-interval 的性质）。
+// 10-21-test-notify-and-hint 新增的 vrs-notify-test / vrs-notify-test-note /
+// vrs-notify-guide 也是同一性质：外观由 .btn-secondary / .settings-note / .advanced-note 给，
+// 自己只是定位钩子 —— 唯 `vrs-notify-test` 补了 `.vrs-test` 同款尺寸规则 + 反馈的成功色
+// `.vrs-notify-test-note.ok`（skins.css），否则 .btn-secondary 的 flex:1 会把按钮拉满整行。vrs-power 之所以必须有：智能播报开关与分区里另外 6 个开关共用
 // `.switch`，没有专属 class 时只能靠「第几个」定位，而开关数量一改定位就悄悄指向别人。
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -363,6 +367,19 @@ export interface VoiceReminderSectionProps {
   notifyConfig: NotifyConfig
   onChangeNotifyConfig: (patch: Partial<NotifyConfig>) => void
 
+  /**
+   * 「测试通知」：点击后由 App 侧走真实链路（notifyShow IPC → 主进程 Notification），
+   * 本组件只转发意图（同 onTestSpeak 的契约：不发请求）。
+   *
+   * 不受 `notifyOn` 约束——按钮的调用方（App.testNotify）自己不判开关，这里也不判。
+   */
+  onTestNotify: () => void
+  /**
+   * 测试通知反馈（null = 无）。成功 3 秒后自动消失；失败**留着** ——
+   * 同 testNote 的契约：macOS 静默失败应用探测不到，用户得看见措辞才知道去开系统权限。
+   */
+  notifyTestNote: { ok: boolean; text: string } | null
+
   // ─── 用量历史（本机快照保留期）──────────────────────────────────────────
   /** 本机快照保留天数（sample:usageHistoryDays，默认 30） */
   historyDays: number
@@ -408,6 +425,8 @@ export function VoiceReminderSection({
   providerNames,
   notifyOn,
   onToggleNotify,
+  onTestNotify,
+  notifyTestNote,
   notifyConfig,
   onChangeNotifyConfig,
   historyDays,
@@ -834,6 +853,36 @@ export function VoiceReminderSection({
           >
             <span className="knob" />
           </button>
+        </div>
+
+        {/* ── E2. 测试通知 + 常驻引导（10-21-test-notify-and-hint）──────────────
+            都刻意放在 `{notifyOn && …}` **之外**：2026-10-21 的排查实锤了 macOS 在
+            「允许通知」被关时 Electron 静默失败、应用毫无感知（research/
+            macos-notify-findings.md）—— 用户正是在「开关开着也收不到」的状态下来自验
+            链路的，`notifyOn` 不能把排查工具一起藏掉（AC3）。
+            反馈文案（App.testNotify）负责讲清「发起 ≠ 已显示」：权限被关时 .show()
+            也走成功路径，应用看到的 ok 只能说「已发起」。 */}
+        <div className="vrs-actions">
+          <button
+            type="button"
+            className="btn-secondary vrs-notify-test"
+            title="走真实通知链路发一条测试（不受通知开关约束）；没收到就检查系统设置 → 通知 → BalanceDeck 的「允许通知」"
+            onClick={onTestNotify}
+          >
+            <Icon name="flask" size={14} />
+            测试通知
+          </button>
+          <span className="vrs-sample">发起 ≠ 已显示：macOS 权限被关时系统静默吞掉，应用探测不到。</span>
+        </div>
+        {notifyTestNote && (
+          <div className={'settings-note vrs-notify-test-note ' + (notifyTestNote.ok ? 'ok' : 'warn')}>
+            {notifyTestNote.text}
+          </div>
+        )}
+        <div className="advanced-note vrs-notify-guide">
+          {/* AC4 常驻引导：不在任何开关的门里。macOS 首次使用极易卡在系统权限这一层，
+              而这层应用侧探测不到 —— 同样的排查教训（见上），引导必须在这里看得见。 */}
+          macOS 若从未收到过通知：先去 <b>系统设置 → 通知 → BalanceDeck</b> 打开<b>「允许通知」</b>再试。
         </div>
 
         {notifyOn && (

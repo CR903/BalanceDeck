@@ -25,6 +25,7 @@ const {
   notifyKey,
   buildNotifyBody,
   resolveNotifyConfig,
+  testNotifyPayload,
   DEFAULT_NOTIFY_CONFIG,
   NOTIFY_LEVELS
 } = await loadTs('src/renderer/src/systemNotify.ts')
@@ -289,6 +290,40 @@ ok(/from '\.\.\/\.\.\/shared\/quality'/.test(notifySrc) && /staleLabel\(/.test(n
   'I1 来源标注的判定复用 shared/quality 的 staleLabel（不在本模块写第二份「哪些算非官方」）')
 // 阈值判定不许绕过 pctWarn/pctHigh 的白名单
 ok(!/Math\.random/.test(notifyCode), 'I2 判定里没有随机性（同一份输入必须给出同一份结果）')
+
+// ═══ J. 测试通知 payload（10-21-test-notify-and-hint）══════════════════════════
+//
+// 设置页「测试通知」按钮吃的 payload 必须与真实提醒同构：主进程 notify:show 对
+// title / body / level 逐字段复验（ipc.ts），任何一项不合法就返回 false —— 那时用户
+// 看到的是「没能发起」而不是测试横幅，AC5 直接失败。payload 住在 systemNotify.ts
+// （testNotifyPayload），由本套件加载**真实源码**钉住；内联进 App.tsx 就没有套件看得到它。
+console.log('\nJ. 测试通知 payload（必须能过 notify:show 的逐字段校验）')
+
+const tp = testNotifyPayload()
+ok(NOTIFY_LEVELS.includes(tp.level), 'J1 档位在 NOTIFY_LEVELS 白名单内（AC5：level 合法）')
+ok(typeof tp.id === 'string' && tp.id.trim().length > 0, 'J2 id 非空')
+ok(typeof tp.name === 'string' && tp.name.trim().length > 0, 'J3 name 非空')
+ok(typeof tp.title === 'string' && tp.title.trim().length > 0, 'J4 title 非空（AC5：校验第一关）')
+ok(typeof tp.body === 'string' && tp.body.trim().length > 0, 'J5 body 非空（AC5：校验第二关）')
+includes(tp.title, 'BalanceDeck 测试通知', 'J6 标题措辞（AC1：通知中心出现的标题）')
+// 数据诚实：测试 payload 不含真实用量数据，正文必须自标「测试」，
+// 且不冒充真实提醒的来源标注（「官方数据」三个字只能出现在*示例*里，带引号）
+includes(tp.body, '测试', 'J7 正文自标「测试」（不冒充真实提醒）')
+// 数据诚实的落点：真实提醒正文的**结尾**永远是数据来源标注（buildNotifyBody 拼 sourceText）。
+// 测试样本没有真实来源，「来源标注」那个位置只能写「测试样本」，不能写「官方数据」。
+ok(tp.body.endsWith(' · 测试样本'), 'J8 结尾的来源标注位置写「测试样本」（同构于真实提醒的来源标注格式）')
+
+// 接线纪律：testNotify 必须经 preload 的 notifyShow 发（真实链路，AC1 的前提是 AC5 成立），
+// 且 payload 来自本模块（单一出处）—— 不能在 App 里再内联一份会漂的字面量。
+// ⚠ 切片而非全文匹配：App.tsx 的 evaluateAlerts 本来就会调 notifyShow（真实提醒的出口），
+//   全文匹配会被那个调用点喂绿 —— 守卫钉的是 testNotify 这条路径用的什么。
+const appSrc = readFileSync(resolve(ROOT, 'src/renderer/src/App.tsx'), 'utf-8')
+const tnStart = appSrc.indexOf('const testNotify =')
+const tnEnd = appSrc.indexOf('const changeTrigger', tnStart)
+const tnBody = tnStart >= 0 && tnEnd > tnStart ? appSrc.slice(tnStart, tnEnd) : ''
+ok(tnBody.length > 0, 'J11 testNotify 函数切片可定位（守卫自身的前置条件，防切片改名后 0 断言空过）')
+ok(/notifyShow\s*\(/.test(tnBody), 'J9 testNotify 本体经 preload notifyShow 走真实链路')
+ok(/testNotifyPayload\s*\(/.test(tnBody), 'J10 testNotify 使用 testNotifyPayload（payload 单一出处，不在调用点重抄字面量）')
 
 console.log(`\n通过 ${pass} · 失败 ${fail}`)
 if (fail > 0) process.exit(1)

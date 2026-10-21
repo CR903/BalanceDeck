@@ -3631,6 +3631,20 @@ textarea {
 .vrs-test-note.ok {
   color: var(--ok);
 }
+/* 「测试通知」按钮与反馈（10-21-test-notify-and-hint）：testNote 的同族第二实例。
+   按钮复用 .vrs-test 的尺寸（.btn-secondary 的 flex:1 1 0 会把它在 .vrs-actions 里
+   拉满整行，把同行的「发起 ≠ 已显示」提示挤成省略号）；反馈成功色与 .vrs-test-note.ok
+   同款，失败路走 .settings-note.warn 的既有着色。 */
+.vrs-notify-test {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.vrs-notify-test-note.ok {
+  color: var(--ok);
+}
 /* 音色下拉的性别分组：分组标题压暗成「分类」的角色，组内条目仍用前景色。
    不写这条的话 optgroup 会继承 --fg，与组内 option 同色，21 行看着像一坨 */
 .field select optgroup {

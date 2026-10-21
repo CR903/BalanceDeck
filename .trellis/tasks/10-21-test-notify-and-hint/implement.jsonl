@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端层规范索引：tsc 是唯一类型门禁、缺失值保持缺失、loadTs 真源测试三铁律"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "VoiceReminderSection 组件/props/token CSS 约定，测试按钮 UI 要挂在这个组件里"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "extras 存储与定时器契约：测试反馈提示的计时要遵守 showTestNote 同族模式"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "测试清单与 uitest 断言约定：新增按钮需要 UI 断言与纯逻辑断言"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "payload 校验约定：notify:show 逐字段复验，测试 payload 必须同构合法"}
+{"file": ".trellis/tasks/10-21-test-notify-and-hint/research/macos-notify-findings.md", "reason": "本次排查结论：Electron 无权限探测 API、macOS 静默失败机制、ncprefs bit28 解码"}

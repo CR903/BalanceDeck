@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验收门禁：tsc + 断言脚本 + review checklist，测试必须 loadTs 真源"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查按钮 UI 是否符合组件/token CSS 约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查定时器/反馈提示是否遵守 state-management 契约"}
+{"file": ".trellis/tasks/10-21-test-notify-and-hint/prd.md", "reason": "AC1-AC6 验收标准与 Out of Scope"}
+{"file": ".trellis/tasks/10-21-test-notify-and-hint/research/macos-notify-findings.md", "reason": "排查结论：判定逻辑正确、根因在 macOS 权限，验收不得引入锁存/阈值改动"}

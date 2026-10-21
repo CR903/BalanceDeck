@@ -445,6 +445,25 @@ Note `overflow-x: hidden` is a **separate** guard, not the fix: `.isl-legend-ite
 the 430px card by 21px. That path is a content-clip (the user cannot drag it away), which is
 a different thing from a scroll range.
 
+## Gotcha: System notifications report success when nothing was shown
+
+macOS 关闭应用的「允许通知」后，Electron 主进程 `new Notification().show()` **静默成功**：
+不抛错、不回调（`ipc.ts` 的 `notify:show` 返回 `true`），且 Electron 没有应用内 API 探测
+授权状态。2026-10-21 的实查：用户「80% 未提醒」，应用侧判定/锁存/落盘全对（73 项单测通过），
+根因在系统权限层 —— 通知当天确实被发起过，只是被系统吞了。取证方法见
+`.trellis/tasks/10-21-test-notify-and-hint/research/macos-notify-findings.md`
+（`ncprefs.plist` flags bit28）。
+
+因此凡是挂在系统通知上的功能，组件侧必须提供**用户自验通路**（10-21-test-notify-and-hint）：
+
+- 「测试通知」按钮走**真实链路**（`notifyShow(testNotifyPayload())` ，`App.tsx:935`），
+  不直接 `new Notification` —— 测的就是用户会走的那条路；
+- 按钮**不受功能开关约束**（`VoiceReminderSection` 的按钮与引导都放在 `{notifyOn && …}`
+  之外）—— 否则没法测「开了开关却不弹」的场景；
+- 反馈措辞必须写明「发起 ≠ 已显示」并给出系统设置路径
+  （`App.tsx` `showNotifyTestNote`：成功 3s 消失、失败不消失，与 `showTestNote` 同构，
+  但 timer ref **独立** —— 共用一条会让两个反馈互相顶掉对方的 3s 计时）。
+
 ## Related
 
 - State & timers: [`state-management.md`](./state-management.md) · [`hook-guidelines.md`](./hook-guidelines.md)

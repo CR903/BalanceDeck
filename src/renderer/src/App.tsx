@@ -37,7 +37,7 @@ import {
   pendingCountdown,
   type PendingAlert
 } from './alertOrchestrate'
-import { DEFAULT_NOTIFY_CONFIG, resolveNotifyConfig, type NotifyConfig } from './systemNotify'
+import { DEFAULT_NOTIFY_CONFIG, resolveNotifyConfig, testNotifyPayload, type NotifyConfig } from './systemNotify'
 import {
   DEFAULT_PREDICT_CONFIG,
   MAX_RETENTION_DAYS,
@@ -233,6 +233,11 @@ export default function App(): React.JSX.Element {
   /** 「测试播报」的试听反馈（null = 无）。成功会自己消失，失败留着等用户改配置 */
   const [testNote, setTestNote] = useState<{ ok: boolean; text: string } | null>(null)
   const testNoteTimerRef = useRef<number | null>(null)
+
+  /** 测试通知的反馈：与 testNote 同族但**独立一条** —— 两个反馈共用一条 state 会互相
+   *  覆盖对方的 3 秒计时（点了「测试播报」紧接着点「测试通知」，前者的提示被后者顶掉）。 */
+  const [notifyTestNote, setNotifyTestNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const notifyTestNoteTimerRef = useRef<number | null>(null)
 
   const voiceTimerRef = useRef<number | null>(null)
   /**
@@ -616,6 +621,17 @@ export default function App(): React.JSX.Element {
     if (ok) testNoteTimerRef.current = window.setTimeout(() => setTestNote(null), 3000)
   }
 
+  /** 测试通知的反馈：与 showTestNote 同构（成功 3 秒自动消失 / 失败**不自动消失**），
+   *  但计时器独立 —— 见上面两个 state 的注释。 */
+  const showNotifyTestNote = (ok: boolean, text: string): void => {
+    if (notifyTestNoteTimerRef.current !== null) {
+      window.clearTimeout(notifyTestNoteTimerRef.current)
+      notifyTestNoteTimerRef.current = null
+    }
+    setNotifyTestNote({ ok, text })
+    if (ok) notifyTestNoteTimerRef.current = window.setTimeout(() => setNotifyTestNote(null), 3000)
+  }
+
   const clearProbeTimer = (): void => {
     if (probeTimerRef.current !== null) {
       window.clearTimeout(probeTimerRef.current)
@@ -874,6 +890,7 @@ export default function App(): React.JSX.Element {
       clearProbeTimer()
       probeInFlightRef.current = false
       if (testNoteTimerRef.current !== null) window.clearTimeout(testNoteTimerRef.current)
+      if (notifyTestNoteTimerRef.current !== null) window.clearTimeout(notifyTestNoteTimerRef.current)
     }
   }, [])
 
@@ -901,6 +918,36 @@ export default function App(): React.JSX.Element {
    */
   const testSpeak = (text: string): void => {
     speakOut(text, false, false)
+  }
+
+  /**
+   * 「测试通知」：走**真实链路**（preload notifyShow → 主进程 notify:show 的逐字段校验 +
+   * Notification），而不是组件里直接 new Notification —— 测的就是真实提醒会走的那条路。
+   *
+   * 不受 ui:notifyOn 约束（AC3）：权限被系统关掉时用户恰恰处在「收不到」的状态下要自验，
+   * 开关不能把排查工具一起藏掉（产品级理由在 VoiceReminderSection 的同位置注释）。
+   *
+   * ⚠ macOS 权限被关时 `Notification.show()` **静默成功**（排查结论：不抛错、无回调、
+   *   无日志，Electron 没有应用内 API 探测授权状态）—— 所以 ok=true 只能说「已发起」，
+   *   反馈文案必须把「发起 ≠ 已显示」讲清楚；ok=false（isSupported 不支持 / 主进程校验
+   *   拒绝 / 弹出抛错）时不自动消失，把可查的方向写出来。
+   */
+  const testNotify = (): void => {
+    void window.api
+      .notifyShow(testNotifyPayload())
+      .then((ok) => {
+        if (ok) {
+          showNotifyTestNote(
+            true,
+            '已发起测试通知；若未看到，去系统设置 → 通知 → BalanceDeck 打开「允许通知」。'
+          )
+        } else {
+          showNotifyTestNote(
+            false,
+            '没能发起通知：系统不支持应用通知，或内容未通过主进程校验。检查系统设置 → 通知 → BalanceDeck。'
+          )
+        }
+      })
   }
 
   const changeTrigger = (kind: string, patch: { on?: boolean; value?: number }): void => {
@@ -1137,6 +1184,8 @@ export default function App(): React.JSX.Element {
               setNotifyOn(on)
               void window.api.setExtras({ 'ui:notifyOn': on ? '1' : '0' })
             }}
+            onTestNotify={testNotify}
+            notifyTestNote={notifyTestNote}
             notifyConfig={notifyConfig}
             onChangeNotifyConfig={(patch) => {
               // 存的是**用户填的原值**而不是 resolveNotifyConfig 钳制后的值：
