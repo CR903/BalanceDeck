@@ -1,7 +1,7 @@
 # 本机大库扫描：WAL 活跃区不能当缓存键、JSON 列只能靠投影 + 增量
 
 取证来源：2026-10-18 任务 `10-18-local-db-off-mainthread`
-（`docs/daily/2026-10-18_local-db-off-mainthread.md` 有完整日志与真机输出）。
+（`docs/daily/2026-10/2026-10-18_local-db-off-mainthread.md` 有完整日志与真机输出）。
 适用面：**任何「周期性读一个别人正在写的大文件/大库」**的代码
 （本仓：`src/main/adapters/opencode-local.ts` / `opencode.ts`）。
 

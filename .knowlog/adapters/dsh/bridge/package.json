@@ -1,0 +1,16 @@
+{
+  "name": "docs-recall-dsh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 插件：每轮（agent/pre-step）把 knowlog 的关键词召回结果注入上下文（薄壳，逻辑在项目内 .knowlog/recall-core.py）",
+  "main": "lib/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.1.6-alpha.2"
+  }
+}

@@ -1,0 +1,34 @@
+<!-- KNOWLOG:START (由 knowlog skill 托管，手工改动请放在块外) -->
+## 📝 开发日志规范（唯一索引 · 收尾门禁）
+
+- **路径（写入即定月份）**：`docs/daily/<YYYY-MM>/YYYY-MM-DD_<slug>.md`；**月份取日志日期所在月**（跨月补写按日期归月）；不变量 = 目录月 == 文件名月 == `docs/index.md` 所在表格月。
+- **新建**：`bash .knowlog/new-daily-log.sh <slug> [YYYY-MM-DD]` —— 自动落月份目录 + 在 `docs/index.md` 插入索引行骨架。**不要**手写散落在 `docs/daily/` 根的日志。
+- **门禁**：任务收尾 / 提交前**必须**跑 `bash .knowlog/docs-doctor.sh --strict`（= 结构规范 + 日志↔索引 + 知识↔索引；缺索引行、死链、路径不符、布局混用、索引行没填 → 非零退出，红灯不许收摊）。
+- **收尾清单（任务「完成」的定义）**：① 记日志；② 有可复用结论 → `bash .knowlog/new-knowledge.sh` 沉淀（**会自动挂召回规则**；门禁会拦"有知识却 0 条规则"）；③ 跑门禁至绿灯；④ 才允许对外宣称完成。
+- **写什么**：给未来的自己/下一个人看 —— 为什么这么做、踩了什么坑、怎么证明是对的。不要复述 diff。
+
+## 📚 知识库导航（结构化记忆）
+
+- **布局**：__LAYOUT_DESC__
+- **位置**：__KNOW_PATHS__
+- **索引**：__KNOW_INDEXES__（新增后必须同步，脚本会自动做）
+- **新增一篇**：`__NEW_KNOW_CMD__`（默认自动从来源日志里的代码标识符挂召回规则；用 `--keywords "a,b"` 显式指定更准，`--no-keyword` 表示不需要召回）
+- **沉淀判断**：这条结论会被**重复踩**或**被反复问**吗？会 → 沉淀成知识；只是一次性任务细节 → 留在日志里就够了。
+- **召回（非全量，按需）**：`bash .knowlog/knowledge-retrieve.sh "<prompt 或代码片段>"`；命中只给提示+路径，确认相关后再全量读该文档。
+- **召回规则**：沉淀知识时**已自动挂**；手工补用 `bash .knowlog/new-keyword.sh "<正则>" "<提示>" "<文档路径>"`；正则要命中"写码当下"的标识符（函数名/字段/枚举/报错词），不要写自然语言标题。存量缺规则：`bash .knowlog/reindex-knowledge.sh --apply`。
+
+## 🧭 领域上下文路由（业务长期记忆）
+
+- 任务涉及某条业务线时，**必须首选全量加载**对应领域文档，严禁凭空编写（业务规则写错是最贵的错误：代码能跑、测试能过，但业务是错的）。
+- **路由表在本文档的「## 🧭 领域上下文路由表（手工维护）」一节**（在托管块之外，不会被脚本覆盖）。
+- 新增业务领域时：写一份 `docs/domain context/domain-<name>.md` → 在路由表补一行 → 更新 `docs/domain context/README.md`。
+
+## 🔍 检索入口
+
+```bash
+grep -rn "关键词" docs/daily/ docs/knowledge/ "docs/domain context/"   # 日志 + 知识 + 领域
+grep -n "关键词" docs/index.md docs/knowledge/index.md                 # 先查索引最快
+```
+
+> 若本仓同时使用其它 agent 入口文件（如 `CLAUDE.md`），在其中写一行指向本块即可，不要复制粘贴出第二份真相。
+<!-- KNOWLOG:END -->

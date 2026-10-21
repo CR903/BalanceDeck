@@ -1,0 +1,22 @@
+# docs-recall-dsh 的 bundle patch 层：把桥接插件插入 loader graph。
+#
+# 这个文件在**包内**（package.json 的 `dsh.bundle.patch: "./cordis.patch.yml"` 指向它）。
+# DSH 用 `join(packageDir, declared)` 解析，缺文件会 fail-loud，所以它必须和 package.json 同级。
+# 仓库根下 `adapters/dsh/cordis.patch.yml` 是指向本文件的软链接（同一份内容，别改错地方）。
+#
+# 验证（只读、dry-run）：
+#   dsh --profile web --patch "<本文件绝对路径>" --dump-config | grep -A3 docs-recall
+# 固化（改用户 profile，需用户自己执行）：
+#   把下面这段并进 $DSH_HOME/profiles/<profile>/cordis.patch.yml
+- insert:
+    - id: docs-recall
+      # 裸包名：从 profile 的 node_modules 解析，前提是已 `dsh plugin --profile <p> add <本包路径>`。
+      # 想免安装、直接指本地目录时，可换成相对本 patch 文件的路径（DSH 会转成 file:// URL）：
+      #   name: ./bridge
+      name: docs-recall-dsh
+      config:
+        # 相对项目根（DSH 在项目工作区启动时解析）
+        root: "."
+        # core 省略：桥接默认依次找 .knowlog/recall-core.py、scripts/recall-core.py
+        maxChars: 4000
+        minQueryChars: 4

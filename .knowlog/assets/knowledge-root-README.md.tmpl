@@ -1,0 +1,60 @@
+# 统一知识库（__PROJECT__）
+
+> **结构化记忆** — 把「已经被验证过的结论」沉淀到这里：坑位、约定、最佳实践。
+> 与日志的分工：日志是时序的（哪个任务发生了什么），知识是结构化的（同类问题下次怎么做）。
+
+## 📁 结构
+
+```
+docs/knowledge/
+├── README.md          # 本文档
+├── index.md           # 根索引（聚合各端 + 领域文档）
+├── .keyword-map.json  # 召回规则：正则 → 提示 + 文档（关键词触发注入）
+├── __END_DIRS__
+└── common/            # 跨端通用
+    └── {architecture,guides,troubleshooting,best-practices}/
+```
+
+每个端下四个分类：
+
+| 分类 | 放什么 |
+|------|--------|
+| `architecture/` | 整体架构、目录结构、启动流程、数据模型 |
+| `guides/` | 规范与开发指南（API 约定、错误处理、命名、部署） |
+| `troubleshooting/` | 踩坑与 Bug 复盘（**症状 → 根因 → 修法 → 判据**） |
+| `best-practices/` | 做得好的模式、性能优化、可复用技巧 |
+
+## ✍️ 贡献规范
+
+1. **先问值不值得**：这条结论会被**重复踩**或**被反复问**吗？会 → 沉淀；只是一次性任务细节 → 留在日志里
+2. **命名**：`kebab-case.md`，名字要能看出问题（`stale-binary-verify.md` 好过 `bug-0723.md`）
+3. **位置**：后端 → `backend/`，前端 → `frontend/`，多端通用 → `common/`
+4. **两级索引必须更新**：分端 `index.md` + 根 `index.md`（`new-knowledge.sh` 会自动做）
+5. **一句话说明**：索引里的「说明」列要写清收益，不要写"优化了 XX"
+
+## 🤖 关键词召回（非全量注入）
+
+```bash
+# 手动召回：命中就给出提示 + 文档路径（不是把全文塞进上下文）
+bash .knowlog/knowledge-retrieve.sh "修复导出任务的单位换算"
+
+# 增加一条规则（正则要能命中"写码当下"的标识符，不是自然语言标题）
+bash .knowlog/new-keyword.sh "exportJob|export_status|导出状态" "导出任务状态机：status=0 排队 / 1 运行 / 2 失败，漏 2 会一直转圈" \
+  "docs/knowledge/backend/troubleshooting/export-job-status.md"
+```
+
+有钩子机制的 agent（如 Claude Code）可把 `inject-knowledge.py` 挂到 `UserPromptSubmit`，每轮自动注入命中提示；
+没有钩子的 agent（其他各家）用上面的命令行入口，效果一致。
+
+## 🔍 全量检索
+
+```bash
+grep -rn "关键词" docs/knowledge/                                   # 知识库全文
+grep -rn "关键词" docs/knowledge/index.md docs/knowledge/*/index.md # 先查索引（最快）
+grep -rn "关键词" docs/knowledge/ docs/daily/ "docs/domain context/"  # 含日志与领域上下文
+```
+
+## 🕰️ 维护约定
+
+- 知识库是**活的**：发现某条过期/被推翻，直接改它（不要新旧并存），并在文件里写清"什么时候改的、为什么"
+- 一次任务既写日志又沉淀知识时，日志的「沉淀与优化」段要写清回流到哪份知识（可追溯）

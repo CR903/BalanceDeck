@@ -1,0 +1,14 @@
+---
+description: 本仓开发文档体系（日志 / 知识库 / 领域上下文）的收尾与召回约定
+alwaysApply: true
+---
+
+<!-- KNOWLOG:START (由 knowlog skill 托管；规则单一真相在根 AGENTS.md 的 KNOWLOG 托管块) -->
+本仓有完整的开发文档体系（`docs/`）。写码与收尾时遵守：
+
+- **规则以根 `AGENTS.md` 为准**：若是 `KNOWLOG` 托管块读块内；若是项目自己写的等价规范段（日志规范/知识库导航/领域路由/门禁）读那几段。本文件只是指针，不是第二份真相。
+- **动手前召回**：`bash .knowlog/knowledge-retrieve.sh "<任务描述或将要改的代码片段>"`
+  它会按关键词给出"本仓已沉淀的坑位/规范 + 文档路径"，命中后请全量读那份文档再写代码。
+- **任务收尾**：`bash .knowlog/new-daily-log.sh <slug>` 记日志 → 有可复用结论再 `bash .knowlog/new-knowledge.sh ...` 沉淀 → 最后 `bash .knowlog/check-daily-index.sh --strict` 必须绿灯。
+- **涉及业务线时**：先按 `AGENTS.md` 的路由表**全量加载** `docs/domain context/domain-*.md`，不要凭空写业务规则。
+<!-- KNOWLOG:END -->

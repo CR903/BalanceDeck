@@ -1,0 +1,227 @@
+{
+  "_readme": "召回规则表：正则 → { docs: [文档路径], hint: 一句话提示 }。键是正则（跑在「用户 prompt + git diff --cached」上），值里的 docs 是命中后建议读的文档。用 scripts/new-keyword.sh 添加，别手写 JSON。下面的 _example 键不会被匹配，仅作格式示范，可随时删除。",
+  "_example": {
+    "docs": [
+      "docs/knowledge/common/troubleshooting/example.md"
+    ],
+    "hint": "示例：命中了什么关键词，于是提醒你去看哪份文档里记着的坑"
+  },
+  "_exempt": [],
+  "trellis-implement": {
+    "docs": [
+      "docs/knowledge/agents/best-practices/subagent-verify.md"
+    ],
+    "hint": "子代理的「已完成」必须三样都对上"
+  },
+  "trellis-check": {
+    "docs": [
+      "docs/knowledge/agents/best-practices/subagent-verify.md"
+    ],
+    "hint": "子代理的「已完成」必须三样都对上"
+  },
+  "DetailPanel.tsx": {
+    "docs": [
+      "docs/knowledge/agents/best-practices/subagent-verify.md"
+    ],
+    "hint": "子代理的「已完成」必须三样都对上"
+  },
+  "pollAssert": {
+    "docs": [
+      "docs/knowledge/agents/guides/uitest-timing.md"
+    ],
+    "hint": "uitest 断言必须「等条件成立」，不许「某一瞬间的 DOM」"
+  },
+  "waitIdle": {
+    "docs": [
+      "docs/knowledge/agents/guides/uitest-timing.md"
+    ],
+    "hint": "uitest 断言必须「等条件成立」，不许「某一瞬间的 DOM」"
+  },
+  "waitCollectIdle": {
+    "docs": [
+      "docs/knowledge/agents/guides/uitest-timing.md"
+    ],
+    "hint": "uitest 断言必须「等条件成立」，不许「某一瞬间的 DOM」"
+  },
+  "IslandView.tsx": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/overlay-hitbox.md",
+      "docs/knowledge/frontend/guides/prototype-fidelity-diff.md"
+    ],
+    "hint": "端：透明 overlay 窗命中区"
+  },
+  "dragStop": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/overlay-hitbox.md"
+    ],
+    "hint": "端：透明 overlay 窗命中区"
+  },
+  "TrendChart.tsx": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/window-series-view.md"
+    ],
+    "hint": "窗口驱动的用量序列视图：口径对齐与回退纪律"
+  },
+  "startsAt": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/window-series-view.md"
+    ],
+    "hint": "窗口驱动的用量序列视图：口径对齐与回退纪律"
+  },
+  "access.startsAt": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/window-series-view.md"
+    ],
+    "hint": "窗口驱动的用量序列视图：口径对齐与回退纪律"
+  },
+  "getComputedStyle": {
+    "docs": [
+      "docs/knowledge/frontend/guides/prototype-fidelity-diff.md"
+    ],
+    "hint": "还原原型：并排提取 computed style，不靠目测"
+  },
+  "RING_GEO": {
+    "docs": [
+      "docs/knowledge/frontend/guides/prototype-fidelity-diff.md"
+    ],
+    "hint": "还原原型：并排提取 computed style，不靠目测"
+  },
+  "PetBall.tsx": {
+    "docs": [
+      "docs/knowledge/frontend/troubleshooting/petball-mount-conditions.md"
+    ],
+    "hint": "PetBall 挂载条件：一个布尔只管一块语义"
+  },
+  "showWaves": {
+    "docs": [
+      "docs/knowledge/frontend/troubleshooting/petball-mount-conditions.md"
+    ],
+    "hint": "PetBall 挂载条件：一个布尔只管一块语义"
+  },
+  "hasData": {
+    "docs": [
+      "docs/knowledge/frontend/troubleshooting/petball-mount-conditions.md"
+    ],
+    "hint": "PetBall 挂载条件：一个布尔只管一块语义"
+  },
+  "showTestNote": {
+    "docs": [
+      "docs/knowledge/frontend/troubleshooting/system-notify-silent-failure.md"
+    ],
+    "hint": "端：系统通知静默失效（macOS 权限层吞弹）"
+  },
+  "DatabaseSync": {
+    "docs": [
+      "docs/knowledge/main/guides/worker-offload.md"
+    ],
+    "hint": "把同步阻塞搬进 worker：契约、降级与「打包态才能测出来」的那一半"
+  },
+  "byModel": {
+    "docs": [
+      "docs/knowledge/main/guides/worker-offload.md"
+    ],
+    "hint": "把同步阻塞搬进 worker：契约、降级与「打包态才能测出来」的那一半"
+  },
+  "debugLog": {
+    "docs": [
+      "docs/knowledge/main/guides/worker-offload.md"
+    ],
+    "hint": "把同步阻塞搬进 worker：契约、降级与「打包态才能测出来」的那一半"
+  },
+  "opencode.db-wal": {
+    "docs": [
+      "docs/knowledge/main/troubleshooting/local-db-scan.md"
+    ],
+    "hint": "本机大库扫描：WAL 活跃区不能当缓存键、JSON 列只能靠投影 + 增量"
+  },
+  "createLocalScanner": {
+    "docs": [
+      "docs/knowledge/main/troubleshooting/local-db-scan.md"
+    ],
+    "hint": "本机大库扫描：WAL 活跃区不能当缓存键、JSON 列只能靠投影 + 增量"
+  },
+  "data_version": {
+    "docs": [
+      "docs/knowledge/main/troubleshooting/local-db-scan.md"
+    ],
+    "hint": "本机大库扫描：WAL 活跃区不能当缓存键、JSON 列只能靠投影 + 增量"
+  },
+  "withDeadline": {
+    "docs": [
+      "docs/knowledge/main/troubleshooting/scheduler-watchdog.md"
+    ],
+    "hint": "采集调度的看门狗：预算 + 轮次号失效 + 双保险超时"
+  },
+  "AbortController": {
+    "docs": [
+      "docs/knowledge/main/troubleshooting/scheduler-watchdog.md"
+    ],
+    "hint": "采集调度的看门狗：预算 + 轮次号失效 + 双保险超时"
+  },
+  "timeoutMs": {
+    "docs": [
+      "docs/knowledge/main/troubleshooting/scheduler-watchdog.md"
+    ],
+    "hint": "采集调度的看门狗：预算 + 轮次号失效 + 双保险超时"
+  },
+  "COLLECT_BUDGET_MS": {
+    "docs": [
+      "docs/knowledge/main/architecture/scheduler-lifecycle.md"
+    ],
+    "hint": "采集调度生命周期：装配层/控制流层拆分、轮次预算与 epoch 失效闸门、超时双保险、合并待跑刷新"
+  },
+  "collect-loop|runRound": {
+    "docs": [
+      "docs/knowledge/main/architecture/scheduler-lifecycle.md"
+    ],
+    "hint": "采集调度生命周期：装配层/控制流层拆分、轮次预算与 epoch 失效闸门、超时双保险、合并待跑刷新"
+  },
+  "requestRefresh": {
+    "docs": [
+      "docs/knowledge/main/architecture/scheduler-lifecycle.md"
+    ],
+    "hint": "采集调度生命周期：装配层/控制流层拆分、轮次预算与 epoch 失效闸门、超时双保险、合并待跑刷新"
+  },
+  "usage-history.json|keystoreStore|secrets.bin": {
+    "docs": [
+      "docs/knowledge/main/architecture/persistence-map.md"
+    ],
+    "hint": "持久化数据模型：userData 下三份 JSON、keystore 与 usage-history 分工、写放大与访问面"
+  },
+  "ProviderAdapter|createProtocolAdapter|bindInstance": {
+    "docs": [
+      "docs/knowledge/main/architecture/adapter-protocol.md"
+    ],
+    "hint": "provider 适配器协议：ProviderAdapter 接口、快照唯一铸造、三级路由与并行采集、新增 provider 清单"
+  },
+  "checkNotify|alertOrchestrate": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/alert-path.md"
+    ],
+    "hint": "提醒链路：alertOrchestrate 收口、TTS/通知双闸门与锁存、系统通知只在 main 发"
+  },
+  "evaluate": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/alert-path.md"
+    ],
+    "hint": "提醒链路：alertOrchestrate 收口、TTS/通知双闸门与锁存、系统通知只在 main 发"
+  },
+  "levelOfPercent|windowPercent|load-ts.mjs": {
+    "docs": [
+      "docs/knowledge/common/architecture/shared-pure-model.md"
+    ],
+    "hint": "shared 纯函数层：单一真相源与静态测试门、format.ts 转发折中、测试不准内联副本"
+  },
+  "--uitest|setupTestApp|pollAssert": {
+    "docs": [
+      "docs/knowledge/agents/guides/uitest-command-map.md"
+    ],
+    "hint": "QA 命令映射：test:* 脚本与被测目标对照表、smoke/uitest/shots 三模式入口"
+  },
+  "setCollapsed|primaryWindow|openDetail": {
+    "docs": [
+      "docs/knowledge/frontend/architecture/view-tree-map.md"
+    ],
+    "hint": "渲染层视图树：单 overlay 窗四形态切换、App 单一状态持有者、read-model 读模型契约"
+  }
+}

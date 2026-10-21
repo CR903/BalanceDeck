@@ -1,0 +1,50 @@
+# 知识库（__PROJECT__）
+
+> **结构化记忆** — 把「已经被验证过的结论」沉淀到这里：坑位、约定、最佳实践。
+> 本项目是**单面结构（flat 布局）**：知识按分类直接放在 `docs/knowledge/` 下，没有"端"这一层。
+>
+> 什么时候该升级成 by-end（多端）布局：当仓库里出现**技术栈明显不同、知识基本不通用**的两个以上部分时
+> （典型：Go 后端 + 前端 SPA + 移动端），再执行
+> `bash .knowlog/bootstrap-docs.sh --knowledge-layout by-end --ends "backend frontend mobile"`（幂等，不覆盖已有文件）。
+
+## 📁 结构
+
+```
+docs/knowledge/
+├── README.md          # 本文档
+├── index.md           # 索引（新增知识后必须更新；脚本会自动登记）
+├── .keyword-map.json  # 召回规则：正则 → 提示 + 文档（关键词触发注入）
+├── architecture/      # 架构、目录结构、启动流程、数据模型
+├── guides/            # 规范与开发指南（接口约定、错误处理、部署）
+├── troubleshooting/   # 踩坑与 Bug 复盘（症状 → 根因 → 修法 → 判据）
+└── best-practices/    # 最佳实践与性能优化
+```
+
+| 分类 | 放什么 |
+|------|--------|
+| `architecture/` | 整体架构、目录结构、启动流程、数据模型（长期事实） |
+| `guides/` | 规范与约定（怎么做事、接口约定、部署流程） |
+| `troubleshooting/` | 踩坑复盘（**症状 → 根因 → 正确做法 → 判据**） |
+| `best-practices/` | 做得好的模式、性能优化、可复用技巧 |
+
+## ✍️ 贡献规范
+
+1. **先问值不值得**：这条结论会被**重复踩**或**被反复问**吗？会 → 沉淀；一次性任务细节留在日志里
+2. **命名**：`kebab-case.md`，名字要能看出问题（`stale-binary-verify.md` 好过 `bug-0723.md`）
+3. **登记**：`bash .knowlog/new-knowledge.sh --flat <分类> <name> "<说明>"`（自动更新 `index.md`）
+4. **一句话说明**：索引里的「说明」列写清收益，不要写"优化了 XX"
+
+## 🤖 关键词召回（非全量注入）
+
+```bash
+bash .knowlog/knowledge-retrieve.sh "修复导出单位换算"      # 手动召回（命中给提示 + 文档路径）
+bash .knowlog/new-keyword.sh "consumeRate|换算系数" "同名单位不再乘系数" "docs/knowledge/troubleshooting/xxx.md"
+bash .knowlog/install-recall.sh --list                     # 把召回装到各 agent（钩子/插件/规则文件）
+```
+
+## 🔍 全量检索
+
+```bash
+grep -rn "关键词" docs/knowledge/ docs/daily/ "docs/domain context/"
+grep -rn "关键词" docs/knowledge/index.md               # 先查索引最快
+```

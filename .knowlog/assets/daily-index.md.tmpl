@@ -1,0 +1,25 @@
+# 开发日志索引
+
+> **唯一索引** — 所有任务日志位于 `daily/<YYYY-MM>/`，一任务一篇 `YYYY-MM-DD_<slug>.md`；**月份取日志日期所在月**，与下方年月表格严格一致（跨月补写按日期归月）。路径是日期的纯函数 —— 写入即定路径，因此**不存在"事后归档"，也不需要回改链接**。
+>
+> 新建：`bash .knowlog/new-daily-log.sh <slug> [YYYY-MM-DD]` · 提交/收尾前：`bash .knowlog/check-daily-index.sh --strict`
+> 检索：`grep -rn "关键词" docs/daily/`
+
+## 📊 统计
+
+> 这里**不手写数字**（手写的必然过期，还会诱导人相信它）—— 要计数就现算：
+> `ls docs/daily/*/*.md | wc -l`
+
+- **一致性校验**：`bash .knowlog/check-daily-index.sh --strict`（日志 ↔ 索引双向一致 + 路径格式）
+- **记忆分层**：日志是**时序记忆**（谁在何时做了什么）；可复用的结论请沉淀成**结构化记忆** → `bash .knowlog/new-knowledge.sh`
+
+## 🔗 快速链接
+
+- [使用指南](README.md)
+- [日志模板](template.md)
+- [日志目录](daily/)
+- [统一知识库](knowledge/index.md)
+- [领域上下文](domain%20context/README.md)
+
+---
+*初始化：__DATE__ · 项目：__PROJECT__*

@@ -1,6 +1,6 @@
 # 采集调度的看门狗：预算 + 轮次号失效 + 双保险超时
 
-取证来源：2026-10-18 任务 `10-18-sync-collect-watchdog`（`docs/daily/2026-10-18_sync-collect-watchdog.md`
+取证来源：2026-10-18 任务 `10-18-sync-collect-watchdog`（`docs/daily/2026-10/2026-10-18_sync-collect-watchdog.md`
 有完整日志与真机输出）。适用面：**任何「有一个长期在跑的调度循环 + 面向第三方的 await」**的代码
 （本仓：`src/main/scheduler.ts` / `collect-loop.ts` / `request.ts`）。
 

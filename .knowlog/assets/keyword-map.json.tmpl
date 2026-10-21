@@ -1,0 +1,10 @@
+{
+  "_readme": "召回规则表：正则 → { docs: [文档路径], hint: 一句话提示 }。键是正则（跑在「用户 prompt + git diff --cached」上），值里的 docs 是命中后建议读的文档。用 scripts/new-keyword.sh 添加，别手写 JSON。下面的 _example 键不会被匹配，仅作格式示范，可随时删除。",
+  "_example": {
+    "docs": [
+      "docs/knowledge/common/troubleshooting/example.md"
+    ],
+    "hint": "示例：命中了什么关键词，于是提醒你去看哪份文档里记着的坑"
+  },
+  "_exempt": []
+}

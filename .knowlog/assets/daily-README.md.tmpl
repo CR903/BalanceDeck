@@ -1,0 +1,75 @@
+# 开发日志系统使用指南（__PROJECT__）
+
+> 这套文档体系解决一个具体问题：**agent 的上下文会被压缩/丢失，文件不会**。
+> 因此约定「每次任务收尾都必须落一份日志」，让下一个会话（人或 AI）能靠文件重建上下文，而不是靠翻聊天记录。
+
+## 📁 目录结构
+
+```
+docs/
+├── daily/                     # 任务日志（时序记忆，一任务一篇）
+│   └── <YYYY-MM>/             # 按月归档：写入时即建，不放散文件
+│       └── YYYY-MM-DD_<slug>.md
+├── index.md                   # 日志唯一索引（按年月倒序）
+├── README.md                  # 本文档
+├── template.md                # 日志模板
+├── templates/knowledge-doc.md # 知识文档模板
+├── knowledge/                 # 结构化记忆（可复用结论）
+│   ├── README.md · index.md   # 总说明 + 索引
+│   └── __KNOW_TREE__
+├── domain context/            # 领域记忆（业务长期规则，按需全量加载）
+└── agents/                    # 给 agent 的约定（领域路由 / issue 追踪 / 状态标签）
+```
+
+## 🚀 每次任务收尾的 4 步
+
+```bash
+# 1. 建日志（自动落月份目录 + 在 index.md 插索引行骨架）
+bash .knowlog/new-daily-log.sh <task-slug>
+
+# 2. 填内容（vim docs/daily/<YYYY-MM>/<日期>_<slug>.md）
+#    重点是「为什么这么做 / 踩了什么坑 / 怎么验证的」，不要只抄 diff
+
+# 3. 有可复用结论 → 沉淀成知识（自动更新两级索引）
+__NEW_KNOW_CMD__ --source "<日志路径>"
+
+# 4. 门禁（缺索引行 / 死链 / 路径不符 → 非零退出）
+bash .knowlog/check-daily-index.sh --strict
+```
+
+## 📝 命名与归属规则
+
+- **粒度**：按任务，一任务一篇；同日多任务就多篇
+- **路径**：`docs/daily/<YYYY-MM>/YYYY-MM-DD_<slug>.md`（`<slug>` 用 kebab-case）
+- **月份**：取**日志日期所在月**（10 月补写 9 月的任务，就放 `2026-09/` 并登记 9 月表格）
+- **判断标准**：目录月 == 文件名月 == `index.md` 所在表格月，三者必须一致（脚本会校验）
+
+## 🔒 门禁
+
+- 提交/收尾前必须跑 `bash .knowlog/check-daily-index.sh --strict`，红灯不许收摊
+- 只写代码不写日志 = 任务未完成（这条约束已写进 `AGENTS.md` 的托管块，agent 每轮都会读到）
+- 有可复用结论但没沉淀到 `docs/knowledge/` → 视为知识流失
+
+## 🔍 检索
+
+```bash
+grep -rn "关键词" docs/daily/                      # 找历史任务
+grep -rn "关键词" docs/knowledge/                   # 找结论/坑位
+grep -rn "关键词" docs/knowledge/ docs/daily/ "docs/domain context/"   # 全量
+grep -n "关键词" docs/index.md docs/knowledge/index.md                 # 先查索引最快
+bash .knowlog/knowledge-retrieve.sh "<prompt 或代码片段>"               # 关键词召回（非全量）
+```
+
+## ❓ 常见问题
+
+**Q：这次改动很小，也要写日志吗？**  
+A：要。日志的价值不在于改动多大，而在于"下次遇到同样的事能不能 3 分钟找回结论"。真没什么可写的，就写 3 行：做了什么、为什么、怎么验证的。
+
+**Q：日志和知识库有什么区别？**  
+A：日志是**时序的**（今天这个任务发生了什么，可以很长很碎）；知识是**结构化的**（同类问题的结论，短、可直接照做）。写日志时发现"这个坑以后还会踩" → 就抽一条知识出来。
+
+**Q：为什么日志要按月分目录，不能平铺？**  
+A：让路径成为日期的纯函数。平铺时每次归档都要搬文件 + 批量改索引链接，是纯粹的重复劳动且有出错空间。
+
+**Q：为什么不把知识库全量注入上下文？**  
+A：上下文预算有限且昂贵。全量注入会让真正相关的规则被淹没。正确做法是**关键词触发按需召回**（`scripts/knowledge-retrieve.sh` 或 `.claude/hooks/inject-knowledge.py`），命中后才去全量读那份文档。

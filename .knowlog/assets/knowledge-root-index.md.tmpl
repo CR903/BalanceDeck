@@ -1,0 +1,30 @@
+# 统一知识库索引
+
+> 全量检索入口 — 聚合各端知识、领域上下文与日志。先查索引定位，再全文 `grep`。
+> 新增知识后请更新本文件（`bash .knowlog/new-knowledge.sh` 会自动追加到对应 section）。
+
+## 🔎 快速检索
+
+```bash
+grep -rn "关键词" docs/knowledge/ docs/daily/ "docs/domain context/"   # 全库
+grep -rn "关键词" docs/knowledge/index.md docs/knowledge/*/index.md    # 先查索引
+bash .knowlog/knowledge-retrieve.sh "prompt 或代码片段"                  # 关键词召回
+```
+
+## 🗂️ 各端知识
+
+| 端 | 索引 | 说明 |
+|----|------|------|
+__END_TABLE__
+
+__END_SECTIONS__
+## 🧭 领域上下文与其它文档
+
+| 位置 | 说明 |
+|------|------|
+| `docs/domain context/` | 领域记忆：业务长期规则、术语、数据流（按 `AGENTS.md` 路由表全量加载） |
+| `docs/daily/` | 时序记忆：任务日志（按 `docs/index.md` 查） |
+| `docs/agents/` | 给 agent 的约定：领域路由、issue 追踪、状态标签 |
+
+---
+*初始化：__DATE__ · 新增文档后请同步更新本索引*
